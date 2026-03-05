@@ -40,6 +40,21 @@ def test_parse_invalid_action():
     assert result is None
 
 
+def test_parse_reason_truncated():
+    long_reason = "x" * 200
+    raw = f'{{"action": "BUY", "confidence": 50, "size_hint": "M", "reason": "{long_reason}"}}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert len(result["reason"]) == 100
+
+
+def test_parse_reason_non_string():
+    raw = '{"action": "BUY", "confidence": 50, "size_hint": "M", "reason": 42}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["reason"] == "42"
+
+
 def test_build_prompt():
     ctx = ContextCard(ret_today=6.1, ret_1d=0.8, ret_3d=4.2, pos_20d=87, gap=0.3, adv_value_20d=82e9, spread_bps=9, vol_pct_20d=88)
     prompt = _build_prompt(

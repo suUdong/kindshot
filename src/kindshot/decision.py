@@ -78,6 +78,12 @@ def _parse_llm_response(raw: str) -> Optional[dict]:
     if size_hint not in ("S", "M", "L"):
         return None
 
+    reason = data.get("reason", "")
+    if not isinstance(reason, str):
+        reason = str(reason)
+    # Truncate to max_length matching DecisionRecord.reason Field(max_length=100)
+    data["reason"] = reason[:100]
+
     return data
 
 

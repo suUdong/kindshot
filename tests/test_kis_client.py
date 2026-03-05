@@ -21,12 +21,10 @@ def _token_response():
     return {"access_token": "fake_token", "token_type": "Bearer"}
 
 
-def _price_output(px="50000", ask="50100", bid="49900", cum="1000000000"):
+def _price_output(px="50000", cum="1000000000"):
     return {
         "output": {
             "stck_prpr": px,
-            "stck_hgpr": ask,
-            "stck_lwpr": bid,
             "acml_tr_pbmn": cum,
         }
     }
@@ -44,7 +42,8 @@ async def test_get_price_success():
 
     assert result is not None
     assert result.px == 50000.0
-    assert result.spread_bps is not None
+    # spread_bps is None from inquire-price (needs 호가 API)
+    assert result.spread_bps is None
 
 
 async def test_get_price_px_zero_returns_none():

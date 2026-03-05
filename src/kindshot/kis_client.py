@@ -36,6 +36,8 @@ class KisClient:
         self._token_expires: float = 0.0
 
     async def _ensure_token(self) -> Optional[str]:
+        if not self._config.kis_app_key or not self._config.kis_app_secret:
+            return None
         if self._token and time.time() < self._token_expires:
             return self._token
 
@@ -96,9 +98,12 @@ class KisClient:
                     logger.warning("KIS returned px=0 for %s, treating as UNAVAILABLE", ticker)
                     return None
 
-                # KIS field mapping: stck_hgpr=매도호가(ask), stck_lwpr=매수호가(bid)
-                ask = float(output.get("stck_hgpr", 0))  # best ask (매도호가1)
-                bid = float(output.get("stck_lwpr", 0))  # best bid (매수호가1)
+                # MVP: spread_bps requires 호가(asking price) API endpoint
+                # (/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn)
+                # inquire-price only has 고가/저가, not best ask/bid.
+                # Set to 0 so spread_bps=None; spread_check_enabled defaults False.
+                ask = 0.0
+                bid = 0.0
                 cum_value = float(output.get("acml_tr_pbmn", 0))
 
                 spread_bps = None
