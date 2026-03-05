@@ -29,10 +29,13 @@ def quant_check(
 
     adv_ok = adv_value_20d >= config.adv_threshold
 
-    if config.spread_check_enabled and spread_bps is not None:
-        spread_ok = spread_bps <= config.spread_bps_limit
+    if config.spread_check_enabled:
+        if spread_bps is None:
+            spread_ok = False  # fail-close: data unavailable means don't trade
+        else:
+            spread_ok = spread_bps <= config.spread_bps_limit
     else:
-        spread_ok = True  # skip check when disabled or unavailable
+        spread_ok = True  # skip check when disabled
 
     extreme_ok = abs(ret_today) <= config.extreme_move_pct
 

@@ -56,6 +56,19 @@ def test_spread_check_disabled():
     assert r.detail.spread_bps_ok is True
 
 
+def test_spread_none_fail_close_when_enabled():
+    """When spread_check_enabled=True but spread_bps=None, should fail-close."""
+    r = quant_check(
+        adv_value_20d=10_000_000_000,
+        spread_bps=None,
+        ret_today=5.0,
+        config=_cfg(spread_check_enabled=True),
+    )
+    assert r.passed is False
+    assert r.detail.spread_bps_ok is False
+    assert r.skip_reason == "SPREAD_TOO_WIDE"
+
+
 def test_extreme_move():
     r = quant_check(
         adv_value_20d=10_000_000_000,

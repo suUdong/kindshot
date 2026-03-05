@@ -86,11 +86,19 @@ class KisClient:
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 data = await resp.json()
-                output = data.get("output", {})
+                output = data.get("output")
+                if not output or not isinstance(output, dict):
+                    logger.warning("KIS empty/invalid output for %s: %s", ticker, data.get("msg_cd", ""))
+                    return None
 
                 px = float(output.get("stck_prpr", 0))
-                ask = float(output.get("stck_sdpr", 0))  # best ask
-                bid = float(output.get("stck_hgpr", 0))  # best bid — field names may vary
+                if px <= 0:
+                    logger.warning("KIS returned px=0 for %s, treating as UNAVAILABLE", ticker)
+                    return None
+
+                # KIS field mapping: stck_hgpr=매도호가(ask), stck_lwpr=매수호가(bid)
+                ask = float(output.get("stck_hgpr", 0))  # best ask (매도호가1)
+                bid = float(output.get("stck_lwpr", 0))  # best bid (매수호가1)
                 cum_value = float(output.get("acml_tr_pbmn", 0))
 
                 spread_bps = None
