@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from kindshot.config import Config
-from kindshot.decision import DecisionEngine, _parse_llm_response, _build_prompt
+from kindshot.decision import DecisionEngine, _parse_llm_response, _build_prompt, LlmTimeoutError, LlmParseError
 from kindshot.models import Bucket, ContextCard, Action, SizeHint
 
 
@@ -91,3 +91,46 @@ async def test_cache_hit():
     assert r2 is not None
     assert r2.decision_source == "CACHE"
     assert mock_client.messages.create.call_count == 1
+
+
+async def test_llm_timeout_raises():
+    cfg = Config(anthropic_api_key="test", llm_wait_for_s=0.01)
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(side_effect=asyncio.TimeoutError())
+    engine._client = mock_client
+
+    ctx = ContextCard()
+    with pytest.raises(LlmTimeoutError):
+        await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
+
+
+async def test_llm_bad_response_structure_raises():
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    mock_msg = MagicMock()
+    mock_msg.content = []  # Empty content list
+    mock_client.messages.create = AsyncMock(return_value=mock_msg)
+    engine._client = mock_client
+
+    ctx = ContextCard()
+    with pytest.raises(LlmParseError):
+        await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
+
+
+async def test_llm_invalid_json_raises():
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="not json")]
+    mock_client.messages.create = AsyncMock(return_value=mock_msg)
+    engine._client = mock_client
+
+    ctx = ContextCard()
+    with pytest.raises(LlmParseError):
+        await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")

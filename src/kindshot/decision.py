@@ -184,7 +184,12 @@ class DecisionEngine:
             logger.warning("LLM call failed: %s", e)
             raise LlmTimeoutError(str(e)) from e
 
-        raw_text = resp.content[0].text
+        try:
+            raw_text = resp.content[0].text
+        except (IndexError, AttributeError) as e:
+            logger.warning("LLM response structure unexpected: %s", e)
+            raise LlmParseError(f"unexpected response structure: {e}") from e
+
         parsed = _parse_llm_response(raw_text)
         if parsed is None:
             logger.warning("LLM parse failed: %s", raw_text[:200])

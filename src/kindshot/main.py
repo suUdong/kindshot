@@ -69,13 +69,16 @@ async def _pipeline_loop(
             if processed is None:
                 # Duplicate — log skip event
                 logger.debug("DUPLICATE: %s", raw.title[:60])
-                from kindshot.feed import _extract_kind_uid as _uid
+                import hashlib
+                dup_id = "dup_" + hashlib.sha256(
+                    f"{raw.link}|{detected_at.isoformat()}".encode()
+                ).hexdigest()[:16]
                 dup_event = EventRecord(
                     schema_version=config.schema_version,
                     run_id=run_id,
-                    event_id="dup_" + raw.link[-16:],
+                    event_id=dup_id,
                     event_id_method=EventIdMethod.FALLBACK,
-                    event_group_id="dup_" + raw.link[-16:],
+                    event_group_id=dup_id,
                     detected_at=detected_at,
                     ticker=raw.ticker,
                     corp_name=raw.corp_name,
@@ -176,7 +179,6 @@ async def _pipeline_loop(
                 quant_check_detail=quant_detail,
                 ctx=ctx,
             )
-            await log.write(event_rec)
 
             # Schedule price tracking if needed
             if should_track_price:
@@ -190,16 +192,19 @@ async def _pipeline_loop(
 
             # 4. Decision (POS_STRONG + quant pass only)
             if bucket_result.bucket != Bucket.POS_STRONG or not quant_passed:
+                await log.write(event_rec)
                 continue
 
             # Market halt check
             if market.is_halted:
                 logger.info("SKIP (market halted): %s", raw.title[:60])
+                await log.write(event_rec)
                 continue
 
             # Dry run: skip LLM
             if config.dry_run:
                 logger.info("DRY-RUN SKIP decision: %s", raw.title[:60])
+                await log.write(event_rec)
                 continue
 
             detected_str = detected_at.strftime("%H:%M:%S")
@@ -224,6 +229,9 @@ async def _pipeline_loop(
                 event_rec.skip_reason = "LLM_PARSE"
                 await log.write(event_rec)
                 continue
+
+            # Success path: write event record once here
+            await log.write(event_rec)
 
             decision.event_id = processed.event_id
 
