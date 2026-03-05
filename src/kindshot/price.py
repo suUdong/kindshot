@@ -104,11 +104,12 @@ class SnapshotScheduler:
                 schema_version=self._config.schema_version,
             ))
 
-        # Close snapshot: 15:31 KST
+        # Close snapshot: 15:30 KST + close_snapshot_delay_s (default 300s = 15:35)
         kst = timezone(timedelta(hours=9))
         now_kst = datetime.now(kst)
-        today_close = now_kst.replace(hour=15, minute=31, second=0, microsecond=0)
-        seconds_until_close = max(0, (today_close - now_kst).total_seconds())
+        market_close = now_kst.replace(hour=15, minute=30, second=0, microsecond=0)
+        close_fire_kst = market_close + timedelta(seconds=self._config.close_snapshot_delay_s)
+        seconds_until_close = max(0, (close_fire_kst - now_kst).total_seconds())
         heapq.heappush(self._heap, ScheduledSnapshot(
             fire_at=now + seconds_until_close,
             event_id=event_id,

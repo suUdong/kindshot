@@ -24,6 +24,14 @@ from kindshot.models import (
 logger = logging.getLogger(__name__)
 
 
+class LlmTimeoutError(Exception):
+    """LLM call timed out or failed."""
+
+
+class LlmParseError(Exception):
+    """LLM response could not be parsed."""
+
+
 def _build_prompt(
     bucket: Bucket,
     headline: str,
@@ -174,13 +182,13 @@ class DecisionEngine:
             latency_ms = int((time.monotonic() - t0) * 1000)
         except (asyncio.TimeoutError, Exception) as e:
             logger.warning("LLM call failed: %s", e)
-            return None
+            raise LlmTimeoutError(str(e)) from e
 
         raw_text = resp.content[0].text
         parsed = _parse_llm_response(raw_text)
         if parsed is None:
             logger.warning("LLM parse failed: %s", raw_text[:200])
-            return None
+            raise LlmParseError(raw_text[:200])
 
         record = DecisionRecord(
             schema_version=schema_version,

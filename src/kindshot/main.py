@@ -16,9 +16,9 @@ import aiohttp
 from kindshot.bucket import classify
 from kindshot.config import Config, load_config
 from kindshot.context_card import build_context_card
-from kindshot.decision import DecisionEngine
+from kindshot.decision import DecisionEngine, LlmTimeoutError, LlmParseError
 from kindshot.event_registry import EventRegistry
-from kindshot.feed import KindFeed
+from kindshot.feed import KindFeed, _extract_kind_uid
 from kindshot.guardrails import check_guardrails
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger
@@ -26,6 +26,7 @@ from kindshot.market import MarketMonitor
 from kindshot.models import (
     Bucket,
     ContextCard,
+    EventIdMethod,
     EventRecord,
     SkipStage,
     T0Basis,
@@ -66,8 +67,24 @@ async def _pipeline_loop(
             # 1. Registry: dedup + correction
             processed = registry.process(raw)
             if processed is None:
-                # Duplicate — log skip
+                # Duplicate — log skip event
                 logger.debug("DUPLICATE: %s", raw.title[:60])
+                from kindshot.feed import _extract_kind_uid as _uid
+                dup_event = EventRecord(
+                    schema_version=config.schema_version,
+                    run_id=run_id,
+                    event_id="dup_" + raw.link[-16:],
+                    event_id_method=EventIdMethod.FALLBACK,
+                    event_group_id="dup_" + raw.link[-16:],
+                    detected_at=detected_at,
+                    ticker=raw.ticker,
+                    corp_name=raw.corp_name,
+                    headline=raw.title,
+                    bucket=Bucket.UNKNOWN,
+                    skip_stage=SkipStage.DUPLICATE,
+                    skip_reason="DUPLICATE",
+                )
+                await log.write(dup_event)
                 continue
 
             # 2. Bucket classification
@@ -88,6 +105,7 @@ async def _pipeline_loop(
                     pass
 
             # Skip non-actionable buckets early
+            raw_data: dict = {}
             skip_stage: Optional[SkipStage] = None
             skip_reason: Optional[str] = None
             analysis_tag: Optional[str] = None
@@ -185,22 +203,43 @@ async def _pipeline_loop(
                 continue
 
             detected_str = detected_at.strftime("%H:%M:%S")
-            decision = await decision_engine.decide(
-                ticker=raw.ticker,
-                corp_name=raw.corp_name,
-                headline=raw.title,
-                bucket=bucket_result.bucket,
-                ctx=ctx if ctx else ContextCard(),
-                detected_at_str=detected_str,
-                run_id=run_id,
-                schema_version=config.schema_version,
-            )
-
-            if decision is None:
-                # LLM timeout or parse failure — already logged in decision.py
+            try:
+                decision = await decision_engine.decide(
+                    ticker=raw.ticker,
+                    corp_name=raw.corp_name,
+                    headline=raw.title,
+                    bucket=bucket_result.bucket,
+                    ctx=ctx if ctx else ContextCard(),
+                    detected_at_str=detected_str,
+                    run_id=run_id,
+                    schema_version=config.schema_version,
+                )
+            except LlmTimeoutError:
+                event_rec.skip_stage = SkipStage.LLM_TIMEOUT
+                event_rec.skip_reason = "LLM_TIMEOUT"
+                await log.write(event_rec)
+                continue
+            except LlmParseError:
+                event_rec.skip_stage = SkipStage.LLM_PARSE
+                event_rec.skip_reason = "LLM_PARSE"
+                await log.write(event_rec)
                 continue
 
             decision.event_id = processed.event_id
+
+            # Guardrails check (MVP: always passes, real checks in v0.4)
+            gr = check_guardrails(
+                ticker=raw.ticker,
+                spread_bps=raw_data.get("spread_bps") if ctx else None,
+                adv_value_20d=raw_data.get("adv_value_20d") if ctx else None,
+                ret_today=raw_data.get("ret_today") if ctx else None,
+            )
+            if not gr.passed:
+                event_rec.skip_stage = SkipStage.GUARDRAIL
+                event_rec.skip_reason = gr.reason
+                await log.write(event_rec)
+                continue
+
             await log.write(decision)
 
             # Schedule price snapshots with DECIDED_AT basis
