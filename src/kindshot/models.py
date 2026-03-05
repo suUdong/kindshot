@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -126,7 +126,7 @@ class DecisionRecord(BaseModel):
     action: Action
     confidence: int = Field(ge=0, le=100)
     size_hint: SizeHint
-    reason: str
+    reason: str = Field(max_length=100)
     decision_source: str = "LLM"  # "LLM" | "CACHE"
 
 
@@ -135,7 +135,7 @@ class PriceSnapshot(BaseModel):
     schema_version: str
     run_id: str
     event_id: str
-    horizon: str
+    horizon: Literal["t0", "t+1m", "t+5m", "t+30m", "close"]
     ts: datetime
     t0_basis: T0Basis
     t0_ts: datetime
