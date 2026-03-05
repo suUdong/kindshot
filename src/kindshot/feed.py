@@ -68,8 +68,9 @@ class KindFeed:
         self._consecutive_failures = 0
 
     def _is_market_hours(self) -> bool:
-        from datetime import time as dt_time
-        now = datetime.now().time()
+        from datetime import time as dt_time, timezone as tz, timedelta
+        kst = tz(timedelta(hours=9))
+        now = datetime.now(kst).time()
         return dt_time(9, 0) <= now <= dt_time(15, 30)
 
     def _base_interval(self) -> float:

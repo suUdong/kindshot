@@ -59,12 +59,22 @@ class EventRegistry:
     """Tracks seen events for dedup and links corrections to parents."""
 
     def __init__(self) -> None:
-        self._seen_ids: set[str] = set()
-        # ticker -> list of (event_id, normalized_title, detected_at)
-        self._history: dict[str, list[tuple[str, str, datetime]]] = {}
+        self._seen_ids: dict[str, datetime] = {}  # event_id -> detected_at
+        # ticker -> list of (event_id, normalized_title, detected_at, event_kind)
+        self._history: dict[str, list[tuple[str, str, datetime, EventKind]]] = {}
+        self._current_date: Optional[str] = None  # YYYYMMDD for TTL
+
+    def _prune_if_new_day(self, now: datetime) -> None:
+        """Clear history when date changes (TTL = current trading day)."""
+        today = now.strftime("%Y%m%d")
+        if self._current_date is not None and self._current_date != today:
+            self._seen_ids.clear()
+            self._history.clear()
+        self._current_date = today
 
     def process(self, raw: RawDisclosure) -> Optional[ProcessedEvent]:
         """Process a raw disclosure. Returns None if duplicate."""
+        self._prune_if_new_day(raw.detected_at)
         kind_uid = _extract_kind_uid(raw.link)
 
         # Generate event_id
@@ -72,19 +82,19 @@ class EventRegistry:
             event_id = _hash("KIND", kind_uid)
             method = EventIdMethod.UID
         else:
-            # Fallback
+            # Fallback: include link for collision resistance
             if raw.rss_guid:
-                event_id = _hash("KIND", raw.rss_guid)
+                event_id = _hash("KIND", raw.rss_guid, raw.link)
             elif raw.published:
-                event_id = _hash("KIND", raw.published, raw.ticker, _normalize_title(raw.title))
+                event_id = _hash("KIND", raw.published, raw.ticker, _normalize_title(raw.title), raw.link)
             else:
-                event_id = _hash("KIND", raw.detected_at.isoformat(), raw.ticker, _normalize_title(raw.title))
+                event_id = _hash("KIND", raw.detected_at.isoformat(), raw.ticker, _normalize_title(raw.title), raw.link)
             method = EventIdMethod.FALLBACK
 
         # Dedup
         if event_id in self._seen_ids:
             return None
-        self._seen_ids.add(event_id)
+        self._seen_ids[event_id] = raw.detected_at
 
         # Determine event_kind
         if _is_withdrawal(raw.title):
@@ -102,7 +112,9 @@ class EventRegistry:
         norm_title = _normalize_title(raw.title)
 
         if event_kind in (EventKind.CORRECTION, EventKind.WITHDRAWAL):
-            candidates = self._history.get(raw.ticker, [])
+            all_entries = self._history.get(raw.ticker, [])
+            # Only ORIGINAL events are valid parent candidates
+            candidates = [(eid, t, ts) for eid, t, ts, ek in all_entries if ek == EventKind.ORIGINAL]
             parent_candidate_count = len(candidates)
 
             best_score = 0.0
@@ -133,7 +145,7 @@ class EventRegistry:
 
         # Store in history
         self._history.setdefault(raw.ticker, []).append(
-            (event_id, norm_title, raw.detected_at)
+            (event_id, norm_title, raw.detected_at, event_kind)
         )
 
         return ProcessedEvent(
