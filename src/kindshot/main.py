@@ -230,9 +230,6 @@ async def _pipeline_loop(
                 await log.write(event_rec)
                 continue
 
-            # Success path: write event record once here
-            await log.write(event_rec)
-
             decision.event_id = processed.event_id
 
             # Guardrails check (MVP: always passes, real checks in v0.4)
@@ -248,6 +245,8 @@ async def _pipeline_loop(
                 await log.write(event_rec)
                 continue
 
+            # Success: write event + decision (exactly once each)
+            await log.write(event_rec)
             await log.write(decision)
 
             # Schedule price snapshots with DECIDED_AT basis
