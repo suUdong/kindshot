@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from typing import Optional
 
@@ -65,8 +65,9 @@ class EventRegistry:
         self._current_date: Optional[str] = None  # YYYYMMDD for TTL
 
     def _prune_if_new_day(self, now: datetime) -> None:
-        """Clear history when date changes (TTL = current trading day)."""
-        today = now.strftime("%Y%m%d")
+        """Clear history when KST date changes (TTL = current trading day)."""
+        kst = timezone(timedelta(hours=9))
+        today = now.astimezone(kst).strftime("%Y%m%d")
         if self._current_date is not None and self._current_date != today:
             self._seen_ids.clear()
             self._history.clear()
@@ -84,7 +85,7 @@ class EventRegistry:
         else:
             # Fallback: include link for collision resistance
             if raw.rss_guid:
-                event_id = _hash("KIND", raw.rss_guid, raw.link)
+                event_id = _hash("KIND", raw.rss_guid)
             elif raw.published:
                 event_id = _hash("KIND", raw.published, raw.ticker, _normalize_title(raw.title), raw.link)
             else:
