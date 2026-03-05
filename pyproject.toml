@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kindshot"
+version = "0.1.2"
+description = "KRX news-driven day trading MVP"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9",
+    "feedparser>=6.0",
+    "anthropic>=0.40",
+    "pykrx>=1.0",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "aioresponses>=0.7",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
