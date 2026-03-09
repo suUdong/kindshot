@@ -1,0 +1,17 @@
+[Unit]
+Description=kindshot KRX news-driven trading MVP
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/kindshot
+EnvironmentFile=/opt/kindshot/.env
+ExecStart=/opt/kindshot/.venv/bin/python -m kindshot --paper
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
