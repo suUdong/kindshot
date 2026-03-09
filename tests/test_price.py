@@ -1,5 +1,6 @@
 """Tests for price snapshot scheduling."""
 
+import asyncio
 import time
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
@@ -52,3 +53,17 @@ def test_close_snapshot_uses_config_delay():
     close_offset = close_snap.fire_at - t0_snap.fire_at
     # t0 fires immediately, close fires ~24000s later
     assert abs(close_offset - 24000.0) < 2.0
+
+
+async def test_scheduler_stop_interrupts_sleep():
+    """stop() should interrupt scheduler loop sleep quickly."""
+    cfg = Config()
+    fetcher = PriceFetcher(kis=None)
+    scheduler = SnapshotScheduler(cfg, fetcher, MagicMock())
+
+    task = asyncio.create_task(scheduler.run())
+    await asyncio.sleep(0.05)
+    t0 = time.monotonic()
+    scheduler.stop()
+    await asyncio.wait_for(task, timeout=0.5)
+    assert time.monotonic() - t0 < 0.5

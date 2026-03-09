@@ -38,6 +38,7 @@ class Config:
     llm_wait_for_s: float = 2.0
     llm_cache_ttl_s: float = 60.0
     llm_cache_sweep_s: float = 300.0
+    llm_max_concurrency: int = field(default_factory=lambda: _env_int("LLM_MAX_CONCURRENCY", 2))
 
     # --- KIS ---
     kis_app_key: str = field(default_factory=lambda: _env("KIS_APP_KEY"))
@@ -71,8 +72,17 @@ class Config:
     log_dir: Path = field(default_factory=lambda: Path(_env("LOG_DIR", "logs")))
     schema_version: str = "0.1.2"
 
+    # --- Pipeline ---
+    pipeline_workers: int = field(default_factory=lambda: _env_int("PIPELINE_WORKERS", 4))
+    pipeline_queue_maxsize: int = field(default_factory=lambda: _env_int("PIPELINE_QUEUE_MAXSIZE", 512))
+
     # --- Runtime ---
     dry_run: bool = False
+    paper: bool = False
+
+    # --- Context Card ---
+    pykrx_cache_ttl_s: int = field(default_factory=lambda: _env_int("PYKRX_CACHE_TTL_S", 300))
+    pykrx_cache_max_size: int = field(default_factory=lambda: _env_int("PYKRX_CACHE_MAX_SIZE", 512))
 
     @property
     def kis_enabled(self) -> bool:

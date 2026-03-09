@@ -66,7 +66,7 @@ def test_spread_none_fail_close_when_enabled():
     )
     assert r.passed is False
     assert r.detail.spread_bps_ok is False
-    assert r.skip_reason == "SPREAD_TOO_WIDE"
+    assert r.skip_reason == "SPREAD_DATA_MISSING"
 
 
 def test_extreme_move():
@@ -88,6 +88,18 @@ def test_extreme_move_negative():
         config=_cfg(),
     )
     assert r.passed is False
+
+
+def test_ret_today_none_fail_close():
+    r = quant_check(
+        adv_value_20d=10_000_000_000,
+        spread_bps=10.0,
+        ret_today=None,
+        config=_cfg(),
+    )
+    assert r.passed is False
+    assert r.detail.extreme_move_ok is False
+    assert r.skip_reason == "RET_TODAY_DATA_MISSING"
 
 
 def test_should_track_price_sampling(monkeypatch):

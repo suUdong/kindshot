@@ -49,6 +49,7 @@ class ScheduledSnapshot:
     t0_cum_value: Optional[float] = field(compare=False, default=None)
     run_id: str = field(compare=False, default="")
     schema_version: str = field(compare=False, default="0.1.2")
+    mode: str = field(compare=False, default="live")
 
 
 class SnapshotScheduler:
@@ -64,7 +65,7 @@ class SnapshotScheduler:
         self._fetcher = fetcher
         self._logger = log
         self._heap: list[ScheduledSnapshot] = []
-        self._running = True
+        self._stop_event = asyncio.Event()
         # Track t0 prices per event_id for return calculation
         self._t0_prices: dict[str, tuple[Optional[float], Optional[float]]] = {}
 
@@ -75,6 +76,7 @@ class SnapshotScheduler:
         t0_basis: T0Basis,
         t0_ts: datetime,
         run_id: str,
+        mode: str = "live",
     ) -> None:
         """Schedule t0 snapshot immediately + future horizons."""
         now = time.monotonic()
@@ -89,6 +91,7 @@ class SnapshotScheduler:
             t0_ts=t0_ts,
             run_id=run_id,
             schema_version=self._config.schema_version,
+            mode=mode,
         ))
 
         # Future horizons
@@ -102,6 +105,7 @@ class SnapshotScheduler:
                 t0_ts=t0_ts,
                 run_id=run_id,
                 schema_version=self._config.schema_version,
+                mode=mode,
             ))
 
         # Close snapshot: 15:30 KST + close_snapshot_delay_s (default 300s = 15:35)
@@ -119,6 +123,7 @@ class SnapshotScheduler:
             t0_ts=t0_ts,
             run_id=run_id,
             schema_version=self._config.schema_version,
+            mode=mode,
         ))
 
     async def _fire(self, snap: ScheduledSnapshot) -> None:
@@ -158,6 +163,7 @@ class SnapshotScheduler:
                     value_since = cum_value - t0_cum
 
         record = PriceSnapshot(
+            mode=snap.mode,
             schema_version=snap.schema_version,
             run_id=snap.run_id,
             event_id=snap.event_id,
@@ -179,7 +185,7 @@ class SnapshotScheduler:
 
     async def run(self) -> None:
         """Main loop: fire snapshots as they become due."""
-        while self._running:
+        while not self._stop_event.is_set():
             now = time.monotonic()
 
             while self._heap and self._heap[0].fire_at <= now:
@@ -189,10 +195,13 @@ class SnapshotScheduler:
                 except Exception:
                     logger.exception("Snapshot fire failed: %s/%s", snap.event_id, snap.horizon)
 
-            await asyncio.sleep(1.0)
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass
 
     def stop(self) -> None:
-        self._running = False
+        self._stop_event.set()
 
     @property
     def pending_count(self) -> int:

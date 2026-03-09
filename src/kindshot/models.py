@@ -42,6 +42,7 @@ class SkipStage(str, Enum):
     QUANT = "QUANT"
     LLM_TIMEOUT = "LLM_TIMEOUT"
     LLM_PARSE = "LLM_PARSE"
+    LLM_ERROR = "LLM_ERROR"
     GUARDRAIL = "GUARDRAIL"
 
 
@@ -69,6 +70,12 @@ class QuantCheckDetail(BaseModel):
     extreme_move_ok: bool
 
 
+class MarketContext(BaseModel):
+    kospi_change_pct: Optional[float] = None
+    kosdaq_change_pct: Optional[float] = None
+    vkospi: Optional[float] = None
+
+
 class ContextCard(BaseModel):
     ret_today: Optional[float] = None
     ret_1d: Optional[float] = None
@@ -84,6 +91,7 @@ class ContextCard(BaseModel):
 
 class EventRecord(BaseModel):
     type: str = "event"
+    mode: str = "live"  # "live" | "paper" | "dry_run"
     schema_version: str
     run_id: str
     event_id: str
@@ -113,10 +121,12 @@ class EventRecord(BaseModel):
     quant_check_passed: Optional[bool] = None
     quant_check_detail: Optional[QuantCheckDetail] = None
     ctx: Optional[ContextCard] = None
+    market_ctx: Optional[MarketContext] = None
 
 
 class DecisionRecord(BaseModel):
     type: str = "decision"
+    mode: str = "live"  # "live" | "paper" | "dry_run"
     schema_version: str
     run_id: str
     event_id: str
@@ -132,6 +142,7 @@ class DecisionRecord(BaseModel):
 
 class PriceSnapshot(BaseModel):
     type: str = "price_snapshot"
+    mode: str = "live"  # "live" | "paper" | "dry_run"
     schema_version: str
     run_id: str
     event_id: str

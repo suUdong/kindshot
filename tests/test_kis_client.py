@@ -84,6 +84,45 @@ async def test_get_price_no_credentials():
     assert result is None
 
 
+async def test_get_index_change_missing_prdy_ctrt_returns_none():
+    """Missing prdy_ctrt should return None (fail-close), not 0.0."""
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(INDEX_URL, payload={"output": {}})
+            result = await kis.get_index_change("0001")
+
+    assert result is None
+
+
+async def test_get_index_change_empty_string_returns_none():
+    """Empty string prdy_ctrt should return None (fail-close)."""
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(INDEX_URL, payload={"output": {"prdy_ctrt": ""}})
+            result = await kis.get_index_change("0001")
+
+    assert result is None
+
+
+async def test_get_index_change_valid_value():
+    """Valid prdy_ctrt should be parsed as float."""
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(INDEX_URL, payload={"output": {"prdy_ctrt": "-1.23"}})
+            result = await kis.get_index_change("0001")
+
+    assert result == -1.23
+
+
 async def test_token_failure_returns_none():
     """Token endpoint failure should gracefully return None."""
     cfg = _cfg()

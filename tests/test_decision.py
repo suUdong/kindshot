@@ -10,7 +10,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from kindshot.config import Config
-from kindshot.decision import DecisionEngine, _parse_llm_response, _build_prompt, LlmTimeoutError, LlmParseError
+from kindshot.decision import (
+    DecisionEngine,
+    _parse_llm_response,
+    _build_prompt,
+    LlmTimeoutError,
+    LlmParseError,
+    LlmCallError,
+)
 from kindshot.models import Bucket, ContextCard, Action, SizeHint
 
 
@@ -93,6 +100,61 @@ async def test_cache_hit():
     assert mock_client.messages.create.call_count == 1
 
 
+async def test_inflight_dedup_single_upstream_call():
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text='{"action":"BUY","confidence":80,"size_hint":"M","reason":"test"}')]
+
+    call_count = {"n": 0}
+
+    async def _create(*args, **kwargs):
+        call_count["n"] += 1
+        await asyncio.sleep(0.05)
+        return mock_msg
+
+    mock_client.messages.create = AsyncMock(side_effect=_create)
+    engine._client = mock_client
+
+    ctx = ContextCard()
+    r1, r2 = await asyncio.gather(
+        engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00"),
+        engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00"),
+    )
+
+    assert r1 is not None
+    assert r2 is not None
+    assert call_count["n"] == 1
+    assert {r1.decision_source, r2.decision_source} == {"LLM", "CACHE"}
+
+
+async def test_inflight_dedup_error_propagates_to_all_callers():
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    call_count = {"n": 0}
+
+    async def _create(*args, **kwargs):
+        call_count["n"] += 1
+        await asyncio.sleep(0.05)
+        raise RuntimeError("upstream failure")
+
+    mock_client.messages.create = AsyncMock(side_effect=_create)
+    engine._client = mock_client
+
+    ctx = ContextCard()
+
+    async def _call():
+        with pytest.raises(LlmCallError):
+            await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
+
+    await asyncio.gather(_call(), _call())
+    assert call_count["n"] == 1
+
+
 async def test_llm_timeout_raises():
     cfg = Config(anthropic_api_key="test", llm_wait_for_s=0.01)
     engine = DecisionEngine(cfg)
@@ -103,6 +165,19 @@ async def test_llm_timeout_raises():
 
     ctx = ContextCard()
     with pytest.raises(LlmTimeoutError):
+        await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
+
+
+async def test_llm_call_error_raises():
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(side_effect=RuntimeError("503"))
+    engine._client = mock_client
+
+    ctx = ContextCard()
+    with pytest.raises(LlmCallError):
         await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
 
 

@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 class LlmTimeoutError(Exception):
     """LLM call timed out or failed."""
+
+
+class LlmCallError(Exception):
+    """LLM call failed (non-timeout, e.g. auth, rate limit, network)."""
 
 
 class LlmParseError(Exception):
@@ -57,7 +61,7 @@ ctx_micro: {ctx_micro}
 constraints: max_pos=10% no_overnight=true daily_loss_remaining=85%
 
 task: decide BUY or SKIP. no speculation on cause. no narrative.
-output: {{"action":"BUY|SKIP","confidence":0-100,"size_hint":"S|M|L","reason":"≤15 words"}}"""
+output: {{"action":"BUY|SKIP","confidence":0-100,"size_hint":"S|M|L","reason":"≤100 chars"}}"""
 
 
 def _parse_llm_response(raw: str) -> Optional[dict]:
@@ -109,6 +113,9 @@ class DecisionEngine:
         self._cache: dict[str, _CacheEntry] = {}
         self._last_sweep: float = time.monotonic()
         self._client: Optional[object] = None
+        # In-flight dedup: same key requests await a single upstream LLM call.
+        self._inflight: dict[str, asyncio.Task[DecisionRecord]] = {}
+        self._llm_semaphore = asyncio.Semaphore(max(1, config.llm_max_concurrency))
 
     def _get_client(self):
         if self._client is None:
@@ -132,6 +139,21 @@ class DecisionEngine:
             del self._cache[k]
         self._last_sweep = now
 
+    def _as_cache_result(self, source: DecisionRecord, run_id: str) -> DecisionRecord:
+        return DecisionRecord(
+            schema_version=source.schema_version,
+            run_id=run_id or source.run_id,
+            event_id=source.event_id,
+            decided_at=datetime.now(timezone.utc),
+            llm_model=source.llm_model,
+            llm_latency_ms=0,
+            action=source.action,
+            confidence=source.confidence,
+            size_hint=source.size_hint,
+            reason=source.reason,
+            decision_source="CACHE",
+        )
+
     async def decide(
         self,
         ticker: str,
@@ -143,76 +165,90 @@ class DecisionEngine:
         *,
         run_id: str = "",
         schema_version: str = "0.1.2",
-    ) -> Optional[DecisionRecord]:
-        """Call LLM for BUY/SKIP decision. Returns None on timeout/parse failure."""
+    ) -> DecisionRecord:
+        """Call LLM for BUY/SKIP decision.
+
+        Raises:
+            LlmTimeoutError: upstream timeout.
+            LlmCallError: upstream call failure.
+            LlmParseError: response parse/shape failure.
+        """
 
         self._sweep_cache()
         key = self._cache_key(ticker, headline, bucket)
 
         # Cache hit
         if key in self._cache and self._cache[key].expires_at > time.monotonic():
-            cached = self._cache[key].result
-            return DecisionRecord(
-                schema_version=cached.schema_version,
-                run_id=run_id or cached.run_id,
-                event_id=cached.event_id,
+            return self._as_cache_result(self._cache[key].result, run_id)
+
+        # In-flight dedup for same key to prevent duplicate API calls.
+        inflight = self._inflight.get(key)
+        if inflight is not None:
+            try:
+                shared = await inflight
+            except (LlmTimeoutError, LlmCallError, LlmParseError) as e:
+                # Re-raise per-caller for clearer local traceback context.
+                raise type(e)(str(e)) from e
+            return self._as_cache_result(shared, run_id)
+
+        async def _invoke_uncached() -> DecisionRecord:
+            prompt = _build_prompt(bucket, headline, ticker, corp_name, detected_at_str, ctx)
+            client = self._get_client()
+
+            t0 = time.monotonic()
+            try:
+                async with self._llm_semaphore:
+                    resp = await asyncio.wait_for(
+                        client.messages.create(
+                            model=self._config.llm_model,
+                            max_tokens=200,
+                            messages=[{"role": "user", "content": prompt}],
+                        ),
+                        timeout=self._config.llm_wait_for_s,
+                    )
+                latency_ms = int((time.monotonic() - t0) * 1000)
+            except asyncio.TimeoutError as e:
+                logger.warning("LLM timeout: %s", e)
+                raise LlmTimeoutError(str(e)) from e
+            except Exception as e:
+                logger.warning("LLM call error: %s", e)
+                raise LlmCallError(str(e)) from e
+
+            try:
+                raw_text = resp.content[0].text
+            except (IndexError, AttributeError) as e:
+                logger.warning("LLM response structure unexpected: %s", e)
+                raise LlmParseError(f"unexpected response structure: {e}") from e
+
+            parsed = _parse_llm_response(raw_text)
+            if parsed is None:
+                logger.warning("LLM parse failed: %s", raw_text[:200])
+                raise LlmParseError(raw_text[:200])
+
+            record = DecisionRecord(
+                schema_version=schema_version,
+                run_id=run_id,
+                event_id="",  # filled by caller
                 decided_at=datetime.now(timezone.utc),
-                llm_model=cached.llm_model,
-                llm_latency_ms=0,
-                action=cached.action,
-                confidence=cached.confidence,
-                size_hint=cached.size_hint,
-                reason=cached.reason,
-                decision_source="CACHE",
+                llm_model=self._config.llm_model,
+                llm_latency_ms=latency_ms,
+                action=Action(parsed["action"]),
+                confidence=int(parsed["confidence"]),
+                size_hint=SizeHint(parsed["size_hint"]),
+                reason=parsed.get("reason", ""),
+                decision_source="LLM",
             )
 
-        prompt = _build_prompt(bucket, headline, ticker, corp_name, detected_at_str, ctx)
-        client = self._get_client()
-
-        t0 = time.monotonic()
-        try:
-            resp = await asyncio.wait_for(
-                client.messages.create(
-                    model=self._config.llm_model,
-                    max_tokens=200,
-                    messages=[{"role": "user", "content": prompt}],
-                ),
-                timeout=self._config.llm_wait_for_s,
+            self._cache[key] = _CacheEntry(
+                result=record,
+                expires_at=time.monotonic() + self._config.llm_cache_ttl_s,
             )
-            latency_ms = int((time.monotonic() - t0) * 1000)
-        except (asyncio.TimeoutError, Exception) as e:
-            logger.warning("LLM call failed: %s", e)
-            raise LlmTimeoutError(str(e)) from e
+            return record
 
+        task = asyncio.create_task(_invoke_uncached())
+        self._inflight[key] = task
         try:
-            raw_text = resp.content[0].text
-        except (IndexError, AttributeError) as e:
-            logger.warning("LLM response structure unexpected: %s", e)
-            raise LlmParseError(f"unexpected response structure: {e}") from e
-
-        parsed = _parse_llm_response(raw_text)
-        if parsed is None:
-            logger.warning("LLM parse failed: %s", raw_text[:200])
-            raise LlmParseError(raw_text[:200])
-
-        record = DecisionRecord(
-            schema_version=schema_version,
-            run_id=run_id,
-            event_id="",  # filled by caller
-            decided_at=datetime.now(timezone.utc),
-            llm_model=self._config.llm_model,
-            llm_latency_ms=latency_ms,
-            action=Action(parsed["action"]),
-            confidence=int(parsed["confidence"]),
-            size_hint=SizeHint(parsed["size_hint"]),
-            reason=parsed.get("reason", ""),
-            decision_source="LLM",
-        )
-
-        # Cache
-        self._cache[key] = _CacheEntry(
-            result=record,
-            expires_at=time.monotonic() + self._config.llm_cache_ttl_s,
-        )
-
-        return record
+            return await task
+        finally:
+            if self._inflight.get(key) is task:
+                del self._inflight[key]

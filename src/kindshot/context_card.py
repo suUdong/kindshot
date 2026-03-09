@@ -3,14 +3,37 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 import logging
-from datetime import datetime, timedelta
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from kindshot.config import Config
 from kindshot.kis_client import KisClient
 from kindshot.models import ContextCard
 
 logger = logging.getLogger(__name__)
+
+_PYKRX_CACHE_TTL = 300  # 5 minutes
+_PYKRX_CACHE_MAX_SIZE = 512
+_pykrx_cache: OrderedDict[str, tuple[dict, float]] = OrderedDict()  # ticker -> (data, expire_time)
+
+
+def configure_cache(ttl_s: int, max_size: int) -> None:
+    """Set cache policy from Config at runtime."""
+    global _PYKRX_CACHE_TTL, _PYKRX_CACHE_MAX_SIZE
+    _PYKRX_CACHE_TTL = max(1, int(ttl_s))
+    _PYKRX_CACHE_MAX_SIZE = max(1, int(max_size))
+
+
+def _prune_cache(now: float, max_size: int) -> None:
+    expired = [ticker for ticker, (_data, exp) in _pykrx_cache.items() if exp <= now]
+    for ticker in expired:
+        _pykrx_cache.pop(ticker, None)
+
+    while len(_pykrx_cache) > max_size:
+        _pykrx_cache.popitem(last=False)
 
 
 async def _pykrx_features(ticker: str) -> dict:
@@ -20,8 +43,9 @@ async def _pykrx_features(ticker: str) -> dict:
         try:
             from pykrx import stock
 
-            today = datetime.now().strftime("%Y%m%d")
-            start_20d = (datetime.now() - timedelta(days=40)).strftime("%Y%m%d")
+            _KST = timezone(timedelta(hours=9))
+            today = datetime.now(_KST).strftime("%Y%m%d")
+            start_20d = (datetime.now(_KST) - timedelta(days=40)).strftime("%Y%m%d")
 
             df = stock.get_market_ohlcv(start_20d, today, ticker)
             if df.empty or len(df) < 2:
@@ -66,18 +90,36 @@ async def _pykrx_features(ticker: str) -> dict:
             logger.exception("pykrx fetch failed for %s", ticker)
             return {}
 
-    return await asyncio.to_thread(_fetch)
+    ttl_s = _PYKRX_CACHE_TTL
+    max_size = _PYKRX_CACHE_MAX_SIZE
+    now = time.monotonic()
+    _prune_cache(now, max_size)
+
+    cached = _pykrx_cache.get(ticker)
+    if cached and cached[1] > now:
+        _pykrx_cache.move_to_end(ticker)
+        return cached[0]
+
+    result = await asyncio.to_thread(_fetch)
+    expire_at = time.monotonic() + ttl_s
+    _pykrx_cache[ticker] = (result, expire_at)
+    _pykrx_cache.move_to_end(ticker)
+    _prune_cache(time.monotonic(), max_size)
+    return result
 
 
 async def build_context_card(
     ticker: str,
     kis: Optional[KisClient] = None,
+    config: Optional[Config] = None,
 ) -> tuple[ContextCard, dict]:
     """Build context card for a ticker.
 
     Returns (ContextCard, raw_data_dict) where raw_data_dict has
     additional fields like prev_close needed by quant check.
     """
+    if config is not None:
+        configure_cache(config.pykrx_cache_ttl_s, config.pykrx_cache_max_size)
     hist = await _pykrx_features(ticker)
 
     # KIS realtime features (optional)

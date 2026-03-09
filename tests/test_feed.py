@@ -1,5 +1,8 @@
 """Tests for KIND RSS feed: ETag 304, backoff, recovery."""
 
+import asyncio
+import time
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from aioresponses import aioresponses
@@ -110,3 +113,22 @@ async def test_etag_sent_on_second_poll():
             await feed.poll_once()
 
         assert feed._etag == '"abc123"'
+
+
+async def test_stream_stop_interrupts_sleep():
+    """stop() should break stream sleep without waiting full polling interval."""
+    cfg = Config(feed_interval_market_s=30.0, feed_interval_off_s=30.0)
+    async with aiohttp.ClientSession() as session:
+        feed = KindFeed(cfg, session)
+        feed.poll_once = AsyncMock(return_value=[])  # type: ignore[method-assign]
+
+        async def _consume() -> None:
+            async for _batch in feed.stream():
+                pass
+
+        task = asyncio.create_task(_consume())
+        await asyncio.sleep(0.05)
+        t0 = time.monotonic()
+        feed.stop()
+        await asyncio.wait_for(task, timeout=0.5)
+        assert time.monotonic() - t0 < 0.5

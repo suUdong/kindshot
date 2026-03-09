@@ -117,8 +117,8 @@ class KisClient:
             logger.exception("KIS price fetch failed for %s", ticker)
             return None
 
-    async def get_kospi_index(self) -> Optional[float]:
-        """Get current KOSPI change %. Returns None on failure."""
+    async def get_index_change(self, iscd: str = "0001") -> Optional[float]:
+        """Get index change % by ISCD. '0001'=KOSPI, '2001'=KOSDAQ. Returns None on failure."""
         token = await self._ensure_token()
         if not token:
             return None
@@ -126,7 +126,7 @@ class KisClient:
         try:
             params = {
                 "FID_COND_MRKT_DIV_CODE": "U",
-                "FID_INPUT_ISCD": "0001",  # KOSPI
+                "FID_INPUT_ISCD": iscd,
             }
             async with self._session.get(
                 f"{self._base}/uapi/domestic-stock/v1/quotations/inquire-index-price",
@@ -136,7 +136,15 @@ class KisClient:
             ) as resp:
                 data = await resp.json()
                 output = data.get("output", {})
-                return float(output.get("prdy_ctrt", 0))
+                raw = output.get("prdy_ctrt")
+                if raw is None or raw == "":
+                    logger.warning("KIS index prdy_ctrt missing (iscd=%s): %s", iscd, data.get("msg_cd", ""))
+                    return None
+                return float(raw)
         except Exception:
-            logger.exception("KIS KOSPI fetch failed")
+            logger.exception("KIS index fetch failed (iscd=%s)", iscd)
             return None
+
+    async def get_kospi_index(self) -> Optional[float]:
+        """Get current KOSPI change %. Compat wrapper."""
+        return await self.get_index_change("0001")

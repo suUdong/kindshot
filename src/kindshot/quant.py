@@ -22,7 +22,7 @@ class QuantResult:
 def quant_check(
     adv_value_20d: float,
     spread_bps: Optional[float],
-    ret_today: float,
+    ret_today: Optional[float],
     config: Config,
 ) -> QuantResult:
     """Run 3 quant filters. Returns result with pass/fail and skip reason."""
@@ -37,7 +37,10 @@ def quant_check(
     else:
         spread_ok = True  # skip check when disabled
 
-    extreme_ok = abs(ret_today) <= config.extreme_move_pct
+    if ret_today is None:
+        extreme_ok = False  # fail-close: no data means don't trade
+    else:
+        extreme_ok = abs(ret_today) <= config.extreme_move_pct
 
     detail = QuantCheckDetail(
         adv_value_20d_ok=adv_ok,
@@ -53,9 +56,15 @@ def quant_check(
         if not adv_ok:
             skip_reason = "ADV_TOO_LOW"
         elif not spread_ok:
-            skip_reason = "SPREAD_TOO_WIDE"
+            if config.spread_check_enabled and spread_bps is None:
+                skip_reason = "SPREAD_DATA_MISSING"
+            else:
+                skip_reason = "SPREAD_TOO_WIDE"
         elif not extreme_ok:
-            skip_reason = "EXTREME_MOVE"
+            if ret_today is None:
+                skip_reason = "RET_TODAY_DATA_MISSING"
+            else:
+                skip_reason = "EXTREME_MOVE"
 
     # 10% sampling of quant fails for price tracking
     should_track = False

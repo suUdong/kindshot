@@ -6,7 +6,7 @@ import asyncio
 import logging
 import random
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
 
@@ -66,6 +66,11 @@ class KindFeed:
         self._etag: Optional[str] = None
         self._last_modified: Optional[str] = None
         self._consecutive_failures = 0
+        self._stop_event = asyncio.Event()
+
+    def stop(self) -> None:
+        """Signal the feed to stop polling."""
+        self._stop_event.set()
 
     def _is_market_hours(self) -> bool:
         from datetime import time as dt_time, timezone as tz, timedelta
@@ -145,9 +150,19 @@ class KindFeed:
         return results
 
     async def stream(self) -> AsyncIterator[list[RawDisclosure]]:
-        """Infinite polling loop yielding batches of disclosures."""
-        while True:
+        """Polling loop yielding batches of disclosures until stopped."""
+        while not self._stop_event.is_set():
             items = await self.poll_once()
             if items:
                 yield items
-            await asyncio.sleep(self._interval_with_backoff())
+            if self._stop_event.is_set():
+                break
+
+            # Interruptible sleep for fast shutdown.
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self._interval_with_backoff(),
+                )
+            except asyncio.TimeoutError:
+                pass

@@ -6,4 +6,5 @@ logs/
 dist/
 .venv/
 .pytest_cache/
+.uv-cache/
 .worktrees/
