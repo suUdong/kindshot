@@ -1,6 +1,7 @@
-"""Tests for KIS REST client: graceful failure, px=0 guard, field mapping."""
+"""Tests for KIS REST client: graceful failure, px=0 guard, field mapping, orderbook spread, rate limiting."""
 
 import re
+import time
 
 import pytest
 from aioresponses import aioresponses
@@ -10,6 +11,7 @@ from kindshot.config import Config
 from kindshot.kis_client import KisClient, BASE_URL_PAPER
 
 PRICE_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/inquire-price\?.*")
+ORDERBOOK_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn\?.*")
 INDEX_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/inquire-index-price\?.*")
 
 
@@ -21,11 +23,21 @@ def _token_response():
     return {"access_token": "fake_token", "token_type": "Bearer"}
 
 
-def _price_output(px="50000", cum="1000000000"):
+def _price_output(px="50000", cum="1000000000", open_px="49500"):
     return {
         "output": {
             "stck_prpr": px,
             "acml_tr_pbmn": cum,
+            "stck_oprc": open_px,
+        }
+    }
+
+
+def _orderbook_output(askp1="50100", bidp1="49900"):
+    return {
+        "output1": {
+            "askp1": askp1,
+            "bidp1": bidp1,
         }
     }
 
@@ -34,15 +46,52 @@ async def test_get_price_success():
     cfg = _cfg()
     async with aiohttp.ClientSession() as session:
         kis = KisClient(cfg, session)
+        kis._last_request = 0.0  # skip rate limit wait in tests
         with aioresponses() as m:
             m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
-            m.get(PRICE_URL,
-                  payload=_price_output())
+            m.get(PRICE_URL, payload=_price_output())
+            m.get(ORDERBOOK_URL, payload=_orderbook_output())
             result = await kis.get_price("005930")
 
     assert result is not None
     assert result.px == 50000.0
-    # spread_bps is None from inquire-price (needs 호가 API)
+    assert result.open_px == 49500.0
+    # spread_bps from orderbook: (50100-49900)/50000 * 10000 = 40.0 bps
+    assert result.spread_bps is not None
+    assert result.spread_bps == pytest.approx(40.0, abs=0.5)
+
+
+async def test_get_price_with_spread_from_orderbook():
+    """Spread should be calculated from best ask/bid via orderbook API."""
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(PRICE_URL, payload=_price_output(px="100000"))
+            m.get(ORDERBOOK_URL, payload=_orderbook_output(askp1="100050", bidp1="99950"))
+            result = await kis.get_price("005930")
+
+    assert result is not None
+    # (100050 - 99950) / 100000 * 10000 = 10.0 bps
+    assert result.spread_bps == pytest.approx(10.0, abs=0.5)
+
+
+async def test_get_price_orderbook_failure_returns_none_spread():
+    """If orderbook API fails, spread_bps should be None but price still returned."""
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(PRICE_URL, payload=_price_output())
+            m.get(ORDERBOOK_URL, status=500)
+            result = await kis.get_price("005930")
+
+    assert result is not None
+    assert result.px == 50000.0
     assert result.spread_bps is None
 
 
@@ -51,10 +100,10 @@ async def test_get_price_px_zero_returns_none():
     cfg = _cfg()
     async with aiohttp.ClientSession() as session:
         kis = KisClient(cfg, session)
+        kis._last_request = 0.0
         with aioresponses() as m:
             m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
-            m.get(PRICE_URL,
-                  payload=_price_output(px="0"))
+            m.get(PRICE_URL, payload=_price_output(px="0"))
             result = await kis.get_price("005930")
 
     assert result is None
@@ -65,10 +114,10 @@ async def test_get_price_empty_output_returns_none():
     cfg = _cfg()
     async with aiohttp.ClientSession() as session:
         kis = KisClient(cfg, session)
+        kis._last_request = 0.0
         with aioresponses() as m:
             m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
-            m.get(PRICE_URL,
-                  payload={"msg_cd": "EGW00000"})
+            m.get(PRICE_URL, payload={"msg_cd": "EGW00000"})
             result = await kis.get_price("005930")
 
     assert result is None
@@ -89,6 +138,7 @@ async def test_get_index_change_missing_prdy_ctrt_returns_none():
     cfg = _cfg()
     async with aiohttp.ClientSession() as session:
         kis = KisClient(cfg, session)
+        kis._last_request = 0.0
         with aioresponses() as m:
             m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
             m.get(INDEX_URL, payload={"output": {}})
@@ -102,6 +152,7 @@ async def test_get_index_change_empty_string_returns_none():
     cfg = _cfg()
     async with aiohttp.ClientSession() as session:
         kis = KisClient(cfg, session)
+        kis._last_request = 0.0
         with aioresponses() as m:
             m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
             m.get(INDEX_URL, payload={"output": {"prdy_ctrt": ""}})
@@ -115,6 +166,7 @@ async def test_get_index_change_valid_value():
     cfg = _cfg()
     async with aiohttp.ClientSession() as session:
         kis = KisClient(cfg, session)
+        kis._last_request = 0.0
         with aioresponses() as m:
             m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
             m.get(INDEX_URL, payload={"output": {"prdy_ctrt": "-1.23"}})
@@ -133,3 +185,35 @@ async def test_token_failure_returns_none():
             result = await kis.get_price("005930")
 
     assert result is None
+
+
+async def test_rate_limit_enforced():
+    """Consecutive calls should respect rate limit delay."""
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._rate_limit = 0.1  # 100ms for test speed
+
+        t0 = time.monotonic()
+        await kis._rate_limit_wait()
+        await kis._rate_limit_wait()
+        elapsed = time.monotonic() - t0
+
+    # Second call should wait ~0.1s
+    assert elapsed >= 0.08
+
+
+async def test_open_px_returned():
+    """open_px should be extracted from stck_oprc field."""
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(PRICE_URL, payload=_price_output(px="50000", open_px="49000"))
+            m.get(ORDERBOOK_URL, payload=_orderbook_output())
+            result = await kis.get_price("005930")
+
+    assert result is not None
+    assert result.open_px == 49000.0

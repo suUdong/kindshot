@@ -127,7 +127,7 @@ class DecisionEngine:
         return self._client
 
     def _cache_key(self, ticker: str, headline: str, bucket: Bucket) -> str:
-        h = hashlib.md5(headline.encode()).hexdigest()[:8]
+        h = hashlib.sha256(headline.encode()).hexdigest()[:16]
         return f"{ticker}:{h}:{bucket.value}"
 
     def _sweep_cache(self) -> None:
@@ -202,6 +202,7 @@ class DecisionEngine:
                         client.messages.create(
                             model=self._config.llm_model,
                             max_tokens=200,
+                            temperature=0,
                             messages=[{"role": "user", "content": prompt}],
                         ),
                         timeout=self._config.llm_wait_for_s,

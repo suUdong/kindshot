@@ -7,7 +7,7 @@ import logging
 import random
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator, Optional
 
 import aiohttp
@@ -73,10 +73,13 @@ class KindFeed:
         self._stop_event.set()
 
     def _is_market_hours(self) -> bool:
-        from datetime import time as dt_time, timezone as tz, timedelta
-        kst = tz(timedelta(hours=9))
-        now = datetime.now(kst).time()
-        return dt_time(9, 0) <= now <= dt_time(15, 30)
+        from datetime import time as dt_time
+        kst = timezone(timedelta(hours=9))
+        now_kst = datetime.now(kst)
+        # Weekend: always off-market
+        if now_kst.weekday() >= 5:
+            return False
+        return dt_time(9, 0) <= now_kst.time() <= dt_time(15, 30)
 
     def _base_interval(self) -> float:
         if self._is_market_hours():
@@ -125,7 +128,8 @@ class KindFeed:
             return []
 
         feed = feedparser.parse(body)
-        now = datetime.now(timezone.utc)
+        _KST = timezone(timedelta(hours=9))
+        now = datetime.now(_KST)
         results: list[RawDisclosure] = []
 
         for entry in feed.entries:

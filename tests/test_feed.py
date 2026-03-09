@@ -51,6 +51,11 @@ async def test_poll_once_200():
             items = await feed.poll_once()
     assert len(items) == 1
     assert items[0].ticker == "005930"
+    # detected_at should be KST (UTC+9)
+    from datetime import timedelta, timezone
+    kst = timezone(timedelta(hours=9))
+    assert items[0].detected_at.tzinfo is not None
+    assert items[0].detected_at.utcoffset() == timedelta(hours=9)
 
 
 async def test_poll_once_304_returns_empty():
@@ -113,6 +118,21 @@ async def test_etag_sent_on_second_poll():
             await feed.poll_once()
 
         assert feed._etag == '"abc123"'
+
+
+async def test_weekend_is_off_market():
+    """Weekend should always return off-market hours."""
+    cfg = Config()
+    from datetime import datetime as dt, timedelta, timezone
+    kst = timezone(timedelta(hours=9))
+    # Saturday 10:00 KST
+    saturday_10am = dt(2026, 3, 14, 10, 0, 0, tzinfo=kst)  # 2026-03-14 is a Saturday
+    with patch("kindshot.feed.datetime") as mock_dt:
+        mock_dt.now.return_value = saturday_10am
+        mock_dt.side_effect = lambda *args, **kw: dt(*args, **kw)
+        async with aiohttp.ClientSession() as session:
+            feed = KindFeed(cfg, session)
+            assert feed._is_market_hours() is False
 
 
 async def test_stream_stop_interrupts_sleep():

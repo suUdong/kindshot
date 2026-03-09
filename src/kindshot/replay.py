@@ -103,7 +103,7 @@ async def replay(log_path: Path, config: Config) -> None:
     logger.info("Replay: %d actionable events from %s", len(events), log_path)
 
     engine = DecisionEngine(config)
-    replay_log = JsonlLogger(config.log_dir, run_id=f"replay_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    replay_log = JsonlLogger(config.log_dir, run_id=f"replay_{datetime.now().strftime('%Y%m%d_%H%M%S')}", file_prefix="replay")
 
     stats = {"total": 0, "buy": 0, "skip": 0, "error": 0, "returns": []}
 
@@ -121,8 +121,12 @@ async def replay(log_path: Path, config: Config) -> None:
         detected_at_str = rec.get("detected_at", "")
         if detected_at_str:
             try:
+                from datetime import timedelta, timezone as tz
+                _KST = tz(timedelta(hours=9))
                 dt = datetime.fromisoformat(detected_at_str)
-                detected_at_str = dt.strftime("%H:%M:%S")
+                # Convert to KST to match live pipeline's KST prompt labeling
+                dt_kst = dt.astimezone(_KST)
+                detected_at_str = dt_kst.strftime("%H:%M:%S")
             except (ValueError, TypeError):
                 detected_at_str = "09:00:00"
 
@@ -143,6 +147,7 @@ async def replay(log_path: Path, config: Config) -> None:
             stats["error"] += 1
             continue
 
+        decision.event_id = event_id
         decision.mode = "replay"
 
         # Guardrail

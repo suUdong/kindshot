@@ -12,7 +12,7 @@ from typing import Optional
 
 from kindshot.config import Config
 from kindshot.kis_client import KisClient, PriceInfo
-from kindshot.logger import JsonlLogger
+from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.models import PriceSnapshot, T0Basis
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ class ScheduledSnapshot:
     run_id: str = field(compare=False, default="")
     schema_version: str = field(compare=False, default="0.1.2")
     mode: str = field(compare=False, default="live")
+    is_buy_decision: bool = field(compare=False, default=False)
 
 
 class SnapshotScheduler:
@@ -60,14 +61,20 @@ class SnapshotScheduler:
         config: Config,
         fetcher: PriceFetcher,
         log: JsonlLogger,
+        *,
+        stop_event: Optional[asyncio.Event] = None,
+        pnl_callback: Optional[object] = None,
     ) -> None:
         self._config = config
         self._fetcher = fetcher
         self._logger = log
         self._heap: list[ScheduledSnapshot] = []
-        self._stop_event = asyncio.Event()
+        self._stop_event = stop_event or asyncio.Event()
+        self._pnl_callback = pnl_callback  # callable(ticker, pnl_won) for guardrail state
         # Track t0 prices per event_id for return calculation
         self._t0_prices: dict[str, tuple[Optional[float], Optional[float]]] = {}
+        # Track ticker per event_id for pnl callback
+        self._event_tickers: dict[str, str] = {}
 
     def schedule_t0(
         self,
@@ -77,9 +84,12 @@ class SnapshotScheduler:
         t0_ts: datetime,
         run_id: str,
         mode: str = "live",
+        is_buy_decision: bool = False,
     ) -> None:
         """Schedule t0 snapshot immediately + future horizons."""
         now = time.monotonic()
+
+        self._event_tickers[event_id] = ticker
 
         # t0: fire immediately (will be fetched in the run loop)
         heapq.heappush(self._heap, ScheduledSnapshot(
@@ -92,6 +102,7 @@ class SnapshotScheduler:
             run_id=run_id,
             schema_version=self._config.schema_version,
             mode=mode,
+            is_buy_decision=is_buy_decision,
         ))
 
         # Future horizons
@@ -106,6 +117,7 @@ class SnapshotScheduler:
                 run_id=run_id,
                 schema_version=self._config.schema_version,
                 mode=mode,
+                is_buy_decision=is_buy_decision,
             ))
 
         # Close snapshot: 15:30 KST + close_snapshot_delay_s (default 300s = 15:35)
@@ -124,6 +136,7 @@ class SnapshotScheduler:
             run_id=run_id,
             schema_version=self._config.schema_version,
             mode=mode,
+            is_buy_decision=is_buy_decision,
         ))
 
     async def _fire(self, snap: ScheduledSnapshot) -> None:
@@ -161,6 +174,14 @@ class SnapshotScheduler:
                 ret_short = -ret_long
                 if cum_value is not None and t0_cum is not None:
                     value_since = cum_value - t0_cum
+            # Clean up t0 reference after final snapshot + report P&L
+            if snap.horizon == "close":
+                self._t0_prices.pop(snap.event_id, None)
+                self._event_tickers.pop(snap.event_id, None)
+                # Report close P&L to guardrail state (BUY decisions only)
+                if snap.is_buy_decision and ret_long is not None and self._pnl_callback and t0_px:
+                    pnl_won = ret_long * self._config.order_size
+                    self._pnl_callback(snap.ticker, pnl_won)
 
         record = PriceSnapshot(
             mode=snap.mode,
@@ -192,6 +213,10 @@ class SnapshotScheduler:
                 snap = heapq.heappop(self._heap)
                 try:
                     await self._fire(snap)
+                except LogWriteError:
+                    logger.critical("Snapshot log write failed — stopping runtime")
+                    self._stop_event.set()
+                    return
                 except Exception:
                     logger.exception("Snapshot fire failed: %s/%s", snap.event_id, snap.horizon)
 

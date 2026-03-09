@@ -21,14 +21,16 @@ from kindshot.context_card import build_context_card, configure_cache as configu
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import KindFeed, RawDisclosure
-from kindshot.guardrails import check_guardrails
+from kindshot.guardrails import GuardrailState, check_guardrails
 from kindshot.kis_client import KisClient
-from kindshot.logger import JsonlLogger
+from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.market import MarketMonitor
 from kindshot.models import (
+    Action,
     Bucket,
     ContextCard,
     EventIdMethod,
+    EventKind,
     EventRecord,
     MarketContext,
     SkipStage,
@@ -114,9 +116,37 @@ async def _process_registered_event(
     kis: Optional[KisClient],
     counters: Optional[RuntimeCounters],
     mode: str = "live",
+    guardrail_state: Optional[GuardrailState] = None,
 ) -> None:
     """Process an event that already passed dedup/registry."""
     detected_at = raw.detected_at
+
+    # 1.5. Skip correction/withdrawal events (only originals proceed to decision)
+    if processed.event_kind in (EventKind.CORRECTION, EventKind.WITHDRAWAL):
+        event_rec = EventRecord(
+            mode=mode,
+            schema_version=config.schema_version,
+            run_id=run_id,
+            event_id=processed.event_id,
+            event_id_method=processed.event_id_method,
+            event_kind=processed.event_kind,
+            parent_id=processed.parent_id,
+            event_group_id=processed.event_group_id,
+            parent_match_method=processed.parent_match_method,
+            parent_match_score=processed.parent_match_score,
+            parent_candidate_count=processed.parent_candidate_count,
+            detected_at=detected_at,
+            ticker=raw.ticker,
+            corp_name=raw.corp_name,
+            headline=raw.title,
+            bucket=Bucket.UNKNOWN,
+            skip_stage=SkipStage.BUCKET,
+            skip_reason="CORRECTION_EVENT",
+            market_ctx=market.snapshot,
+        )
+        await log.write(event_rec)
+        _mark_skip(counters, stage=SkipStage.BUCKET.value, reason="CORRECTION_EVENT")
+        return
 
     # 2. Bucket classification
     bucket_result = classify(raw.title)
@@ -231,9 +261,10 @@ async def _process_registered_event(
 
     # Market halt check
     if market.is_halted:
-        logger.info("SKIP (market halted): %s", raw.title[:60])
+        halt_reason = "MARKET_NOT_INITIALIZED" if not market.is_initialized else "MARKET_HALTED"
+        logger.info("SKIP (%s): %s", halt_reason, raw.title[:60])
         await log.write(event_rec)
-        _mark_skip(counters, stage="MARKET", reason="MARKET_HALTED")
+        _mark_skip(counters, stage="MARKET", reason=halt_reason)
         return
 
     # Dry run: skip LLM
@@ -284,12 +315,16 @@ async def _process_registered_event(
     decision.mode = mode
 
     # Guardrails check (final safety net before order)
+    # sector data not yet available in context_card; pass explicitly when added
     gr = check_guardrails(
         ticker=raw.ticker,
         config=config,
         spread_bps=raw_data.get("spread_bps") if ctx else None,
         adv_value_20d=raw_data.get("adv_value_20d") if ctx else None,
         ret_today=raw_data.get("ret_today") if ctx else None,
+        state=guardrail_state,
+        headline=raw.title,
+        sector=raw_data.get("sector", "") if ctx else "",
     )
     if not gr.passed:
         event_rec.skip_stage = SkipStage.GUARDRAIL
@@ -310,6 +345,10 @@ async def _process_registered_event(
         counters.totals[f"decision_action_{decision.action.value}"] += 1
         counters.totals[f"decision_source_{decision.decision_source}"] += 1
 
+    # Track BUY in guardrail state for portfolio-level controls
+    if decision.action == Action.BUY and guardrail_state is not None:
+        guardrail_state.record_buy(raw.ticker)
+
     # Schedule price snapshots with DECIDED_AT basis
     scheduler.schedule_t0(
         event_id=processed.event_id,
@@ -318,6 +357,7 @@ async def _process_registered_event(
         t0_ts=decision.decided_at,
         run_id=run_id,
         mode=mode,
+        is_buy_decision=(decision.action == Action.BUY),
     )
 
     # Paper mode guard: no order execution
@@ -346,6 +386,8 @@ async def _pipeline_loop(
     kis: Optional[KisClient],
     counters: Optional[RuntimeCounters] = None,
     mode: str = "live",
+    stop_event: Optional[asyncio.Event] = None,
+    guardrail_state: Optional[GuardrailState] = None,
 ) -> None:
     """Main pipeline: feed/registry + queue/worker event processing."""
     worker_count = max(1, config.pipeline_workers)
@@ -371,7 +413,16 @@ async def _pipeline_loop(
                     kis=kis,
                     counters=counters,
                     mode=mode,
+                    guardrail_state=guardrail_state,
                 )
+            except LogWriteError:
+                logger.critical("Log write failed in worker %d — initiating shutdown", worker_idx)
+                if counters is not None:
+                    counters.errors["log_write_error"] += 1
+                if stop_event is not None:
+                    stop_event.set()
+                    feed.stop()
+                return
             except Exception:
                 logger.exception("Pipeline worker %d failed", worker_idx)
                 if counters is not None:
@@ -386,6 +437,10 @@ async def _pipeline_loop(
 
     try:
         async for batch in feed.stream():
+            if stop_event is not None and stop_event.is_set():
+                logger.info("Pipeline stop_event detected, exiting feed loop")
+                feed.stop()
+                break
             for raw in batch:
                 if counters is not None:
                     counters.totals["events_seen"] += 1
@@ -416,6 +471,11 @@ async def _pipeline_loop(
                     )
                     await log.write(dup_event)
                     _mark_skip(counters, stage=SkipStage.DUPLICATE.value, reason="DUPLICATE")
+                    continue
+
+                if not raw.ticker:
+                    logger.debug("SKIP (empty ticker): %s", raw.title[:60])
+                    _mark_skip(counters, stage="FEED", reason="EMPTY_TICKER")
                     continue
 
                 await queue.put((raw, processed))
@@ -455,24 +515,22 @@ async def run() -> None:
             kis = KisClient(config, session)
             logger.info("KIS client enabled")
         else:
-            logger.warning("KIS client disabled — price snapshots will be UNAVAILABLE")
+            logger.warning("KIS client disabled — market monitor will block trading (fail-close), price snapshots UNAVAILABLE")
 
+        state_dir = config.log_dir / "state" / mode
         feed = KindFeed(config, session)
-        registry = EventRegistry()
+        registry = EventRegistry(state_dir=state_dir)
         decision_engine = DecisionEngine(config)
         market = MarketMonitor(config, kis)
         fetcher = PriceFetcher(kis=kis)
-        scheduler = SnapshotScheduler(config, fetcher, log)
         configure_context_card_cache(config.pykrx_cache_ttl_s, config.pykrx_cache_max_size)
 
         # Graceful shutdown
         stop_event = asyncio.Event()
 
         def _signal_handler() -> None:
-            logger.info("Shutdown signal received, pending snapshots: %d", scheduler.pending_count)
             stop_event.set()
             feed.stop()
-            scheduler.stop()
 
         try:
             loop = asyncio.get_running_loop()
@@ -487,10 +545,23 @@ async def run() -> None:
                 # SIGTERM may be unavailable on some Windows runtimes.
                 pass
 
+        guardrail_state = GuardrailState(config, state_dir=state_dir)
+
+        def _on_close_pnl(ticker: str, pnl_won: float) -> None:
+            guardrail_state.record_pnl(pnl_won)
+            logger.info("P&L recorded: %s %.0f won (daily total: %.0f)", ticker, pnl_won, guardrail_state.daily_pnl)
+
+        scheduler = SnapshotScheduler(
+            config, fetcher, log,
+            stop_event=stop_event,
+            pnl_callback=_on_close_pnl,
+        )
+
         # Market monitor task (update every 60s)
         async def _market_loop() -> None:
             while not stop_event.is_set():
                 try:
+                    guardrail_state.check_daily_reset()
                     await market.update()
                 except Exception:
                     logger.exception("Market monitor error")
@@ -499,6 +570,8 @@ async def run() -> None:
         tasks = [
             asyncio.create_task(_pipeline_loop(
                 feed, registry, decision_engine, market, scheduler, log, config, run_id, kis, counters, mode,
+                stop_event=stop_event,
+                guardrail_state=guardrail_state,
             ), name="pipeline"),
             asyncio.create_task(scheduler.run(), name="snapshots"),
             asyncio.create_task(_market_loop(), name="market"),

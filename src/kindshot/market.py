@@ -38,14 +38,16 @@ async def _fetch_vkospi() -> Optional[float]:
 class MarketMonitor:
     """Monitors KOSPI/KOSDAQ for halt condition and captures macro snapshot.
 
-    When KIS is unavailable, market check is disabled (always allows trading).
-    Operator should monitor manually in that case.
+    When KIS is unavailable, market monitor cannot initialize and
+    is_halted remains True (fail-close). Trading is blocked until
+    KIS credentials are provided and the first update succeeds.
     """
 
     def __init__(self, config: Config, kis: Optional[KisClient] = None) -> None:
         self._config = config
         self._kis = kis
-        self._halted = False
+        self._halted = True  # fail-close: block trading until first successful update
+        self._initialized = False
         self._kospi_change: Optional[float] = None
         self._kosdaq_change: Optional[float] = None
         self._vkospi: Optional[float] = None
@@ -53,7 +55,13 @@ class MarketMonitor:
 
     @property
     def is_halted(self) -> bool:
+        if not self._initialized:
+            return True
         return self._halted
+
+    @property
+    def is_initialized(self) -> bool:
+        return self._initialized
 
     @property
     def enabled(self) -> bool:
@@ -80,6 +88,9 @@ class MarketMonitor:
                 self._kospi_change = kospi
                 was_halted = self._halted
                 self._halted = kospi <= self._config.kospi_halt_pct
+                if not self._initialized:
+                    self._initialized = True
+                    logger.info("Market monitor initialized: KOSPI %.2f%%", kospi)
                 if self._halted and not was_halted:
                     logger.warning("MARKET HALT: KOSPI %.2f%% <= %.1f%%", kospi, self._config.kospi_halt_pct)
                 elif not self._halted and was_halted:

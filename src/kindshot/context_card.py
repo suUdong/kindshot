@@ -134,6 +134,8 @@ async def build_context_card(
             prev_close = hist.get("prev_close")
             if prev_close and prev_close > 0:
                 ret_today = round(((price_info.px / prev_close) - 1) * 100, 2)
+                if price_info.open_px and price_info.open_px > 0:
+                    gap = round(((price_info.open_px / prev_close) - 1) * 100, 2)
 
     card = ContextCard(
         ret_today=ret_today,
@@ -146,5 +148,5 @@ async def build_context_card(
         vol_pct_20d=hist.get("vol_pct_20d"),
     )
 
-    raw = {**hist, "spread_bps": spread_bps, "ret_today": ret_today}
+    raw = {**hist, "spread_bps": spread_bps, "ret_today": ret_today, "gap": gap}
     return card, raw

@@ -171,3 +171,25 @@ def test_fallback_includes_link_for_collision_resistance():
     assert res1 is not None
     assert res2 is not None
     assert res1.event_id != res2.event_id
+
+
+def test_persistence_survives_restart(tmp_path):
+    """Dedup state should persist across registry instances."""
+    state_dir = tmp_path / "state"
+    reg1 = EventRegistry(state_dir=state_dir)
+    r = _raw()
+    e1 = reg1.process(r)
+    assert e1 is not None
+
+    # New registry with same state_dir should load persisted IDs
+    reg2 = EventRegistry(state_dir=state_dir)
+    e2 = reg2.process(r)
+    assert e2 is None  # should be deduped from persisted state
+
+
+def test_persistence_without_state_dir():
+    """Without state_dir, no file I/O should occur."""
+    reg = EventRegistry()  # no state_dir
+    r = _raw()
+    e = reg.process(r)
+    assert e is not None

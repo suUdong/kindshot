@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -16,17 +17,22 @@ logger = logging.getLogger(__name__)
 BASE_URL_REAL = "https://openapi.koreainvestment.com:9443"
 BASE_URL_PAPER = "https://openapivts.koreainvestment.com:29443"
 
+# KIS rate limits: production 20 req/s (0.05s), paper 2 req/s (0.5s)
+_RATE_LIMIT_REAL = 0.05
+_RATE_LIMIT_PAPER = 0.5
+
 
 @dataclass
 class PriceInfo:
     px: float
+    open_px: Optional[float]
     spread_bps: Optional[float]
     cum_value: Optional[float]
     fetch_latency_ms: int
 
 
 class KisClient:
-    """KIS REST API client with token management."""
+    """KIS REST API client with token management and rate limiting."""
 
     def __init__(self, config: Config, session: aiohttp.ClientSession) -> None:
         self._config = config
@@ -34,6 +40,8 @@ class KisClient:
         self._base = BASE_URL_PAPER if config.kis_is_paper else BASE_URL_REAL
         self._token: Optional[str] = None
         self._token_expires: float = 0.0
+        self._last_request: float = 0.0
+        self._rate_limit = _RATE_LIMIT_PAPER if config.kis_is_paper else _RATE_LIMIT_REAL
 
     async def _ensure_token(self) -> Optional[str]:
         if not self._config.kis_app_key or not self._config.kis_app_secret:
@@ -69,8 +77,16 @@ class KisClient:
             "content-type": "application/json; charset=utf-8",
         }
 
+    async def _rate_limit_wait(self) -> None:
+        """Enforce KIS rate limit between API calls."""
+        now = time.monotonic()
+        elapsed = now - self._last_request
+        if elapsed < self._rate_limit:
+            await asyncio.sleep(self._rate_limit - elapsed)
+        self._last_request = time.monotonic()
+
     async def get_price(self, ticker: str) -> Optional[PriceInfo]:
-        """Get current price for a ticker. Returns None on any failure."""
+        """Get current price + orderbook spread for a ticker. Returns None on any failure."""
         token = await self._ensure_token()
         if not token:
             return None
@@ -81,6 +97,9 @@ class KisClient:
                 "FID_COND_MRKT_DIV_CODE": "J",
                 "FID_INPUT_ISCD": ticker,
             }
+
+            # 1. inquire-price for px, open_px, cum_value
+            await self._rate_limit_wait()
             async with self._session.get(
                 f"{self._base}/uapi/domestic-stock/v1/quotations/inquire-price",
                 headers=self._headers(token, "FHKST01010100"),
@@ -98,23 +117,57 @@ class KisClient:
                     logger.warning("KIS returned px=0 for %s, treating as UNAVAILABLE", ticker)
                     return None
 
-                # MVP: spread_bps requires 호가(asking price) API endpoint
-                # (/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn)
-                # inquire-price only has 고가/저가, not best ask/bid.
-                # Set to 0 so spread_bps=None; spread_check_enabled defaults False.
-                ask = 0.0
-                bid = 0.0
+                open_px_raw = output.get("stck_oprc", 0)
+                open_px = float(open_px_raw) if open_px_raw else None
+                if open_px is not None and open_px <= 0:
+                    open_px = None
                 cum_value = float(output.get("acml_tr_pbmn", 0))
 
-                spread_bps = None
-                if ask > 0 and bid > 0 and px > 0:
-                    spread_bps = ((ask - bid) / px) * 10000
+            # 2. inquire-asking-price for spread_bps (호가)
+            spread_bps = await self._get_spread_bps(token, ticker)
 
-                latency = int((time.monotonic() - t0) * 1000)
-                return PriceInfo(px=px, spread_bps=spread_bps, cum_value=cum_value, fetch_latency_ms=latency)
+            latency = int((time.monotonic() - t0) * 1000)
+            return PriceInfo(
+                px=px,
+                open_px=open_px,
+                spread_bps=spread_bps,
+                cum_value=cum_value,
+                fetch_latency_ms=latency,
+            )
 
         except Exception:
             logger.exception("KIS price fetch failed for %s", ticker)
+            return None
+
+    async def _get_spread_bps(self, token: str, ticker: str) -> Optional[float]:
+        """Fetch best ask/bid from 호가 API and compute spread in bps."""
+        try:
+            await self._rate_limit_wait()
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": ticker,
+            }
+            async with self._session.get(
+                f"{self._base}/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+                headers=self._headers(token, "FHKST01010200"),
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                data = await resp.json()
+                output1 = data.get("output1")
+                if not output1 or not isinstance(output1, dict):
+                    logger.debug("KIS orderbook empty for %s", ticker)
+                    return None
+
+                askp1 = float(output1.get("askp1", 0))
+                bidp1 = float(output1.get("bidp1", 0))
+                if askp1 <= 0 or bidp1 <= 0:
+                    return None
+
+                mid = (askp1 + bidp1) / 2
+                return round((askp1 - bidp1) / mid * 10000, 1)
+        except Exception:
+            logger.exception("KIS orderbook fetch failed for %s", ticker)
             return None
 
     async def get_index_change(self, iscd: str = "0001") -> Optional[float]:
@@ -124,6 +177,7 @@ class KisClient:
             return None
 
         try:
+            await self._rate_limit_wait()
             params = {
                 "FID_COND_MRKT_DIV_CODE": "U",
                 "FID_INPUT_ISCD": iscd,

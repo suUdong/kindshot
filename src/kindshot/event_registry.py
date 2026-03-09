@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Optional
 
 from kindshot.feed import RawDisclosure, _extract_kind_uid
@@ -15,6 +18,8 @@ from kindshot.models import (
     EventKind,
     ParentMatchMethod,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -56,13 +61,60 @@ def _is_withdrawal(title: str) -> bool:
 
 
 class EventRegistry:
-    """Tracks seen events for dedup and links corrections to parents."""
+    """Tracks seen events for dedup and links corrections to parents.
 
-    def __init__(self) -> None:
+    Optionally persists seen_ids to a JSONL file so restarts don't
+    reprocess same-day events.
+    """
+
+    def __init__(self, state_dir: Optional[Path] = None) -> None:
         self._seen_ids: dict[str, datetime] = {}  # event_id -> detected_at
         # ticker -> list of (event_id, normalized_title, detected_at, event_kind)
         self._history: dict[str, list[tuple[str, str, datetime, EventKind]]] = {}
         self._current_date: Optional[str] = None  # YYYYMMDD for TTL
+        self._state_dir = state_dir
+        if state_dir:
+            state_dir.mkdir(parents=True, exist_ok=True)
+            self._load_state()
+
+    def _state_file(self) -> Optional[Path]:
+        if not self._state_dir or not self._current_date:
+            return None
+        return self._state_dir / f"dedup_{self._current_date}.jsonl"
+
+    def _load_state(self) -> None:
+        """Load seen_ids from today's state file if it exists."""
+        kst = timezone(timedelta(hours=9))
+        today = datetime.now(kst).strftime("%Y%m%d")
+        self._current_date = today
+        state_file = self._state_file()
+        if not state_file or not state_file.exists():
+            return
+        try:
+            with open(state_file, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    rec = json.loads(line)
+                    eid = rec.get("event_id", "")
+                    ts = rec.get("detected_at", "")
+                    if eid:
+                        self._seen_ids[eid] = datetime.fromisoformat(ts) if ts else datetime.now(kst)
+            logger.info("Loaded %d dedup entries from %s", len(self._seen_ids), state_file.name)
+        except Exception:
+            logger.exception("Failed to load dedup state from %s", state_file)
+
+    def _persist_id(self, event_id: str, detected_at: datetime) -> None:
+        """Append a single event_id to today's state file."""
+        state_file = self._state_file()
+        if not state_file:
+            return
+        try:
+            with open(state_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"event_id": event_id, "detected_at": detected_at.isoformat()}) + "\n")
+        except Exception:
+            logger.exception("Failed to persist dedup id %s", event_id)
 
     def _prune_if_new_day(self, now: datetime) -> None:
         """Clear history when KST date changes (TTL = current trading day)."""
@@ -96,6 +148,7 @@ class EventRegistry:
         if event_id in self._seen_ids:
             return None
         self._seen_ids[event_id] = raw.detected_at
+        self._persist_id(event_id, raw.detected_at)
 
         # Determine event_kind
         if _is_withdrawal(raw.title):
@@ -144,10 +197,11 @@ class EventRegistry:
 
         event_group_id = parent_id if parent_id else event_id
 
-        # Store in history
-        self._history.setdefault(raw.ticker, []).append(
-            (event_id, norm_title, raw.detected_at, event_kind)
-        )
+        # Store in history (cap at 100 per ticker to bound memory/fuzzy matching)
+        history = self._history.setdefault(raw.ticker, [])
+        history.append((event_id, norm_title, raw.detected_at, event_kind))
+        if len(history) > 100:
+            self._history[raw.ticker] = history[-100:]
 
         return ProcessedEvent(
             event_id=event_id,

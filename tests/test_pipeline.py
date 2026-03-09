@@ -25,6 +25,9 @@ async def _run_pipeline_once(tmp_path, raw_items, decision_side_effect=None, gua
     log = JsonlLogger(cfg.log_dir, run_id="test_run")
     registry = EventRegistry()
     market = MarketMonitor(cfg)
+    # Simulate initialized market for pipeline tests
+    market._initialized = True
+    market._halted = False
     fetcher = PriceFetcher(kis=None)
     scheduler = SnapshotScheduler(cfg, fetcher, log)
 

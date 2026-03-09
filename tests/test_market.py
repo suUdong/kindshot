@@ -22,6 +22,13 @@ async def test_snapshot_default_none():
     assert snap.vkospi is None
 
 
+async def test_initial_state_is_halted():
+    """MarketMonitor should start halted (fail-close) until first successful update."""
+    monitor = MarketMonitor(_cfg())
+    assert monitor.is_halted is True
+    assert monitor.is_initialized is False
+
+
 async def test_update_with_kis():
     mock_kis = AsyncMock()
     mock_kis.get_index_change = AsyncMock(side_effect=lambda iscd: -0.5 if iscd == "0001" else 0.3)
@@ -36,6 +43,7 @@ async def test_update_with_kis():
     assert snap.kosdaq_change_pct == 0.3
     assert snap.vkospi == 18.5
     assert monitor.is_halted is False  # -0.5 > -1.0
+    assert monitor.is_initialized is True
 
 
 async def test_halt_triggered():
@@ -61,6 +69,9 @@ async def test_no_kis_no_update():
     snap = monitor.snapshot
     assert snap.kospi_change_pct is None
     assert snap.vkospi == 15.0
+    # Without KIS, market monitor never initializes — stays halted (fail-close)
+    assert monitor.is_halted is True
+    assert monitor.is_initialized is False
 
 
 async def test_snapshot_returns_market_context():
