@@ -16,23 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 async def _fetch_vkospi() -> Optional[float]:
-    """Fetch today's VKOSPI close from pykrx (blocking I/O in thread)."""
+    """VKOSPI fetch stub. pykrx removed (KRX blocks AWS IPs).
 
-    def _fetch() -> Optional[float]:
-        try:
-            from pykrx import stock
-
-            _KST = timezone(timedelta(hours=9))
-            today = datetime.now(_KST).strftime("%Y%m%d")
-            df = stock.get_index_ohlcv(today, today, "1004")
-            if df.empty:
-                return None
-            return float(df["종가"].iloc[-1])
-        except Exception:
-            logger.exception("pykrx VKOSPI fetch failed")
-            return None
-
-    return await asyncio.to_thread(_fetch)
+    VKOSPI is optional context data; returning None is safe.
+    """
+    return None
 
 
 class MarketMonitor:

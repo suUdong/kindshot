@@ -199,6 +199,47 @@ class KisClient:
             logger.exception("KIS index fetch failed (iscd=%s)", iscd)
             return None
 
+    async def get_news_disclosures(
+        self,
+        ticker: str = "",
+        from_time: str = "",
+    ) -> list[dict]:
+        """Fetch news/disclosure titles via KIS API (국내주식-141).
+
+        Returns list of dicts with keys: cntt_usiq_srno, data_dt, data_tm,
+        hts_pbnt_titl_cntt, iscd1..iscd5, news_ofer_entp_code, dorg.
+        """
+        token = await self._ensure_token()
+        if not token:
+            return []
+
+        try:
+            await self._rate_limit_wait()
+            params = {
+                "FID_NEWS_OFER_ENTP_CODE": "",
+                "FID_COND_MRKT_CLS_CODE": "",
+                "FID_INPUT_ISCD": ticker,
+                "FID_TITL_CNTT": "",
+                "FID_INPUT_DATE_1": "",
+                "FID_INPUT_HOUR_1": from_time,
+                "FID_RANK_SORT_CLS_CODE": "",
+                "FID_INPUT_SRNO": "",
+            }
+            async with self._session.get(
+                f"{self._base}/uapi/domestic-stock/v1/quotations/news-title",
+                headers=self._headers(token, "FHKST01011800"),
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                data = await resp.json()
+                output = data.get("output", [])
+                if not isinstance(output, list):
+                    output = [output] if output else []
+                return output
+        except Exception:
+            logger.exception("KIS news disclosure fetch failed")
+            return []
+
     async def get_kospi_index(self) -> Optional[float]:
         """Get current KOSPI change %. Compat wrapper."""
         return await self.get_index_change("0001")

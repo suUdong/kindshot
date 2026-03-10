@@ -24,6 +24,9 @@ dev = [
     "aioresponses>=0.7",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/kindshot"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

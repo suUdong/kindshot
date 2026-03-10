@@ -128,20 +128,28 @@ class EventRegistry:
     def process(self, raw: RawDisclosure) -> Optional[ProcessedEvent]:
         """Process a raw disclosure. Returns None if duplicate."""
         self._prune_if_new_day(raw.detected_at)
-        kind_uid = _extract_kind_uid(raw.link)
+
+        # Detect source from link scheme
+        is_kis = raw.link.startswith("kis://")
+        kind_uid = None if is_kis else _extract_kind_uid(raw.link)
 
         # Generate event_id
-        if kind_uid:
+        if is_kis and raw.rss_guid:
+            # KIS source: use news serial number as UID
+            event_id = _hash("KIS", raw.rss_guid)
+            method = EventIdMethod.UID
+        elif kind_uid:
             event_id = _hash("KIND", kind_uid)
             method = EventIdMethod.UID
         else:
+            source_prefix = "KIS" if is_kis else "KIND"
             # Fallback: include link for collision resistance
             if raw.rss_guid:
-                event_id = _hash("KIND", raw.rss_guid)
+                event_id = _hash(source_prefix, raw.rss_guid)
             elif raw.published:
-                event_id = _hash("KIND", raw.published, raw.ticker, _normalize_title(raw.title), raw.link)
+                event_id = _hash(source_prefix, raw.published, raw.ticker, _normalize_title(raw.title), raw.link)
             else:
-                event_id = _hash("KIND", raw.detected_at.isoformat(), raw.ticker, _normalize_title(raw.title), raw.link)
+                event_id = _hash(source_prefix, raw.detected_at.isoformat(), raw.ticker, _normalize_title(raw.title), raw.link)
             method = EventIdMethod.FALLBACK
 
         # Dedup

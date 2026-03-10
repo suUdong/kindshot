@@ -20,7 +20,7 @@ from kindshot.config import Config, load_config
 from kindshot.context_card import build_context_card, configure_cache as configure_context_card_cache
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError
 from kindshot.event_registry import EventRegistry, ProcessedEvent
-from kindshot.feed import KindFeed, RawDisclosure
+from kindshot.feed import KindFeed, KisFeed, RawDisclosure
 from kindshot.guardrails import GuardrailState, check_guardrails
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -117,6 +117,7 @@ async def _process_registered_event(
     counters: Optional[RuntimeCounters],
     mode: str = "live",
     guardrail_state: Optional[GuardrailState] = None,
+    feed_source: str = "KIND",
 ) -> None:
     """Process an event that already passed dedup/registry."""
     detected_at = raw.detected_at
@@ -216,7 +217,7 @@ async def _process_registered_event(
         parent_match_method=processed.parent_match_method,
         parent_match_score=processed.parent_match_score,
         parent_candidate_count=processed.parent_candidate_count,
-        source="KIND",
+        source=feed_source,
         rss_guid=raw.rss_guid,
         rss_link=raw.link,
         kind_uid=processed.kind_uid,
@@ -375,7 +376,7 @@ async def _process_registered_event(
 
 
 async def _pipeline_loop(
-    feed: KindFeed,
+    feed,
     registry: EventRegistry,
     decision_engine: DecisionEngine,
     market: MarketMonitor,
@@ -388,6 +389,7 @@ async def _pipeline_loop(
     mode: str = "live",
     stop_event: Optional[asyncio.Event] = None,
     guardrail_state: Optional[GuardrailState] = None,
+    feed_source: str = "KIND",
 ) -> None:
     """Main pipeline: feed/registry + queue/worker event processing."""
     worker_count = max(1, config.pipeline_workers)
@@ -414,6 +416,7 @@ async def _pipeline_loop(
                     counters=counters,
                     mode=mode,
                     guardrail_state=guardrail_state,
+                    feed_source=feed_source,
                 )
             except LogWriteError:
                 logger.critical("Log write failed in worker %d — initiating shutdown", worker_idx)
@@ -518,7 +521,16 @@ async def run() -> None:
             logger.warning("KIS client disabled — market monitor will block trading (fail-close), price snapshots UNAVAILABLE")
 
         state_dir = config.log_dir / "state" / mode
-        feed = KindFeed(config, session)
+        feed_source = config.feed_source.upper()
+        if feed_source == "KIS" and kis:
+            feed = KisFeed(config, kis)
+            logger.info("Feed source: KIS API")
+        else:
+            if feed_source == "KIS" and not kis:
+                logger.warning("KIS feed requested but KIS client disabled — falling back to KIND RSS")
+            feed = KindFeed(config, session)
+            feed_source = "KIND"
+            logger.info("Feed source: KIND RSS")
         registry = EventRegistry(state_dir=state_dir)
         decision_engine = DecisionEngine(config)
         market = MarketMonitor(config, kis)
@@ -572,6 +584,7 @@ async def run() -> None:
                 feed, registry, decision_engine, market, scheduler, log, config, run_id, kis, counters, mode,
                 stop_event=stop_event,
                 guardrail_state=guardrail_state,
+                feed_source=feed_source,
             ), name="pipeline"),
             asyncio.create_task(scheduler.run(), name="snapshots"),
             asyncio.create_task(_market_loop(), name="market"),

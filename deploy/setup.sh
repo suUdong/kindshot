@@ -2,14 +2,31 @@
 set -euo pipefail
 
 # kindshot 서버 초기 구성 스크립트
-# 사용법: curl ... | bash  또는 ssh로 접속 후 bash setup.sh
+# 사용법: ssh로 접속 후 bash setup.sh
 
 APP_DIR="/opt/kindshot"
 REPO_URL="https://github.com/suUdong/kindshot.git"
 
-echo "=== 시스템 패키지 설치 ==="
-sudo apt-get update -y
-sudo apt-get install -y python3.11 python3.11-venv python3-pip git
+echo "=== swap 메모리 설정 (2GB) ==="
+if [ ! -f /swapfile ]; then
+    sudo fallocate -l 2G /swapfile
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+    echo "swap 생성 완료"
+else
+    echo "swap 이미 존재, 스킵"
+fi
+
+echo "=== Python 3.11 설치 ==="
+if ! command -v python3.11 &>/dev/null; then
+    sudo apt-get update -y
+    sudo add-apt-repository ppa:deadsnakes/ppa -y
+    sudo apt-get install -y python3.11 python3.11-venv python3.11-dev git
+else
+    echo "python3.11 이미 설치됨"
+fi
 
 echo "=== 프로젝트 클론 ==="
 sudo mkdir -p "$APP_DIR"
@@ -31,7 +48,7 @@ pip install --upgrade pip
 pip install -e .
 
 echo "=== 로그 디렉토리 생성 ==="
-mkdir -p /opt/kindshot/logs
+mkdir -p "$APP_DIR/logs"
 
 echo "=== .env 설정 ==="
 if [ ! -f "$APP_DIR/.env" ]; then
@@ -53,6 +70,6 @@ bash "$APP_DIR/deploy/cron.sh"
 echo ""
 echo "=== 완료 ==="
 echo "1. .env 편집:  nano $APP_DIR/.env"
-echo "2. 수동 테스트: cd $APP_DIR && source .venv/bin/activate && python -m kindshot --dry-run"
+echo "2. 수동 테스트: bash deploy/run.sh --dry-run"
 echo "3. 서비스 시작: sudo systemctl start kindshot"
-echo "4. 로그 확인:   tail -f /opt/kindshot/logs/kindshot_\$(date +%Y%m%d).jsonl"
+echo "4. 로그 확인:   tail -f $APP_DIR/logs/kindshot_\$(date +%Y%m%d).jsonl"

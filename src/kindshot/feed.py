@@ -14,6 +14,7 @@ import aiohttp
 import feedparser
 
 from kindshot.config import Config
+from kindshot.kis_client import KisClient
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,123 @@ class KindFeed:
                 break
 
             # Interruptible sleep for fast shutdown.
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self._interval_with_backoff(),
+                )
+            except asyncio.TimeoutError:
+                pass
+
+
+class KisFeed:
+    """KIS API-based disclosure feed. AWS-compatible alternative to KindFeed."""
+
+    def __init__(self, config: Config, kis: KisClient) -> None:
+        self._config = config
+        self._kis = kis
+        self._seen_ids: set[str] = set()
+        self._last_time: str = ""  # HHMMSS for incremental polling
+        self._consecutive_failures = 0
+        self._stop_event = asyncio.Event()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def _is_market_hours(self) -> bool:
+        from datetime import time as dt_time
+        kst = timezone(timedelta(hours=9))
+        now_kst = datetime.now(kst)
+        if now_kst.weekday() >= 5:
+            return False
+        return dt_time(9, 0) <= now_kst.time() <= dt_time(15, 30)
+
+    def _base_interval(self) -> float:
+        if self._is_market_hours():
+            return self._config.feed_interval_market_s
+        return self._config.feed_interval_off_s
+
+    def _interval_with_backoff(self) -> float:
+        base = self._base_interval()
+        if self._consecutive_failures >= self._config.feed_backoff_threshold:
+            multiplier = 2 ** (self._consecutive_failures - self._config.feed_backoff_threshold + 1)
+            base = min(base * multiplier, self._config.feed_backoff_max_s)
+        jitter = base * self._config.feed_jitter_pct
+        return base + random.uniform(-jitter, jitter)
+
+    async def poll_once(self) -> list[RawDisclosure]:
+        """Single poll via KIS news-title API."""
+        try:
+            items = await self._kis.get_news_disclosures(
+                from_time=self._last_time,
+            )
+        except Exception:
+            self._consecutive_failures += 1
+            logger.exception("KIS disclosure fetch error")
+            return []
+
+        if not items:
+            self._consecutive_failures += 1
+            return []
+
+        self._consecutive_failures = 0
+        _KST = timezone(timedelta(hours=9))
+        now = datetime.now(_KST)
+        results: list[RawDisclosure] = []
+
+        for item in items:
+            news_id = item.get("cntt_usiq_srno", "")
+            if not news_id or news_id in self._seen_ids:
+                continue
+            self._seen_ids.add(news_id)
+
+            title = item.get("hts_pbnt_titl_cntt", "")
+            data_tm = item.get("data_tm", "")
+
+            # Extract first non-empty ticker from iscd1~iscd5
+            ticker = ""
+            for i in range(1, 6):
+                t = item.get(f"iscd{i}", "").strip()
+                if t and len(t) == 6 and t.isdigit():
+                    ticker = t
+                    break
+
+            # Extract corp name from title (회사명(종목코드) pattern)
+            corp_name = ""
+            m = re.search(r"(.+?)\((\d{6})\)", title)
+            if m:
+                corp_name = m.group(1).strip()
+
+            # Track latest time for incremental polling
+            if data_tm and data_tm > self._last_time:
+                self._last_time = data_tm
+
+            results.append(
+                RawDisclosure(
+                    title=title,
+                    link=f"kis://news/{news_id}",
+                    rss_guid=news_id,
+                    published=f"{item.get('data_dt', '')} {data_tm}",
+                    ticker=ticker,
+                    corp_name=corp_name,
+                    detected_at=now,
+                )
+            )
+
+        # Cap seen_ids to prevent unbounded growth
+        if len(self._seen_ids) > 10000:
+            self._seen_ids = set(list(self._seen_ids)[-5000:])
+
+        return results
+
+    async def stream(self) -> AsyncIterator[list[RawDisclosure]]:
+        """Polling loop yielding batches of disclosures until stopped."""
+        while not self._stop_event.is_set():
+            items = await self.poll_once()
+            if items:
+                yield items
+            if self._stop_event.is_set():
+                break
             try:
                 await asyncio.wait_for(
                     self._stop_event.wait(),
