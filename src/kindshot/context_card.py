@@ -51,10 +51,16 @@ async def _pykrx_features(ticker: str) -> dict:
             if df.empty or len(df) < 2:
                 return {}
 
-            close = df["종가"]
-            volume = df["거래량"]
-            value = df["거래대금"]
+            # pykrx column names vary; try Korean then English
+            close_col = "종가" if "종가" in df.columns else "Close" if "Close" in df.columns else None
+            vol_col = "거래량" if "거래량" in df.columns else "Volume" if "Volume" in df.columns else None
+            val_col = "거래대금" if "거래대금" in df.columns else "Value" if "Value" in df.columns else None
 
+            if not close_col:
+                logger.warning("pykrx unexpected columns for %s: %s", ticker, list(df.columns))
+                return {}
+
+            close = df[close_col]
             prev_close = close.iloc[-2] if len(close) >= 2 else None
             cur_close = close.iloc[-1]
             close_3d = close.iloc[-4] if len(close) >= 4 else None
@@ -71,12 +77,17 @@ async def _pykrx_features(ticker: str) -> dict:
             else:
                 pos_20d = None
 
-            adv_20d = value.tail(20).mean() if len(value) >= 20 else value.mean()
+            adv_20d = None
+            if val_col:
+                value = df[val_col]
+                adv_20d = value.tail(20).mean() if len(value) >= 20 else value.mean()
 
-            # vol_pct_20d: current volume percentile in 20-day window
-            vol_20 = volume.tail(20)
-            cur_vol = volume.iloc[-1]
-            vol_pct = (vol_20 < cur_vol).sum() / len(vol_20) * 100 if len(vol_20) > 0 else None
+            vol_pct = None
+            if vol_col:
+                volume = df[vol_col]
+                vol_20 = volume.tail(20)
+                cur_vol = volume.iloc[-1]
+                vol_pct = (vol_20 < cur_vol).sum() / len(vol_20) * 100 if len(vol_20) > 0 else None
 
             return {
                 "ret_1d": round(ret_1d, 2) if ret_1d is not None else None,
