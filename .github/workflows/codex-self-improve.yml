@@ -1,0 +1,89 @@
+name: codex-self-improve
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      run_reason:
+        description: Optional reason for this run
+        required: false
+        default: manual-trigger
+      max_attempts:
+        description: Retry attempts when rate-limited
+        required: false
+        default: "6"
+
+concurrency:
+  group: codex-self-improve
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  improve:
+    runs-on: [self-hosted, codex-home]
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Verify codex CLI
+        run: codex --version
+
+      - name: Run codex self-improve loop
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RUN_REASON: ${{ github.event.inputs.run_reason || 'scheduled' }}
+          CODEX_MAX_ATTEMPTS: ${{ github.event.inputs.max_attempts || '6' }}
+          CODEX_BASE_DELAY_SEC: "900"
+          CODEX_MAX_DELAY_SEC: "14400"
+          CODEX_APPROVAL_POLICY: "never"
+          CODEX_SANDBOX: "workspace-write"
+        run: python scripts/codex_exec_with_backoff.py --repo-dir . --prompt-file .codex/prompts/self_improve.md
+
+      - name: Validate project after codex run
+        run: |
+          python -m compileall src tests
+          python -m pytest -q
+
+      - name: Upload codex summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-loop-summary
+          path: memory/codex-loop/latest.md
+          if-no-files-found: ignore
+
+      - name: Create pull request for changes
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: codex/self-improve
+          delete-branch: true
+          commit-message: "chore(codex): automated self-improve update"
+          title: "chore(codex): automated self-improve update"
+          body: |
+            Automated by codex-self-improve workflow.
+
+            Trigger:
+            - event: ${{ github.event_name }}
+            - run_reason: ${{ github.event.inputs.run_reason || 'scheduled' }}
+
+            Review checklist:
+            - [ ] hypothesis and evidence are clear
+            - [ ] guardrail and risk controls unchanged
+            - [ ] tests and compile checks pass
