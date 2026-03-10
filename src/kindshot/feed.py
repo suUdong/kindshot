@@ -228,28 +228,46 @@ class KisFeed:
         now = datetime.now(_KST)
         results: list[RawDisclosure] = []
 
-        # news_lrdv_code values that indicate disclosure/market data (not general news)
-        # Filter out general news articles to reduce noise
-        _DISCLOSURE_PREFIXES = ("공시", "거래소", "금감원", "시황", "종목")
+        # Noise patterns: general news, price alerts, rankings
+        _NOISE_PATTERNS = (
+            "상승세", "하락세", "상승폭", "하락폭", "급등", "급락",
+            "연속 상승", "연속 하락", "거래일 연속",
+            "매수체결 상위", "매도체결 상위", "거래량 상위",
+            "1억원 이상", "5억원 이상",
+            "소폭 ", "대폭 ",
+            "52주 신고가", "52주 신저가",
+        )
+        # Disclosure keywords that indicate real corporate events
+        _DISCLOSURE_KEYWORDS = (
+            "수주", "공급계약", "계약 체결", "계약체결",
+            "유상증자", "유증", "CB발행", "전환사채",
+            "자사주", "자기주식",
+            "합병", "분할", "인수", "합작",
+            "소송", "규제", "해지", "철회", "취소",
+            "실적", "매출", "영업이익",
+            "신규사업", "대형계약",
+            "주주총회", "이사회", "배당",
+            "공시", "정정", "블록딜", "대주주",
+            "임상", "승인", "허가", "특허",
+        )
 
         for item in items:
             news_id = item.get("cntt_usiq_srno", "")
             if not news_id or news_id in self._seen_ids:
                 continue
 
-            # Filter: only disclosure/market-relevant items
-            dorg = item.get("dorg", "")
-            news_code = item.get("news_lrdv_code", "")
             title = item.get("hts_pbnt_titl_cntt", "")
 
-            # Skip general news (no ticker and no disclosure indicator)
-            has_ticker = any(
-                item.get(f"iscd{i}", "").strip().isdigit() and len(item.get(f"iscd{i}", "").strip()) == 6
-                for i in range(1, 6)
-            )
-            is_disclosure = any(title.startswith(p) or dorg.startswith(p) for p in _DISCLOSURE_PREFIXES)
+            # Skip noise: price alerts, rankings, general news
+            if any(p in title for p in _NOISE_PATTERNS):
+                continue
 
-            if not has_ticker and not is_disclosure:
+            # Must contain disclosure-relevant keyword or be from disclosure source
+            dorg = item.get("dorg", "")
+            is_disclosure_source = any(dorg.startswith(p) for p in ("거래소", "금감원"))
+            has_disclosure_keyword = any(kw in title for kw in _DISCLOSURE_KEYWORDS)
+
+            if not is_disclosure_source and not has_disclosure_keyword:
                 continue
 
             self._seen_ids.add(news_id)
