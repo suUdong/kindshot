@@ -190,9 +190,14 @@ class KisClient:
             ) as resp:
                 data = await resp.json()
                 output = data.get("output", {})
+                if not output:
+                    logger.warning("KIS index empty output (iscd=%s): msg_cd=%s, msg1=%s",
+                                   iscd, data.get("msg_cd", ""), data.get("msg1", ""))
+                    return None
                 raw = output.get("prdy_ctrt")
                 if raw is None or raw == "":
-                    logger.warning("KIS index prdy_ctrt missing (iscd=%s): %s", iscd, data.get("msg_cd", ""))
+                    logger.warning("KIS index prdy_ctrt missing (iscd=%s): msg_cd=%s, output_keys=%s",
+                                   iscd, data.get("msg_cd", ""), list(output.keys()))
                     return None
                 return float(raw)
         except Exception:

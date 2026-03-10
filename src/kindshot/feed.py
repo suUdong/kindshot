@@ -228,13 +228,31 @@ class KisFeed:
         now = datetime.now(_KST)
         results: list[RawDisclosure] = []
 
+        # news_lrdv_code values that indicate disclosure/market data (not general news)
+        # Filter out general news articles to reduce noise
+        _DISCLOSURE_PREFIXES = ("공시", "거래소", "금감원", "시황", "종목")
+
         for item in items:
             news_id = item.get("cntt_usiq_srno", "")
             if not news_id or news_id in self._seen_ids:
                 continue
-            self._seen_ids.add(news_id)
 
+            # Filter: only disclosure/market-relevant items
+            dorg = item.get("dorg", "")
+            news_code = item.get("news_lrdv_code", "")
             title = item.get("hts_pbnt_titl_cntt", "")
+
+            # Skip general news (no ticker and no disclosure indicator)
+            has_ticker = any(
+                item.get(f"iscd{i}", "").strip().isdigit() and len(item.get(f"iscd{i}", "").strip()) == 6
+                for i in range(1, 6)
+            )
+            is_disclosure = any(title.startswith(p) or dorg.startswith(p) for p in _DISCLOSURE_PREFIXES)
+
+            if not has_ticker and not is_disclosure:
+                continue
+
+            self._seen_ids.add(news_id)
             data_tm = item.get("data_tm", "")
 
             # Extract first non-empty ticker from iscd1~iscd5
