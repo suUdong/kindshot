@@ -194,10 +194,11 @@ class KisClient:
                     logger.warning("KIS index empty output (iscd=%s): msg_cd=%s, msg1=%s",
                                    iscd, data.get("msg_cd", ""), data.get("msg1", ""))
                     return None
-                raw = output.get("prdy_ctrt")
+                # Index API uses bstp_nmix_prdy_ctrt (not prdy_ctrt)
+                raw = output.get("bstp_nmix_prdy_ctrt") or output.get("prdy_ctrt")
                 if raw is None or raw == "":
-                    logger.warning("KIS index prdy_ctrt missing (iscd=%s): msg_cd=%s, output_keys=%s",
-                                   iscd, data.get("msg_cd", ""), list(output.keys()))
+                    logger.warning("KIS index change missing (iscd=%s): msg_cd=%s",
+                                   iscd, data.get("msg_cd", ""))
                     return None
                 return float(raw)
         except Exception:
