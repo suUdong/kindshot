@@ -13,7 +13,7 @@ sudo journalctl -u kindshot --no-pager -n 20 2>/dev/null || echo "(로그 없음
 
 echo ""
 echo "=== 오늘 JSONL 로그 요약 ==="
-LOG_FILE="$APP_DIR/logs/kindshot_$(date -u +%Y%m%d).jsonl"
+LOG_FILE="$APP_DIR/logs/kindshot_$(TZ=Asia/Seoul date +%Y%m%d).jsonl"
 if [ -f "$LOG_FILE" ]; then
     TOTAL=$(wc -l < "$LOG_FILE")
     EVENTS=$(grep -c '"type":"event"' "$LOG_FILE" || true)

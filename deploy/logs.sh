@@ -16,7 +16,7 @@ case "$MODE" in
         sudo journalctl -u kindshot -f
         ;;
     summary)
-        LOG_FILE="$APP_DIR/logs/kindshot_$(date -u +%Y%m%d).jsonl"
+        LOG_FILE="$APP_DIR/logs/kindshot_$(TZ=Asia/Seoul date +%Y%m%d).jsonl"
         if [ -f "$LOG_FILE" ]; then
             source "$APP_DIR/.venv/bin/activate"
             python "$APP_DIR/deploy/log_summary.py" "$LOG_FILE"
@@ -33,7 +33,7 @@ case "$MODE" in
         fi
         ;;
     *)
-        LOG_FILE="$APP_DIR/logs/kindshot_$(date -u +%Y%m%d).jsonl"
+        LOG_FILE="$APP_DIR/logs/kindshot_$(TZ=Asia/Seoul date +%Y%m%d).jsonl"
         if [ -f "$LOG_FILE" ]; then
             tail -f "$LOG_FILE"
         else
