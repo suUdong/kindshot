@@ -69,6 +69,11 @@ class KindFeed:
         self._last_modified: Optional[str] = None
         self._consecutive_failures = 0
         self._stop_event = asyncio.Event()
+        self._last_poll_at: Optional[datetime] = None
+
+    @property
+    def last_poll_at(self) -> Optional[datetime]:
+        return self._last_poll_at
 
     def stop(self) -> None:
         """Signal the feed to stop polling."""
@@ -99,6 +104,7 @@ class KindFeed:
 
     async def poll_once(self) -> list[RawDisclosure]:
         """Single poll. Returns list of new disclosures (may be empty on 304)."""
+        self._last_poll_at = datetime.now(timezone(timedelta(hours=9)))
         headers: dict[str, str] = {}
         if self._etag:
             headers["If-None-Match"] = self._etag
@@ -184,6 +190,11 @@ class KisFeed:
         self._last_time: str = ""  # HHMMSS for incremental polling
         self._consecutive_failures = 0
         self._stop_event = asyncio.Event()
+        self._last_poll_at: Optional[datetime] = None
+
+    @property
+    def last_poll_at(self) -> Optional[datetime]:
+        return self._last_poll_at
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -211,6 +222,7 @@ class KisFeed:
 
     async def poll_once(self) -> list[RawDisclosure]:
         """Single poll via KIS news-title API."""
+        self._last_poll_at = datetime.now(timezone(timedelta(hours=9)))
         try:
             items = await self._kis.get_news_disclosures(
                 from_time=self._last_time,
@@ -258,6 +270,12 @@ class KisFeed:
             if not news_id or news_id in self._seen_ids:
                 continue
 
+            # Update last_time BEFORE filtering so next poll starts from latest
+            data_tm = item.get("data_tm", "")
+            if data_tm and data_tm > self._last_time:
+                self._last_time = data_tm
+
+            self._seen_ids[news_id] = None
 
             title = item.get("hts_pbnt_titl_cntt", "")
 
@@ -273,9 +291,6 @@ class KisFeed:
             if not is_disclosure_source and not has_disclosure_keyword:
                 continue
 
-            self._seen_ids[news_id] = None
-            data_tm = item.get("data_tm", "")
-
             # Extract first non-empty ticker from iscd1~iscd5
             ticker = ""
             for i in range(1, 6):
@@ -289,10 +304,6 @@ class KisFeed:
             m = re.search(r"(.+?)\((\d{6})\)", title)
             if m:
                 corp_name = m.group(1).strip()
-
-            # Track latest time for incremental polling
-            if data_tm and data_tm > self._last_time:
-                self._last_time = data_tm
 
             results.append(
                 RawDisclosure(

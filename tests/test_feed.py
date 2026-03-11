@@ -9,7 +9,7 @@ from aioresponses import aioresponses
 import aiohttp
 
 from kindshot.config import Config
-from kindshot.feed import KindFeed, _extract_ticker_corp, _extract_kind_uid
+from kindshot.feed import KindFeed, KisFeed, _extract_ticker_corp, _extract_kind_uid
 
 
 def test_extract_ticker_corp():
@@ -152,3 +152,24 @@ async def test_stream_stop_interrupts_sleep():
         feed.stop()
         await asyncio.wait_for(task, timeout=0.5)
         assert time.monotonic() - t0 < 0.5
+
+
+async def test_kind_feed_updates_last_poll_at():
+    cfg = Config()
+    async with aiohttp.ClientSession() as session:
+        feed = KindFeed(cfg, session)
+        assert feed.last_poll_at is None
+        with aioresponses() as m:
+            m.get(cfg.kind_rss_url, body=SAMPLE_RSS, status=200)
+            await feed.poll_once()
+        assert feed.last_poll_at is not None
+
+
+async def test_kis_feed_updates_last_poll_at():
+    cfg = Config()
+    kis = AsyncMock()
+    kis.get_news_disclosures = AsyncMock(return_value=[])
+    feed = KisFeed(cfg, kis)
+    assert feed.last_poll_at is None
+    await feed.poll_once()
+    assert feed.last_poll_at is not None
