@@ -3,13 +3,14 @@ Description=kindshot KRX news-driven trading MVP
 After=network.target
 
 [Service]
-Type=simple
+Type=notify
 User=ubuntu
 WorkingDirectory=/opt/kindshot
 EnvironmentFile=/opt/kindshot/.env
 ExecStart=/opt/kindshot/.venv/bin/python -m kindshot --paper
 Restart=on-failure
 RestartSec=10
+WatchdogSec=120
 StandardOutput=journal
 StandardError=journal
 
