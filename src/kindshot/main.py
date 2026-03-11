@@ -596,7 +596,7 @@ async def run() -> None:
         state_dir = config.log_dir / "state" / mode
         feed_source = config.feed_source.upper()
         if feed_source == "KIS" and kis:
-            feed = KisFeed(config, kis)
+            feed = KisFeed(config, kis, state_dir=state_dir / "feed")
             logger.info("Feed source: KIS API")
         else:
             if feed_source == "KIS" and not kis:

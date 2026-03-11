@@ -2,6 +2,8 @@
 
 import asyncio
 import time
+from collections import OrderedDict
+from pathlib import Path
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -195,3 +197,103 @@ async def test_kis_feed_last_time_updates_on_noise():
     assert results == []
     # But _last_time still advances so next poll starts from latest
     assert feed._last_time == "143000"
+
+
+async def test_kis_feed_uses_overlap_window_for_query():
+    cfg = Config(feed_overlap_s=90)
+    kis = AsyncMock()
+    kis.get_news_disclosures = AsyncMock(return_value=[])
+    feed = KisFeed(cfg, kis)
+    feed._last_time = "143000"
+
+    await feed.poll_once()
+
+    kis.get_news_disclosures.assert_awaited_once_with(from_time="142830")
+
+
+async def test_kis_feed_overlap_resets_at_day_boundary():
+    cfg = Config(feed_overlap_s=90)
+    kis = AsyncMock()
+    kis.get_news_disclosures = AsyncMock(return_value=[])
+    feed = KisFeed(cfg, kis)
+    feed._last_time = "000045"
+
+    await feed.poll_once()
+
+    kis.get_news_disclosures.assert_awaited_once_with(from_time="")
+
+
+async def test_kis_feed_state_persists_across_restart():
+    cfg = Config()
+    kis = AsyncMock()
+    kis.get_news_disclosures = AsyncMock(return_value=[
+        {
+            "cntt_usiq_srno": "NEWS001",
+            "data_dt": "20260312",
+            "data_tm": "143000",
+            "hts_pbnt_titl_cntt": "삼성전자(005930) 공급계약 체결",
+            "iscd1": "005930",
+            "dorg": "한국거래소",
+        }
+    ])
+    files: dict[str, str] = {}
+    state_dir = Path("virtual-feed-state")
+
+    def _exists(path_self: Path) -> bool:
+        return str(path_self) in files
+
+    def _read_text(path_self: Path, encoding: str = "utf-8") -> str:
+        return files[str(path_self)]
+
+    def _write_text(path_self: Path, data: str, encoding: str = "utf-8") -> int:
+        files[str(path_self)] = data
+        return len(data)
+
+    with patch.object(Path, "mkdir", autospec=True) as mock_mkdir, \
+         patch.object(Path, "exists", autospec=True, side_effect=_exists), \
+         patch.object(Path, "read_text", autospec=True, side_effect=_read_text), \
+         patch.object(Path, "write_text", autospec=True, side_effect=_write_text):
+        feed1 = KisFeed(cfg, kis, state_dir=state_dir)
+        results = await feed1.poll_once()
+        assert len(results) == 1
+
+        feed2 = KisFeed(cfg, kis, state_dir=state_dir)
+        assert feed2._last_time == "143000"
+        assert "NEWS001" in feed2._seen_ids
+        assert mock_mkdir.called
+
+
+async def test_kis_feed_state_resets_on_new_day():
+    cfg = Config()
+    kis = AsyncMock()
+    state_dir = Path("virtual-feed-state")
+    files = {
+        str(state_dir / "kis_feed_20260311.json"): '{"last_time":"143000","seen_ids":["NEWS001"]}',
+    }
+
+    def _exists(path_self: Path) -> bool:
+        return str(path_self) in files
+
+    def _read_text(path_self: Path, encoding: str = "utf-8") -> str:
+        return files[str(path_self)]
+
+    def _write_text(path_self: Path, data: str, encoding: str = "utf-8") -> int:
+        files[str(path_self)] = data
+        return len(data)
+
+    with patch.object(Path, "mkdir", autospec=True), \
+         patch.object(Path, "exists", autospec=True, side_effect=_exists), \
+         patch.object(Path, "read_text", autospec=True, side_effect=_read_text), \
+         patch.object(Path, "write_text", autospec=True, side_effect=_write_text), \
+         patch("kindshot.feed.datetime") as mock_dt:
+        real_datetime = __import__("datetime").datetime
+        kst = __import__("datetime").timezone(__import__("datetime").timedelta(hours=9))
+        mock_dt.now.return_value = real_datetime(2026, 3, 12, 9, 0, 0, tzinfo=kst)
+        mock_dt.strptime.side_effect = real_datetime.strptime
+        mock_dt.side_effect = lambda *args, **kwargs: real_datetime(*args, **kwargs)
+
+        feed = KisFeed(cfg, kis, state_dir=state_dir)
+        feed._prune_if_new_day(real_datetime(2026, 3, 12, 9, 0, 0, tzinfo=kst))
+
+    assert feed._last_time == ""
+    assert feed._seen_ids == OrderedDict()

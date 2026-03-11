@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import AsyncIterator, Optional
 
 import aiohttp
@@ -184,7 +186,7 @@ class KindFeed:
 class KisFeed:
     """KIS API-based disclosure feed. AWS-compatible alternative to KindFeed."""
 
-    def __init__(self, config: Config, kis: KisClient) -> None:
+    def __init__(self, config: Config, kis: KisClient, *, state_dir: Optional[Path] = None) -> None:
         self._config = config
         self._kis = kis
         self._seen_ids: OrderedDict[str, None] = OrderedDict()
@@ -192,6 +194,11 @@ class KisFeed:
         self._consecutive_failures = 0
         self._stop_event = asyncio.Event()
         self._last_poll_at: Optional[datetime] = None
+        self._state_dir = state_dir
+        self._current_date: Optional[str] = None
+        if state_dir:
+            state_dir.mkdir(parents=True, exist_ok=True)
+            self._load_state()
 
     @property
     def last_poll_at(self) -> Optional[datetime]:
@@ -221,29 +228,112 @@ class KisFeed:
         jitter = base * self._config.feed_jitter_pct
         return base + random.uniform(-jitter, jitter)
 
+    def _state_file(self) -> Optional[Path]:
+        if not self._state_dir or not self._current_date:
+            return None
+        return self._state_dir / f"kis_feed_{self._current_date}.json"
+
+    def _load_state(self) -> None:
+        kst = timezone(timedelta(hours=9))
+        self._current_date = datetime.now(kst).strftime("%Y%m%d")
+        state_file = self._state_file()
+        if not state_file or not state_file.exists():
+            return
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            self._last_time = data.get("last_time", "")
+            seen_ids = data.get("seen_ids", [])
+            if isinstance(seen_ids, list):
+                self._seen_ids = OrderedDict((str(news_id), None) for news_id in seen_ids if news_id)
+            logger.info(
+                "Loaded KIS feed state from %s (last_time=%s, seen_ids=%d)",
+                state_file.name,
+                self._last_time or "-",
+                len(self._seen_ids),
+            )
+        except Exception:
+            logger.exception("Failed to load KIS feed state from %s", state_file)
+
+    def _persist_state(self) -> None:
+        state_file = self._state_file()
+        if not state_file:
+            return
+        try:
+            payload = {
+                "last_time": self._last_time,
+                "seen_ids": list(self._seen_ids.keys()),
+            }
+            state_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            logger.exception("Failed to persist KIS feed state to %s", state_file)
+
+    def _prune_if_new_day(self, now: datetime) -> None:
+        today = now.strftime("%Y%m%d")
+        if self._current_date is None:
+            self._current_date = today
+            return
+        if today == self._current_date:
+            return
+        self._current_date = today
+        self._last_time = ""
+        self._seen_ids.clear()
+        self._persist_state()
+
+    def _query_from_time(self) -> str:
+        """Use a small overlap window to avoid missing edge-of-second items."""
+        if not self._last_time:
+            return ""
+        try:
+            base = datetime.strptime(self._last_time, "%H%M%S")
+        except ValueError:
+            return self._last_time
+
+        overlapped = base - timedelta(seconds=self._config.feed_overlap_s)
+        if overlapped.date() < base.date():
+            return ""
+        return overlapped.strftime("%H%M%S")
+
     async def poll_once(self) -> list[RawDisclosure]:
         """Single poll via KIS news-title API."""
         self._last_poll_at = datetime.now(timezone(timedelta(hours=9)))
+        self._prune_if_new_day(self._last_poll_at)
         tracer = get_tracer()
-        t_poll = tracer.poll_start(from_time=self._last_time) if tracer else None
+        last_time_before = self._last_time
+        query_from_time = self._query_from_time()
+        t_poll = tracer.poll_start(from_time=query_from_time) if tracer else None
         try:
             items = await self._kis.get_news_disclosures(
-                from_time=self._last_time,
+                from_time=query_from_time,
             )
         except Exception:
             self._consecutive_failures += 1
             logger.exception("KIS disclosure fetch error")
             if tracer and t_poll is not None:
-                tracer.poll_end(t_poll, 0, error="exception")
+                tracer.poll_end(
+                    t_poll,
+                    0,
+                    error="exception",
+                    last_time_before=last_time_before,
+                    last_time_after=self._last_time,
+                )
             return []
 
         raw_count = len(items) if items else 0
+        raw_times = sorted(item.get("data_tm", "") for item in items if item.get("data_tm", ""))
+        raw_min_time = raw_times[0] if raw_times else ""
+        raw_max_time = raw_times[-1] if raw_times else ""
 
         if not items:
             # Empty response is normal during quiet hours, not a failure
             self._consecutive_failures = 0
             if tracer and t_poll is not None:
-                tracer.poll_end(t_poll, 0, raw_count=0)
+                tracer.poll_end(
+                    t_poll,
+                    0,
+                    raw_count=0,
+                    last_time_before=last_time_before,
+                    last_time_after=self._last_time,
+                )
             return []
 
         self._consecutive_failures = 0
@@ -335,12 +425,18 @@ class KisFeed:
         while len(self._seen_ids) > 5000:
             self._seen_ids.popitem(last=False)
 
+        self._persist_state()
+
         if tracer and t_poll is not None:
             tracer.poll_end(
                 t_poll, len(results),
                 raw_count=raw_count,
                 seen_dup=seen_dup,
                 noise_filtered=noise_filtered,
+                last_time_before=last_time_before,
+                last_time_after=self._last_time,
+                raw_min_time=raw_min_time,
+                raw_max_time=raw_max_time,
             )
         return results
 

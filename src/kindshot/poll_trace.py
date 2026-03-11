@@ -55,6 +55,10 @@ class PollTracer:
         raw_count: Optional[int] = None,
         seen_dup: int = 0,
         noise_filtered: int = 0,
+        last_time_before: str = "",
+        last_time_after: str = "",
+        raw_min_time: str = "",
+        raw_max_time: str = "",
     ) -> None:
         elapsed_ms = (time.monotonic() - t_start) * 1000
         rec: dict[str, Any] = {
@@ -69,6 +73,14 @@ class PollTracer:
             rec["seen_dup"] = seen_dup
         if noise_filtered:
             rec["noise_filtered"] = noise_filtered
+        if last_time_before:
+            rec["last_time_before"] = last_time_before
+        if last_time_after:
+            rec["last_time_after"] = last_time_after
+        if raw_min_time:
+            rec["raw_min_time"] = raw_min_time
+        if raw_max_time:
+            rec["raw_max_time"] = raw_max_time
         self._write(rec)
 
     def sleep_start(self, interval_s: float) -> float:
