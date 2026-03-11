@@ -22,9 +22,10 @@ if ! git config credential.helper | grep -q store; then
     exit 1
 fi
 
-# daily report 생성
+# daily report 생성 + 텔레그램 전송
 DATE=$(TZ=Asia/Seoul date +%Y%m%d)
 python3 deploy/daily_report.py "$DATE" > "logs/daily_report_${DATE}.txt" 2>&1 || true
+python3 deploy/daily_report.py --telegram "$DATE" 2>&1 || true
 
 # 로그 파일만 add (-f: .gitignore에 logs/ 있으므로 강제)
 git add -f logs/*.jsonl logs/polling_trace_*.jsonl 2>/dev/null || true
