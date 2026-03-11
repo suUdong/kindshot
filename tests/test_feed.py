@@ -173,3 +173,25 @@ async def test_kis_feed_updates_last_poll_at():
     assert feed.last_poll_at is None
     await feed.poll_once()
     assert feed.last_poll_at is not None
+
+
+async def test_kis_feed_last_time_updates_on_noise():
+    """_last_time should advance even for noise items that get filtered."""
+    cfg = Config()
+    kis = AsyncMock()
+    kis.get_news_disclosures = AsyncMock(return_value=[
+        {
+            "cntt_usiq_srno": "NOISE001",
+            "data_dt": "20260311",
+            "data_tm": "143000",
+            "hts_pbnt_titl_cntt": "삼성전자(005930) - 급등 관련 뉴스",
+            "iscd1": "005930",
+            "dorg": "한국거래소",
+        }
+    ])
+    feed = KisFeed(cfg, kis)
+    results = await feed.poll_once()
+    # Item is filtered out (noise pattern "급등")
+    assert results == []
+    # But _last_time still advances so next poll starts from latest
+    assert feed._last_time == "143000"
