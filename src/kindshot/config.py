@@ -55,6 +55,10 @@ class Config:
     feed_backoff_threshold: int = 3
     feed_backoff_max_s: float = 60.0
 
+    # --- Watchdog ---
+    watchdog_interval_s: float = 30.0
+    watchdog_stale_threshold_s: float = 120.0
+
     # --- Quant thresholds ---
     adv_threshold: float = field(default_factory=lambda: _env_float("ADV_THRESHOLD", 5_000_000_000))
     spread_bps_limit: float = 25.0

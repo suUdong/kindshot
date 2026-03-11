@@ -40,6 +40,7 @@ from kindshot.models import (
 )
 from kindshot.price import PriceFetcher, SnapshotScheduler
 from kindshot.quant import quant_check
+from kindshot.sd_notify import notify_ready, notify_watchdog
 
 logging.basicConfig(
     level=logging.INFO,
@@ -120,6 +121,27 @@ async def _wait_or_stop(stop_event: asyncio.Event, timeout_s: float) -> None:
         await asyncio.wait_for(stop_event.wait(), timeout=timeout_s)
     except asyncio.TimeoutError:
         pass
+
+
+async def _watchdog_loop(
+    feed, counters, config: Config, stop_event: asyncio.Event
+) -> None:
+    """Periodically notify systemd watchdog and log heartbeat."""
+    _KST = timezone(timedelta(hours=9))
+    while not stop_event.is_set():
+        now = datetime.now(_KST)
+        last_poll = feed.last_poll_at
+        if last_poll and (now - last_poll).total_seconds() < config.watchdog_stale_threshold_s:
+            notify_watchdog()
+            events = counters.totals.get("events_seen", 0) if counters else 0
+            logger.info(
+                "Heartbeat: last_poll=%s, events_seen=%d",
+                last_poll.strftime("%H:%M:%S"), events,
+            )
+        else:
+            stale_s = (now - last_poll).total_seconds() if last_poll else -1
+            logger.warning("Watchdog: feed stale (%.0fs), NOT notifying systemd", stale_s)
+        await _wait_or_stop(stop_event, config.watchdog_interval_s)
 
 
 async def _process_registered_event(
@@ -600,6 +622,8 @@ async def run() -> None:
                     logger.exception("Market monitor error")
                 await _wait_or_stop(stop_event, 60)
 
+        notify_ready()
+
         tasks = [
             asyncio.create_task(_pipeline_loop(
                 feed, registry, decision_engine, market, scheduler, log, config, run_id, kis, counters, mode,
@@ -609,6 +633,7 @@ async def run() -> None:
             ), name="pipeline"),
             asyncio.create_task(scheduler.run(), name="snapshots"),
             asyncio.create_task(_market_loop(), name="market"),
+            asyncio.create_task(_watchdog_loop(feed, counters, config, stop_event), name="watchdog"),
         ]
 
         try:
