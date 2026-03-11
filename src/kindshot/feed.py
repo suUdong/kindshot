@@ -225,7 +225,7 @@ class KisFeed:
         """Single poll via KIS news-title API."""
         self._last_poll_at = datetime.now(timezone(timedelta(hours=9)))
         tracer = get_tracer()
-        t_poll = tracer.poll_start() if tracer else None
+        t_poll = tracer.poll_start(from_time=self._last_time) if tracer else None
         try:
             items = await self._kis.get_news_disclosures(
                 from_time=self._last_time,
@@ -237,17 +237,21 @@ class KisFeed:
                 tracer.poll_end(t_poll, 0, error="exception")
             return []
 
+        raw_count = len(items) if items else 0
+
         if not items:
             # Empty response is normal during quiet hours, not a failure
             self._consecutive_failures = 0
             if tracer and t_poll is not None:
-                tracer.poll_end(t_poll, 0)
+                tracer.poll_end(t_poll, 0, raw_count=0)
             return []
 
         self._consecutive_failures = 0
         _KST = timezone(timedelta(hours=9))
         now = datetime.now(_KST)
         results: list[RawDisclosure] = []
+        seen_dup = 0
+        noise_filtered = 0
 
         # Noise patterns: general news, price alerts, rankings
         _NOISE_PATTERNS = (
@@ -275,6 +279,7 @@ class KisFeed:
         for item in items:
             news_id = item.get("cntt_usiq_srno", "")
             if not news_id or news_id in self._seen_ids:
+                seen_dup += 1
                 continue
 
             # Update last_time BEFORE filtering so next poll starts from latest
@@ -288,6 +293,7 @@ class KisFeed:
 
             # Skip noise: price alerts, rankings, general news
             if any(p in title for p in _NOISE_PATTERNS):
+                noise_filtered += 1
                 continue
 
             # Must contain disclosure-relevant keyword or be from disclosure source
@@ -296,6 +302,7 @@ class KisFeed:
             has_disclosure_keyword = any(kw in title for kw in _DISCLOSURE_KEYWORDS)
 
             if not is_disclosure_source and not has_disclosure_keyword:
+                noise_filtered += 1
                 continue
 
             # Extract first non-empty ticker from iscd1~iscd5
@@ -329,7 +336,12 @@ class KisFeed:
             self._seen_ids.popitem(last=False)
 
         if tracer and t_poll is not None:
-            tracer.poll_end(t_poll, len(results))
+            tracer.poll_end(
+                t_poll, len(results),
+                raw_count=raw_count,
+                seen_dup=seen_dup,
+                noise_filtered=noise_filtered,
+            )
         return results
 
     async def stream(self) -> AsyncIterator[list[RawDisclosure]]:

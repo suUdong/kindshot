@@ -41,20 +41,35 @@ class PollTracer:
         except Exception:
             logger.debug("poll_trace write failed", exc_info=True)
 
-    def poll_start(self) -> float:
+    def poll_start(self, from_time: str = "") -> float:
         """poll_once 시작. 반환값을 poll_end에 전달."""
         t = time.monotonic()
-        self._write({"phase": "poll_start"})
+        self._write({"phase": "poll_start", "from_time": from_time})
         return t
 
-    def poll_end(self, t_start: float, item_count: int, error: Optional[str] = None) -> None:
+    def poll_end(
+        self,
+        t_start: float,
+        item_count: int,
+        error: Optional[str] = None,
+        raw_count: Optional[int] = None,
+        seen_dup: int = 0,
+        noise_filtered: int = 0,
+    ) -> None:
         elapsed_ms = (time.monotonic() - t_start) * 1000
-        self._write({
+        rec: dict[str, Any] = {
             "phase": "poll_end",
             "elapsed_ms": round(elapsed_ms, 1),
             "items": item_count,
             "error": error,
-        })
+        }
+        if raw_count is not None:
+            rec["raw"] = raw_count
+        if seen_dup:
+            rec["seen_dup"] = seen_dup
+        if noise_filtered:
+            rec["noise_filtered"] = noise_filtered
+        self._write(rec)
 
     def sleep_start(self, interval_s: float) -> float:
         t = time.monotonic()
