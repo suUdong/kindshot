@@ -23,6 +23,40 @@ from kindshot.models import (
 logger = logging.getLogger(__name__)
 
 
+def _summarize_returns(returns: list[float]) -> dict[str, float]:
+    """Summarize trade returns with simple risk-aware metrics."""
+    if not returns:
+        return {}
+
+    wins = [r for r in returns if r > 0]
+    losses = [r for r in returns if r < 0]
+
+    equity = 1.0
+    peak = 1.0
+    max_drawdown_pct = 0.0
+    for ret_pct in returns:
+        equity *= 1 + ret_pct / 100
+        peak = max(peak, equity)
+        drawdown_pct = (equity / peak - 1) * 100
+        max_drawdown_pct = min(max_drawdown_pct, drawdown_pct)
+
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
+
+    return {
+        "trade_count": float(len(returns)),
+        "win_rate_pct": len(wins) / len(returns) * 100,
+        "avg_return_pct": sum(returns) / len(returns),
+        "avg_win_pct": sum(wins) / len(wins) if wins else 0.0,
+        "avg_loss_pct": sum(losses) / len(losses) if losses else 0.0,
+        "best_pct": max(returns),
+        "worst_pct": min(returns),
+        "max_drawdown_pct": max_drawdown_pct,
+        "profit_factor": profit_factor,
+    }
+
+
 def _load_actionable_events(log_path: Path) -> list[dict]:
     """Load POS_STRONG events that passed quant from a JSONL log file (deduped by event_id)."""
     seen_ids: set[str] = set()
@@ -224,14 +258,19 @@ async def replay(log_path: Path, config: Config) -> None:
 
     if stats["returns"]:
         rets = [r["close_ret_pct"] for r in stats["returns"]]
-        wins = [r for r in rets if r > 0]
+        summary = _summarize_returns(rets)
         snapshot_count = sum(1 for r in stats["returns"] if r["price_source"] == "price_snapshot")
         fallback_count = len(rets) - snapshot_count
         print(f"\n--- BUY P&L (close vs entry) ---")
         print(f"Trades with price data: {len(rets)} (snapshot: {snapshot_count}, pykrx fallback: {fallback_count})")
-        print(f"Win rate: {len(wins)}/{len(rets)} ({len(wins)/len(rets)*100:.0f}%)")
-        print(f"Avg return: {sum(rets)/len(rets):.2f}%")
-        print(f"Best: {max(rets):.2f}%  Worst: {min(rets):.2f}%")
+        print(f"Win rate: {summary['win_rate_pct']:.0f}%")
+        print(f"Avg return: {summary['avg_return_pct']:.2f}%")
+        print(f"Avg win / loss: {summary['avg_win_pct']:.2f}% / {summary['avg_loss_pct']:.2f}%")
+        print(f"Best: {summary['best_pct']:.2f}%  Worst: {summary['worst_pct']:.2f}%")
+        print(f"Max drawdown: {summary['max_drawdown_pct']:.2f}%")
+        pf = summary["profit_factor"]
+        pf_text = "inf" if pf == float("inf") else f"{pf:.2f}"
+        print(f"Profit factor: {pf_text}")
 
         print(f"\nDetail:")
         for r in sorted(stats["returns"], key=lambda x: x["close_ret_pct"], reverse=True):

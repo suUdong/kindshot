@@ -25,6 +25,13 @@ HORIZON_OFFSETS: dict[str, float] = {
 }
 
 
+def _apply_entry_slippage(px: Optional[float], spread_bps: Optional[float], *, mode: str, is_buy_decision: bool) -> Optional[float]:
+    """Apply a conservative half-spread entry penalty for paper BUY tracking."""
+    if mode != "paper" or not is_buy_decision or px is None or px <= 0 or spread_bps is None or spread_bps <= 0:
+        return px
+    return px * (1 + (spread_bps / 2) / 10000)
+
+
 @dataclass
 class PriceFetcher:
     """Fetches price from KIS or returns UNAVAILABLE."""
@@ -71,7 +78,7 @@ class SnapshotScheduler:
         self._heap: list[ScheduledSnapshot] = []
         self._stop_event = stop_event or asyncio.Event()
         self._pnl_callback = pnl_callback  # callable(ticker, pnl_won) for guardrail state
-        # Track t0 prices per event_id for return calculation
+        # Track effective t0 prices per event_id for return calculation
         self._t0_prices: dict[str, tuple[Optional[float], Optional[float]]] = {}
         # Track ticker per event_id for pnl callback
         self._event_tickers: dict[str, str] = {}
@@ -165,8 +172,14 @@ class SnapshotScheduler:
             ret_long = 0.0
             ret_short = 0.0
             value_since = 0
-            # Store t0 values for future snapshots
-            self._t0_prices[snap.event_id] = (px, cum_value)
+            # Store effective entry values for future snapshots.
+            effective_entry_px = _apply_entry_slippage(
+                px,
+                spread_bps,
+                mode=snap.mode,
+                is_buy_decision=snap.is_buy_decision,
+            )
+            self._t0_prices[snap.event_id] = (effective_entry_px, cum_value)
         else:
             t0_px, t0_cum = self._t0_prices.get(snap.event_id, (None, None))
             if px is not None and t0_px and t0_px > 0:

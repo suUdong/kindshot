@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from kindshot.config import Config
-from kindshot.replay import _load_actionable_events, replay
+from kindshot.replay import _load_actionable_events, _summarize_returns, replay
 
 
 def _write_events(tmp_path: Path, events: list[dict]) -> Path:
@@ -82,6 +82,23 @@ def test_load_empty_file(tmp_path):
     log_file.write_text("")
     result = _load_actionable_events(log_file)
     assert result == []
+
+
+def test_summarize_returns_reports_drawdown_and_profit_factor():
+    summary = _summarize_returns([10.0, -5.0, 2.0, -1.0])
+    assert summary["trade_count"] == 4.0
+    assert summary["win_rate_pct"] == 50.0
+    assert summary["avg_return_pct"] == pytest.approx(1.5)
+    assert summary["best_pct"] == 10.0
+    assert summary["worst_pct"] == -5.0
+    assert summary["max_drawdown_pct"] == pytest.approx(-5.0, abs=0.2)
+    assert summary["profit_factor"] == pytest.approx(2.0)
+
+
+def test_summarize_returns_handles_all_winners():
+    summary = _summarize_returns([1.0, 2.0])
+    assert summary["avg_loss_pct"] == 0.0
+    assert summary["profit_factor"] == float("inf")
 
 
 async def test_replay_no_events(tmp_path):

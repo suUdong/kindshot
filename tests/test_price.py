@@ -3,9 +3,12 @@
 import asyncio
 import time
 from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from kindshot.config import Config
+from kindshot.kis_client import PriceInfo
 from kindshot.models import T0Basis
 from kindshot.price import PriceFetcher, SnapshotScheduler, HORIZON_OFFSETS
 
@@ -67,3 +70,65 @@ async def test_scheduler_stop_interrupts_sleep():
     scheduler.stop()
     await asyncio.wait_for(task, timeout=0.5)
     assert time.monotonic() - t0 < 0.5
+
+
+async def test_paper_buy_applies_half_spread_to_returns():
+    cfg = Config()
+    fetcher = PriceFetcher(kis=None)
+    log = MagicMock()
+    log.write = AsyncMock()
+    scheduler = SnapshotScheduler(cfg, fetcher, log)
+
+    prices = [
+        PriceInfo(px=10000.0, open_px=10000.0, spread_bps=20.0, cum_value=1_000_000.0, fetch_latency_ms=10),
+        PriceInfo(px=10000.0, open_px=10000.0, spread_bps=20.0, cum_value=1_100_000.0, fetch_latency_ms=10),
+    ]
+    scheduler._fetcher.fetch = AsyncMock(side_effect=prices)
+
+    scheduler.schedule_t0(
+        event_id="evt1",
+        ticker="005930",
+        t0_basis=T0Basis.DECIDED_AT,
+        t0_ts=datetime.now(timezone.utc),
+        run_id="run1",
+        mode="paper",
+        is_buy_decision=True,
+    )
+
+    snaps = sorted([s for s in scheduler._heap if s.horizon in {"t0", "t+1m"}], key=lambda s: s.fire_at)
+    await scheduler._fire(snaps[0])
+    await scheduler._fire(snaps[1])
+
+    t0_record = log.write.await_args_list[0].args[0]
+    t1_record = log.write.await_args_list[1].args[0]
+    assert t0_record.ret_long_vs_t0 == 0.0
+    assert t1_record.ret_long_vs_t0 == pytest.approx(-0.0009990009990008542)
+
+
+async def test_live_mode_keeps_unadjusted_returns():
+    cfg = Config()
+    fetcher = PriceFetcher(kis=None)
+    log = MagicMock()
+    log.write = AsyncMock()
+    scheduler = SnapshotScheduler(cfg, fetcher, log)
+    scheduler._fetcher.fetch = AsyncMock(side_effect=[
+        PriceInfo(px=10000.0, open_px=10000.0, spread_bps=20.0, cum_value=1_000_000.0, fetch_latency_ms=10),
+        PriceInfo(px=10000.0, open_px=10000.0, spread_bps=20.0, cum_value=1_100_000.0, fetch_latency_ms=10),
+    ])
+
+    scheduler.schedule_t0(
+        event_id="evt1",
+        ticker="005930",
+        t0_basis=T0Basis.DECIDED_AT,
+        t0_ts=datetime.now(timezone.utc),
+        run_id="run1",
+        mode="live",
+        is_buy_decision=True,
+    )
+
+    snaps = sorted([s for s in scheduler._heap if s.horizon in {"t0", "t+1m"}], key=lambda s: s.fire_at)
+    await scheduler._fire(snaps[0])
+    await scheduler._fire(snaps[1])
+
+    t1_record = log.write.await_args_list[1].args[0]
+    assert t1_record.ret_long_vs_t0 == 0.0
