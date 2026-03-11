@@ -6,6 +6,7 @@ import asyncio
 import logging
 import random
 import re
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator, Optional
@@ -179,7 +180,7 @@ class KisFeed:
     def __init__(self, config: Config, kis: KisClient) -> None:
         self._config = config
         self._kis = kis
-        self._seen_ids: set[str] = set()
+        self._seen_ids: OrderedDict[str, None] = OrderedDict()
         self._last_time: str = ""  # HHMMSS for incremental polling
         self._consecutive_failures = 0
         self._stop_event = asyncio.Event()
@@ -220,7 +221,8 @@ class KisFeed:
             return []
 
         if not items:
-            self._consecutive_failures += 1
+            # Empty response is normal during quiet hours, not a failure
+            self._consecutive_failures = 0
             return []
 
         self._consecutive_failures = 0
@@ -256,6 +258,7 @@ class KisFeed:
             if not news_id or news_id in self._seen_ids:
                 continue
 
+
             title = item.get("hts_pbnt_titl_cntt", "")
 
             # Skip noise: price alerts, rankings, general news
@@ -270,7 +273,7 @@ class KisFeed:
             if not is_disclosure_source and not has_disclosure_keyword:
                 continue
 
-            self._seen_ids.add(news_id)
+            self._seen_ids[news_id] = None
             data_tm = item.get("data_tm", "")
 
             # Extract first non-empty ticker from iscd1~iscd5
@@ -303,9 +306,9 @@ class KisFeed:
                 )
             )
 
-        # Cap seen_ids to prevent unbounded growth
-        if len(self._seen_ids) > 10000:
-            self._seen_ids = set(list(self._seen_ids)[-5000:])
+        # Cap seen_ids to prevent unbounded growth (FIFO order preserved)
+        while len(self._seen_ids) > 5000:
+            self._seen_ids.popitem(last=False)
 
         return results
 

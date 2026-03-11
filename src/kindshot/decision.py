@@ -126,8 +126,10 @@ class DecisionEngine:
             )
         return self._client
 
-    def _cache_key(self, ticker: str, headline: str, bucket: Bucket) -> str:
-        h = hashlib.sha256(headline.encode()).hexdigest()[:16]
+    def _cache_key(self, ticker: str, headline: str, bucket: Bucket, ctx: ContextCard) -> str:
+        # Include context card data so market changes invalidate cache
+        ctx_str = f"{ctx.adv_value_20d}|{ctx.spread_bps}|{ctx.ret_today}"
+        h = hashlib.sha256(f"{headline}|{ctx_str}".encode()).hexdigest()[:16]
         return f"{ticker}:{h}:{bucket.value}"
 
     def _sweep_cache(self) -> None:
@@ -175,7 +177,7 @@ class DecisionEngine:
         """
 
         self._sweep_cache()
-        key = self._cache_key(ticker, headline, bucket)
+        key = self._cache_key(ticker, headline, bucket, ctx)
 
         # Cache hit
         if key in self._cache and self._cache[key].expires_at > time.monotonic():

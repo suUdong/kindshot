@@ -72,6 +72,7 @@ def test_adv_missing():
     r = check_guardrails(
         ticker="005930",
         config=_cfg(),
+        spread_bps=10.0,
         adv_value_20d=None,
         ret_today=5.0,
     )
@@ -83,6 +84,7 @@ def test_extreme_move():
     r = check_guardrails(
         ticker="005930",
         config=_cfg(),
+        spread_bps=10.0,
         adv_value_20d=10e9,
         ret_today=25.0,
     )
@@ -94,6 +96,7 @@ def test_ret_today_missing():
     r = check_guardrails(
         ticker="005930",
         config=_cfg(),
+        spread_bps=10.0,
         adv_value_20d=10e9,
         ret_today=None,
     )
@@ -102,7 +105,7 @@ def test_ret_today_missing():
 
 
 def _base_args():
-    return dict(adv_value_20d=10e9, ret_today=5.0)
+    return dict(adv_value_20d=10e9, ret_today=5.0, spread_bps=10.0)
 
 
 def test_daily_loss_limit():

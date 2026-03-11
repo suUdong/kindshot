@@ -81,6 +81,10 @@ async def _pykrx_features(ticker: str) -> dict:
             if val_col:
                 value = df[val_col]
                 adv_20d = value.tail(20).mean() if len(value) >= 20 else value.mean()
+            elif vol_col and close_col:
+                # 거래대금 컬럼이 없으면 종가 × 거래량으로 근사
+                approx_value = df[close_col] * df[vol_col]
+                adv_20d = approx_value.tail(20).mean() if len(approx_value) >= 20 else approx_value.mean()
 
             vol_pct = None
             if vol_col:

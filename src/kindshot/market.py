@@ -31,11 +31,14 @@ class MarketMonitor:
     KIS credentials are provided and the first update succeeds.
     """
 
+    _MAX_INIT_FAILURES = 5  # After this many consecutive failures, force-initialize
+
     def __init__(self, config: Config, kis: Optional[KisClient] = None) -> None:
         self._config = config
         self._kis = kis
         self._halted = True  # fail-close: block trading until first successful update
         self._initialized = False
+        self._init_failures = 0
         self._kospi_change: Optional[float] = None
         self._kosdaq_change: Optional[float] = None
         self._vkospi: Optional[float] = None
@@ -74,6 +77,7 @@ class MarketMonitor:
 
             if kospi is not None:
                 self._kospi_change = kospi
+                self._init_failures = 0
                 was_halted = self._halted
                 self._halted = kospi <= self._config.kospi_halt_pct
                 if not self._initialized:
@@ -83,6 +87,19 @@ class MarketMonitor:
                     logger.warning("MARKET HALT: KOSPI %.2f%% <= %.1f%%", kospi, self._config.kospi_halt_pct)
                 elif not self._halted and was_halted:
                     logger.info("Market halt lifted: KOSPI %.2f%%", kospi)
+            elif not self._initialized:
+                self._init_failures += 1
+                logger.warning(
+                    "Market monitor init failed (%d/%d): KOSPI index unavailable",
+                    self._init_failures, self._MAX_INIT_FAILURES,
+                )
+                if self._init_failures >= self._MAX_INIT_FAILURES:
+                    self._initialized = True
+                    self._halted = False
+                    logger.warning(
+                        "Market monitor force-initialized after %d failures — trading allowed without KOSPI data",
+                        self._init_failures,
+                    )
 
             if kosdaq is not None:
                 self._kosdaq_change = kosdaq

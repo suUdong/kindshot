@@ -53,7 +53,7 @@ async def _run_pipeline_once(tmp_path, raw_items, decision_side_effect=None, gua
          patch("kindshot.main.check_guardrails") as mock_gr:
         from kindshot.models import ContextCard
         from kindshot.guardrails import GuardrailResult
-        mock_ctx.return_value = (ContextCard(adv_value_20d=10e9), {"adv_value_20d": 10e9, "spread_bps": None, "ret_today": 5.0})
+        mock_ctx.return_value = (ContextCard(adv_value_20d=10e9, spread_bps=10.0), {"adv_value_20d": 10e9, "spread_bps": 10.0, "ret_today": 5.0})
         mock_gr.return_value = GuardrailResult(passed=guardrail_passed, reason="BLOCKED" if not guardrail_passed else None)
 
         mode = "dry_run" if dry_run else ("paper" if paper else "live")

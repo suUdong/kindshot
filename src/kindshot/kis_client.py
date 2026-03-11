@@ -235,7 +235,7 @@ class KisClient:
                 f"{self._base}/uapi/domestic-stock/v1/quotations/news-title",
                 headers=self._headers(token, "FHKST01011800"),
                 params=params,
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 data = await resp.json()
                 output = data.get("output", [])

@@ -34,8 +34,8 @@ class Config:
     # --- Anthropic ---
     anthropic_api_key: str = field(default_factory=lambda: _env("ANTHROPIC_API_KEY"))
     llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "claude-haiku-4-5-20251001"))
-    llm_sdk_timeout_s: float = 8.0
-    llm_wait_for_s: float = 5.0
+    llm_sdk_timeout_s: float = 10.0
+    llm_wait_for_s: float = 12.0
     llm_cache_ttl_s: float = 60.0
     llm_cache_sweep_s: float = 300.0
     llm_max_concurrency: int = field(default_factory=lambda: _env_int("LLM_MAX_CONCURRENCY", 2))
@@ -59,9 +59,9 @@ class Config:
     adv_threshold: float = field(default_factory=lambda: _env_float("ADV_THRESHOLD", 5_000_000_000))
     spread_bps_limit: float = 25.0
     extreme_move_pct: float = 20.0
-    spread_check_enabled: bool = field(default_factory=lambda: _env_bool("SPREAD_CHECK_ENABLED", False))
+    spread_check_enabled: bool = field(default_factory=lambda: _env_bool("SPREAD_CHECK_ENABLED", True))
     quant_fail_sample_rate: float = 0.10
-    daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 1_000_000))  # won
+    daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 3_000_000))  # won
     max_positions: int = field(default_factory=lambda: _env_int("MAX_POSITIONS", 5))
     max_sector_positions: int = field(default_factory=lambda: _env_int("MAX_SECTOR_POSITIONS", 2))
     order_size: float = field(default_factory=lambda: _env_float("ORDER_SIZE", 5_000_000))  # won per trade
