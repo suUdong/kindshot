@@ -1,33 +1,5 @@
 # Kindshot - KRX News Day-Trading MVP
 
-## Stack
-Python 3.11+, asyncio, aiohttp, pykrx, Anthropic SDK, pydantic
-
-## Entry
-```bash
-python -m kindshot          # live
-python -m kindshot --paper  # paper trading
-python -m kindshot --dry-run
-```
-
-## Project Structure
-- `src/kindshot/` - main package
-  - `feed.py` - KIND RSS / KIS API polling
-  - `bucket.py` - keyword-based headline classification
-  - `context_card.py` - pykrx historical + KIS realtime features
-  - `quant.py` - ADV/spread/extreme move filters
-  - `decision.py` - LLM 1-shot BUY/SKIP engine
-  - `guardrails.py` - portfolio-level safety checks
-  - `market.py` - KOSPI/KOSDAQ halt monitor
-  - `main.py` - asyncio supervisor
-- `tests/` - pytest
-- `deploy/` - Lightsail deployment
-
-## Test
-```bash
-python -m pytest -x -q
-```
-
 ## Conventions
 - Commit: `fix:`, `feat:`, `chore:` prefix. No emoji.
 - Korean comments OK in domain logic (bucket keywords, etc.)
