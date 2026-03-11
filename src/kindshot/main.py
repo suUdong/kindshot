@@ -40,6 +40,7 @@ from kindshot.models import (
 )
 from kindshot.price import PriceFetcher, SnapshotScheduler
 from kindshot.quant import quant_check
+from kindshot.poll_trace import init_tracer, get_tracer
 from kindshot.sd_notify import notify_ready, notify_watchdog
 
 logging.basicConfig(
@@ -160,6 +161,8 @@ async def _process_registered_event(
     feed_source: str = "KIND",
 ) -> None:
     """Process an event that already passed dedup/registry."""
+    _tracer = get_tracer()
+    _t_proc = _tracer.process_start(processed.event_id, raw.ticker, raw.title) if _tracer else None
     detected_at = raw.detected_at
 
     # 1.5. Skip correction/withdrawal events (only originals proceed to decision)
@@ -187,6 +190,8 @@ async def _process_registered_event(
         )
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.BUCKET.value, reason="CORRECTION_EVENT")
+        if _tracer and _t_proc is not None:
+            _tracer.process_end(_t_proc, processed.event_id, "CORRECTION")
         return
 
     # 2. Bucket classification
@@ -222,7 +227,10 @@ async def _process_registered_event(
 
     elif bucket_result.bucket == Bucket.POS_STRONG:
         # Build context card
+        _t_ctx = _tracer.context_card_start(raw.ticker) if _tracer else None
         ctx_card, raw_data = await build_context_card(raw.ticker, kis, config=config)
+        if _tracer and _t_ctx is not None:
+            _tracer.context_card_end(_t_ctx, raw.ticker)
         ctx = ctx_card
 
         # Quant check
@@ -301,6 +309,8 @@ async def _process_registered_event(
             stage=event_rec.skip_stage.value if event_rec.skip_stage else None,
             reason=event_rec.skip_reason,
         )
+        if _tracer and _t_proc is not None:
+            _tracer.process_end(_t_proc, processed.event_id, event_rec.skip_reason or "SKIP")
         return
 
     # Market halt check
@@ -319,6 +329,7 @@ async def _process_registered_event(
         return
 
     detected_str = detected_at.strftime("%H:%M:%S")
+    _t_llm = _tracer.llm_start(raw.ticker) if _tracer else None
     try:
         decision = await decision_engine.decide(
             ticker=raw.ticker,
@@ -331,30 +342,44 @@ async def _process_registered_event(
             schema_version=config.schema_version,
         )
     except LlmTimeoutError:
+        if _tracer and _t_llm is not None:
+            _tracer.llm_end(_t_llm, raw.ticker, error="timeout")
         event_rec.skip_stage = SkipStage.LLM_TIMEOUT
         event_rec.skip_reason = "LLM_TIMEOUT"
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.LLM_TIMEOUT.value, reason="LLM_TIMEOUT")
         if counters is not None:
             counters.errors["llm_timeout"] += 1
+        if _tracer and _t_proc is not None:
+            _tracer.process_end(_t_proc, processed.event_id, "LLM_TIMEOUT")
         return
     except LlmCallError:
+        if _tracer and _t_llm is not None:
+            _tracer.llm_end(_t_llm, raw.ticker, error="call_error")
         event_rec.skip_stage = SkipStage.LLM_ERROR
         event_rec.skip_reason = "LLM_ERROR"
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.LLM_ERROR.value, reason="LLM_ERROR")
         if counters is not None:
             counters.errors["llm_call_error"] += 1
+        if _tracer and _t_proc is not None:
+            _tracer.process_end(_t_proc, processed.event_id, "LLM_ERROR")
         return
     except LlmParseError:
+        if _tracer and _t_llm is not None:
+            _tracer.llm_end(_t_llm, raw.ticker, error="parse_error")
         event_rec.skip_stage = SkipStage.LLM_PARSE
         event_rec.skip_reason = "LLM_PARSE"
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.LLM_PARSE.value, reason="LLM_PARSE")
         if counters is not None:
             counters.errors["llm_parse_error"] += 1
+        if _tracer and _t_proc is not None:
+            _tracer.process_end(_t_proc, processed.event_id, "LLM_PARSE")
         return
 
+    if _tracer and _t_llm is not None:
+        _tracer.llm_end(_t_llm, raw.ticker)
     decision.event_id = processed.event_id
     decision.mode = mode
 
@@ -524,7 +549,11 @@ async def _pipeline_loop(
                     _mark_skip(counters, stage="FEED", reason="EMPTY_TICKER")
                     continue
 
+                _tracer = get_tracer()
+                _t_q = _tracer.queue_put(queue.qsize(), queue.maxsize) if _tracer else None
                 await queue.put((raw, processed))
+                if _tracer and _t_q is not None:
+                    _tracer.queue_put_done(_t_q)
                 if counters is not None:
                     counters.totals["events_enqueued"] += 1
 
@@ -552,6 +581,7 @@ async def run() -> None:
     logger.info("kindshot %s starting (run_id=%s, mode=%s)", config.schema_version, run_id, mode)
 
     log = JsonlLogger(config.log_dir, run_id=run_id)
+    tracer = init_tracer(config.log_dir)
     counters = RuntimeCounters()
 
     async with aiohttp.ClientSession() as session:

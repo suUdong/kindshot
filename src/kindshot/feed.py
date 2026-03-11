@@ -16,6 +16,7 @@ import feedparser
 
 from kindshot.config import Config
 from kindshot.kis_client import KisClient
+from kindshot.poll_trace import get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +224,8 @@ class KisFeed:
     async def poll_once(self) -> list[RawDisclosure]:
         """Single poll via KIS news-title API."""
         self._last_poll_at = datetime.now(timezone(timedelta(hours=9)))
+        tracer = get_tracer()
+        t_poll = tracer.poll_start() if tracer else None
         try:
             items = await self._kis.get_news_disclosures(
                 from_time=self._last_time,
@@ -230,11 +233,15 @@ class KisFeed:
         except Exception:
             self._consecutive_failures += 1
             logger.exception("KIS disclosure fetch error")
+            if tracer and t_poll is not None:
+                tracer.poll_end(t_poll, 0, error="exception")
             return []
 
         if not items:
             # Empty response is normal during quiet hours, not a failure
             self._consecutive_failures = 0
+            if tracer and t_poll is not None:
+                tracer.poll_end(t_poll, 0)
             return []
 
         self._consecutive_failures = 0
@@ -321,6 +328,8 @@ class KisFeed:
         while len(self._seen_ids) > 5000:
             self._seen_ids.popitem(last=False)
 
+        if tracer and t_poll is not None:
+            tracer.poll_end(t_poll, len(results))
         return results
 
     async def stream(self) -> AsyncIterator[list[RawDisclosure]]:
@@ -331,10 +340,15 @@ class KisFeed:
                 yield items
             if self._stop_event.is_set():
                 break
+            interval = self._interval_with_backoff()
+            tracer = get_tracer()
+            t_sleep = tracer.sleep_start(interval) if tracer else None
             try:
                 await asyncio.wait_for(
                     self._stop_event.wait(),
-                    timeout=self._interval_with_backoff(),
+                    timeout=interval,
                 )
             except asyncio.TimeoutError:
                 pass
+            if tracer and t_sleep is not None:
+                tracer.sleep_end(t_sleep)
