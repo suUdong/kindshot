@@ -23,7 +23,7 @@ NEG_STRONG_KEYWORDS: list[str] = [
 
 POS_STRONG_KEYWORDS: list[str] = [
     "수주",
-    "공급계약",
+    "공급계약", "공급 계약",
     "실적 상향", "실적상향",
     "자사주 매입", "자사주매입", "자사주 소각", "자사주소각",
     "자기주식 취득", "자기주식취득", "자기주식 소각", "자기주식소각",
@@ -33,6 +33,7 @@ POS_STRONG_KEYWORDS: list[str] = [
     "인수",
     "지분 취득", "지분취득",
     "특허",
+    "허가 획득", "품목허가 승인", "식약처 허가",
     "매출 확대", "매출확대",
     "투자유치",
     "MOU", "업무협약",
@@ -42,11 +43,18 @@ POS_WEAK_KEYWORDS: list[str] = [
     "리포트",
     "전망",
     "테마",
+    "목표가",
+    "재평가",
+    "현금배당",
+    "현금 배당",
+    "현금ㆍ현물배당",
+    "현금ㆍ현물 배당",
 ]
 
 NEG_WEAK_KEYWORDS: list[str] = [
     "루머",
     "풍문",
+    "목표가 하향",
 ]
 
 
@@ -89,22 +97,22 @@ def classify(headline: str) -> BucketResult:
             matched_positions=pos_strong,
         )
 
-    # Priority 3: POS_WEAK
-    pos_weak = _find_keywords(text, POS_WEAK_KEYWORDS)
-    if pos_weak:
-        return BucketResult(
-            bucket=Bucket.POS_WEAK,
-            keyword_hits=[kw for kw, _ in pos_weak],
-            matched_positions=pos_weak,
-        )
-
-    # Priority 4: NEG_WEAK
+    # Priority 3: NEG_WEAK
     neg_weak = _find_keywords(text, NEG_WEAK_KEYWORDS)
     if neg_weak:
         return BucketResult(
             bucket=Bucket.NEG_WEAK,
             keyword_hits=[kw for kw, _ in neg_weak],
             matched_positions=neg_weak,
+        )
+
+    # Priority 4: POS_WEAK
+    pos_weak = _find_keywords(text, POS_WEAK_KEYWORDS)
+    if pos_weak:
+        return BucketResult(
+            bucket=Bucket.POS_WEAK,
+            keyword_hits=[kw for kw, _ in pos_weak],
+            matched_positions=pos_weak,
         )
 
     # Priority 5: UNKNOWN
