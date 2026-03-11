@@ -7,10 +7,12 @@ import asyncio
 from collections import Counter
 from dataclasses import dataclass, field
 import hashlib
+import json
 import logging
 import signal
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import aiohttp
@@ -44,6 +46,22 @@ logging.basicConfig(
     format="%(asctime)s %(name)-20s %(levelname)-5s %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+_KST = timezone(timedelta(hours=9))
+
+
+def _append_unknown_headline(log_dir: Path, headline: str, ticker: str) -> None:
+    """Append UNKNOWN-bucket headline to daily file for keyword review."""
+    try:
+        today = datetime.now(_KST).strftime("%Y-%m-%d")
+        path = log_dir / "unknown_headlines" / f"{today}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps({"headline": headline, "ticker": ticker}, ensure_ascii=False)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        logger.debug("Failed to write unknown headline")
 
 
 @dataclass
@@ -203,6 +221,9 @@ async def _process_registered_event(
     else:
         skip_stage = SkipStage.BUCKET
         skip_reason = f"{bucket_result.bucket.value}_BUCKET"
+        # Collect UNKNOWN headlines for daily keyword review
+        if bucket_result.bucket == Bucket.UNKNOWN:
+            _append_unknown_headline(config.log_dir, raw.title, raw.ticker)
 
     # Log event record
     event_rec = EventRecord(
