@@ -22,9 +22,14 @@ if ! git config credential.helper | grep -q store; then
     exit 1
 fi
 
+# daily report 생성
+DATE=$(TZ=Asia/Seoul date +%Y%m%d)
+python3 deploy/daily_report.py "$DATE" > "logs/daily_report_${DATE}.txt" 2>&1 || true
+
 # 로그 파일만 add (-f: .gitignore에 logs/ 있으므로 강제)
 git add -f logs/*.jsonl logs/polling_trace_*.jsonl 2>/dev/null || true
 git add -f logs/unknown_headlines/*.jsonl 2>/dev/null || true
+git add -f logs/daily_report_*.txt 2>/dev/null || true
 
 # 변경 없으면 종료
 if git diff --cached --quiet; then
@@ -32,7 +37,6 @@ if git diff --cached --quiet; then
     exit 0
 fi
 
-DATE=$(TZ=Asia/Seoul date +%Y%m%d)
 git commit -m "chore: add ${DATE} logs"
 git push origin main
 
