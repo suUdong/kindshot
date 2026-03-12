@@ -4,7 +4,7 @@ import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from kindshot.kis_client import KISClient
+from kindshot.kis_client import KisClient
 
 async def main():
     cfg_cls = type("C", (), {
@@ -14,7 +14,7 @@ async def main():
         "kis_base_url": os.environ.get("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443"),
         "kis_rate_limit_delay": 0.1,
     })()
-    client = KISClient(cfg_cls)
+    client = KisClient(cfg_cls)
     await client.initialize()
 
     # Test 1: no from_time (should get latest)
