@@ -367,15 +367,15 @@ class KisFeed:
         )
 
         for item in items:
+            # Update last_time BEFORE dup check so polling window always advances
+            data_tm = item.get("data_tm", "")
+            if data_tm and data_tm > self._last_time:
+                self._last_time = data_tm
+
             news_id = item.get("cntt_usiq_srno", "")
             if not news_id or news_id in self._seen_ids:
                 seen_dup += 1
                 continue
-
-            # Update last_time BEFORE filtering so next poll starts from latest
-            data_tm = item.get("data_tm", "")
-            if data_tm and data_tm > self._last_time:
-                self._last_time = data_tm
 
             self._seen_ids[news_id] = None
 
