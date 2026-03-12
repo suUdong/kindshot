@@ -26,7 +26,7 @@ case "$MODE" in
         LOG_FILE="$APP_DIR/logs/kindshot_${SUB:-$TODAY}.jsonl"
         if [ -f "$LOG_FILE" ]; then
             source "$APP_DIR/.venv/bin/activate"
-            python "$APP_DIR/deploy/log_summary.py" "$LOG_FILE"
+            python "$APP_DIR/deploy/log_summary.py" "${SUB:-$TODAY}"
         else
             echo "로그 파일 없음: $LOG_FILE"
         fi
