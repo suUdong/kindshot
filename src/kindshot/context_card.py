@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
+from dataclasses import dataclass
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,23 @@ logger = logging.getLogger(__name__)
 _PYKRX_CACHE_TTL = 300  # 5 minutes
 _PYKRX_CACHE_MAX_SIZE = 512
 _pykrx_cache: OrderedDict[str, tuple[dict, float]] = OrderedDict()  # ticker -> (data, expire_time)
+
+
+@dataclass(frozen=True)
+class ContextCardData:
+    adv_value_20d: Optional[float] = None
+    spread_bps: Optional[float] = None
+    ret_today: Optional[float] = None
+    gap: Optional[float] = None
+    prev_close: Optional[float] = None
+    cum_volume: Optional[float] = None
+    listed_shares: Optional[float] = None
+    volume_turnover_rate: Optional[float] = None
+    prior_volume_rate: Optional[float] = None
+    intraday_value_vs_adv20d: Optional[float] = None
+    quote_risk_state: object = None
+    orderbook_snapshot: object = None
+    sector: str = ""
 
 
 def configure_cache(ttl_s: int, max_size: int) -> None:
@@ -127,11 +145,11 @@ async def build_context_card(
     ticker: str,
     kis: Optional[KisClient] = None,
     config: Optional[Config] = None,
-) -> tuple[ContextCard, dict]:
+) -> tuple[ContextCard, ContextCardData]:
     """Build context card for a ticker.
 
-    Returns (ContextCard, raw_data_dict) where raw_data_dict has
-    additional fields like prev_close needed by quant check.
+    Returns (ContextCard, ContextCardData) with additional normalized
+    fields needed by quant and guardrail checks.
     """
     if config is not None:
         configure_cache(config.pykrx_cache_ttl_s, config.pykrx_cache_max_size)
@@ -141,6 +159,10 @@ async def build_context_card(
     spread_bps: Optional[float] = None
     ret_today: Optional[float] = None
     gap: Optional[float] = None
+    intraday_value_vs_adv20d: Optional[float] = None
+    top_ask_notional: Optional[float] = None
+    quote_temp_stop: Optional[bool] = None
+    quote_liquidation_trade: Optional[bool] = None
 
     if kis:
         price_info = await kis.get_price(ticker)
@@ -151,6 +173,13 @@ async def build_context_card(
                 ret_today = round(((price_info.px / prev_close) - 1) * 100, 2)
                 if price_info.open_px and price_info.open_px > 0:
                     gap = round(((price_info.open_px / prev_close) - 1) * 100, 2)
+            adv_value_20d = hist.get("adv_value_20d")
+            if adv_value_20d and adv_value_20d > 0 and price_info.cum_value is not None:
+                intraday_value_vs_adv20d = round(price_info.cum_value / adv_value_20d, 4)
+            if price_info.orderbook is not None:
+                top_ask_notional = round(price_info.orderbook.ask_price1 * price_info.orderbook.ask_size1, 2)
+            quote_temp_stop = price_info.risk_state.temp_stop_yn == "Y"
+            quote_liquidation_trade = price_info.risk_state.sltr_yn == "Y"
 
     card = ContextCard(
         ret_today=ret_today,
@@ -161,7 +190,24 @@ async def build_context_card(
         adv_value_20d=hist.get("adv_value_20d"),
         spread_bps=spread_bps,
         vol_pct_20d=hist.get("vol_pct_20d"),
+        intraday_value_vs_adv20d=intraday_value_vs_adv20d,
+        top_ask_notional=top_ask_notional,
+        quote_temp_stop=quote_temp_stop,
+        quote_liquidation_trade=quote_liquidation_trade,
     )
 
-    raw = {**hist, "spread_bps": spread_bps, "ret_today": ret_today, "gap": gap}
+    raw = ContextCardData(
+        adv_value_20d=hist.get("adv_value_20d"),
+        spread_bps=spread_bps,
+        ret_today=ret_today,
+        gap=gap,
+        prev_close=hist.get("prev_close"),
+        cum_volume=price_info.cum_volume if kis and price_info else None,
+        listed_shares=price_info.listed_shares if kis and price_info else None,
+        volume_turnover_rate=price_info.volume_turnover_rate if kis and price_info else None,
+        prior_volume_rate=price_info.prior_volume_rate if kis and price_info else None,
+        intraday_value_vs_adv20d=intraday_value_vs_adv20d,
+        quote_risk_state=price_info.risk_state if kis and price_info else None,
+        orderbook_snapshot=price_info.orderbook if kis and price_info else None,
+    )
     return card, raw

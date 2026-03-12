@@ -73,6 +73,8 @@ class QuantCheckDetail(BaseModel):
 class MarketContext(BaseModel):
     kospi_change_pct: Optional[float] = None
     kosdaq_change_pct: Optional[float] = None
+    kospi_breadth_ratio: Optional[float] = None
+    kosdaq_breadth_ratio: Optional[float] = None
     vkospi: Optional[float] = None
 
 
@@ -85,6 +87,10 @@ class ContextCard(BaseModel):
     adv_value_20d: Optional[float] = None
     spread_bps: Optional[float] = None
     vol_pct_20d: Optional[float] = None
+    intraday_value_vs_adv20d: Optional[float] = None
+    top_ask_notional: Optional[float] = None
+    quote_temp_stop: Optional[bool] = None
+    quote_liquidation_trade: Optional[bool] = None
 
 
 # ── Log Records ────────────────────────────────────────

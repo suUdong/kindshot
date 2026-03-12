@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Optional
 
 from kindshot.config import Config
+from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
+from kindshot.models import Action
 
 logger = logging.getLogger(__name__)
 _KST = timezone(timedelta(hours=9))
@@ -148,6 +150,13 @@ def check_guardrails(
     state: Optional[GuardrailState] = None,
     headline: str = "",
     sector: str = "",
+    quote_risk_state: Optional[QuoteRiskState] = None,
+    orderbook_snapshot: Optional[OrderbookSnapshot] = None,
+    intraday_value_vs_adv20d: Optional[float] = None,
+    quote_temp_stop: Optional[bool] = None,
+    quote_liquidation_trade: Optional[bool] = None,
+    top_ask_notional: Optional[float] = None,
+    decision_action: Optional[Action] = None,
     **kwargs: object,
 ) -> GuardrailResult:
     """Final safety checks before order execution."""
@@ -171,26 +180,54 @@ def check_guardrails(
     if abs(ret_today) > config.extreme_move_pct:
         return GuardrailResult(passed=False, reason="EXTREME_MOVE")
 
-    # 4-8: Portfolio-level guardrails (require state tracking)
+    # 4. Quote status hard stops from KIS inquire-price. Keep this limited to
+    # explicit non-tradable states until other codes are validated.
+    if quote_risk_state is not None:
+        if quote_risk_state.temp_stop_yn == "Y":
+            return GuardrailResult(passed=False, reason="TEMP_STOP")
+        if quote_risk_state.sltr_yn == "Y":
+            return GuardrailResult(passed=False, reason="LIQUIDATION_TRADE")
+    if quote_temp_stop is True:
+        return GuardrailResult(passed=False, reason="TEMP_STOP")
+    if quote_liquidation_trade is True:
+        return GuardrailResult(passed=False, reason="LIQUIDATION_TRADE")
+
+    # 5. BUY-side top-of-book liquidity gate. If the visible best ask cannot
+    # absorb the configured paper order size, skip rather than assume a walk up the book.
+    if decision_action == Action.BUY and orderbook_snapshot is not None:
+        best_ask_notional = orderbook_snapshot.ask_price1 * orderbook_snapshot.ask_size1
+        if best_ask_notional < config.order_size:
+            return GuardrailResult(passed=False, reason="ORDERBOOK_TOP_LEVEL_LIQUIDITY")
+    if decision_action == Action.BUY and top_ask_notional is not None:
+        if top_ask_notional < config.order_size:
+            return GuardrailResult(passed=False, reason="ORDERBOOK_TOP_LEVEL_LIQUIDITY")
+
+    # 6. Participation confirmation. If cumulative traded value is still a very
+    # small fraction of normal daily value, skip rather than trust a thin headline reaction.
+    if decision_action == Action.BUY and intraday_value_vs_adv20d is not None:
+        if intraday_value_vs_adv20d < config.min_intraday_value_vs_adv20d:
+            return GuardrailResult(passed=False, reason="INTRADAY_VALUE_TOO_THIN")
+
+    # 7-9: Portfolio-level guardrails (require state tracking)
     if state is not None:
-        # 4. Daily loss limit
+        # 7. Daily loss limit
         if state.daily_pnl <= -config.daily_loss_limit:
             return GuardrailResult(passed=False, reason="DAILY_LOSS_LIMIT")
 
-        # 5. Same-stock re-buy today
+        # 8. Same-stock re-buy today
         if ticker in state.bought_tickers:
             return GuardrailResult(passed=False, reason="SAME_STOCK_REBUY")
 
-        # 6. Sector concentration (max per sector; skipped when sector data unavailable)
+        # 9. Sector concentration (max per sector; skipped when sector data unavailable)
         if sector:
             if state.sector_positions.get(sector, 0) >= config.max_sector_positions:
                 return GuardrailResult(passed=False, reason="SECTOR_CONCENTRATION")
 
-        # 7. Position count limit
+        # 10. Position count limit
         if state.position_count >= config.max_positions:
             return GuardrailResult(passed=False, reason="MAX_POSITIONS")
 
-    # 8. Restricted stock (관리종목/투자경고/투자위험)
+    # 11. Restricted stock (관리종목/투자경고/투자위험)
     for marker in _RESTRICTED_MARKERS:
         if marker in headline:
             return GuardrailResult(passed=False, reason="RESTRICTED_STOCK")

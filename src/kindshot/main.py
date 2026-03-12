@@ -19,7 +19,7 @@ import aiohttp
 
 from kindshot.bucket import classify
 from kindshot.config import Config, load_config
-from kindshot.context_card import build_context_card, configure_cache as configure_context_card_cache
+from kindshot.context_card import ContextCardData, build_context_card, configure_cache as configure_context_card_cache
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import KindFeed, KisFeed, RawDisclosure
@@ -210,7 +210,7 @@ async def _process_registered_event(
         except Exception:
             pass
 
-    raw_data: dict = {}
+    raw_data = ContextCardData()
     skip_stage: Optional[SkipStage] = None
     skip_reason: Optional[str] = None
     analysis_tag: Optional[str] = None
@@ -234,9 +234,9 @@ async def _process_registered_event(
         ctx = ctx_card
 
         # Quant check
-        adv = raw_data.get("adv_value_20d") or 0
-        spread = raw_data.get("spread_bps")
-        ret_today = raw_data.get("ret_today")
+        adv = raw_data.adv_value_20d or 0
+        spread = raw_data.spread_bps
+        ret_today = raw_data.ret_today
 
         qr = quant_check(adv, spread, ret_today, config)
         quant_passed = qr.passed
@@ -321,6 +321,24 @@ async def _process_registered_event(
         _mark_skip(counters, stage="MARKET", reason=halt_reason)
         return
 
+    market_snapshot = market.snapshot
+    if (
+        market_snapshot.kospi_change_pct is not None
+        and market_snapshot.kosdaq_change_pct is not None
+        and market_snapshot.kospi_breadth_ratio is not None
+        and market_snapshot.kosdaq_breadth_ratio is not None
+        and market_snapshot.kospi_change_pct < 0
+        and market_snapshot.kosdaq_change_pct < 0
+        and market_snapshot.kospi_breadth_ratio < config.min_market_breadth_ratio
+        and market_snapshot.kosdaq_breadth_ratio < config.min_market_breadth_ratio
+    ):
+        logger.info("SKIP (MARKET_BREADTH_RISK_OFF): %s", raw.title[:60])
+        event_rec.skip_stage = SkipStage.GUARDRAIL
+        event_rec.skip_reason = "MARKET_BREADTH_RISK_OFF"
+        await log.write(event_rec)
+        _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MARKET_BREADTH_RISK_OFF")
+        return
+
     # Dry run: skip LLM
     if config.dry_run:
         logger.info("DRY-RUN SKIP decision: %s", raw.title[:60])
@@ -388,12 +406,16 @@ async def _process_registered_event(
     gr = check_guardrails(
         ticker=raw.ticker,
         config=config,
-        spread_bps=raw_data.get("spread_bps") if ctx else None,
-        adv_value_20d=raw_data.get("adv_value_20d") if ctx else None,
-        ret_today=raw_data.get("ret_today") if ctx else None,
+        spread_bps=raw_data.spread_bps if ctx else None,
+        adv_value_20d=raw_data.adv_value_20d if ctx else None,
+        ret_today=raw_data.ret_today if ctx else None,
         state=guardrail_state,
         headline=raw.title,
-        sector=raw_data.get("sector", "") if ctx else "",
+        sector=raw_data.sector if ctx else "",
+        quote_risk_state=raw_data.quote_risk_state if ctx else None,
+        orderbook_snapshot=raw_data.orderbook_snapshot if ctx else None,
+        intraday_value_vs_adv20d=raw_data.intraday_value_vs_adv20d if ctx else None,
+        decision_action=decision.action,
     )
     if not gr.passed:
         event_rec.skip_stage = SkipStage.GUARDRAIL
@@ -678,5 +700,7 @@ async def run() -> None:
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            if kis is not None:
+                logger.info("KIS client stats: %s", kis.stats_snapshot())
             logger.info("Runtime counters: %s", _counter_snapshot(counters))
             logger.info("Shutdown complete. Pending snapshots lost: %d", scheduler.pending_count)

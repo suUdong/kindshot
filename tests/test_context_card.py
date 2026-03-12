@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import kindshot.context_card as cc
 from kindshot.config import Config
-from kindshot.kis_client import PriceInfo
+from kindshot.context_card import ContextCardData
+from kindshot.kis_client import OrderbookSnapshot, PriceInfo, QuoteRiskState
 
 
 async def test_pykrx_features_cache_hit(monkeypatch):
@@ -88,10 +89,11 @@ async def test_gap_calculated_from_open_px(monkeypatch):
 
     # gap = (51000 / 50000 - 1) * 100 = 2.0%
     assert card.gap == 2.0
-    assert raw["gap"] == 2.0
+    assert raw.gap == 2.0
     # ret_today = (52000 / 50000 - 1) * 100 = 4.0%
     assert card.ret_today == 4.0
     assert card.spread_bps == 10.0
+    assert card.intraday_value_vs_adv20d == 0.1
 
 
 async def test_gap_none_without_open_px(monkeypatch):
@@ -113,3 +115,131 @@ async def test_gap_none_without_open_px(monkeypatch):
     card, raw = await cc.build_context_card("005930", kis=mock_kis)
 
     assert card.gap is None
+
+
+async def test_context_card_preserves_quote_risk_state(monkeypatch):
+    cc._pykrx_cache.clear()
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_TTL", 300)
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_MAX_SIZE", 512)
+
+    async def _fake_to_thread(func, *args, **kwargs):
+        return {"prev_close": 50000}
+
+    monkeypatch.setattr(cc.asyncio, "to_thread", _fake_to_thread)
+
+    risk_state = QuoteRiskState(temp_stop_yn="Y", sltr_yn="N", vi_cls_code="D")
+    mock_kis = AsyncMock()
+    mock_kis.get_price = AsyncMock(return_value=PriceInfo(
+        px=52000, open_px=51000, spread_bps=10.0, cum_value=1e9, fetch_latency_ms=50, risk_state=risk_state,
+    ))
+
+    _card, raw = await cc.build_context_card("005930", kis=mock_kis)
+
+    assert raw.quote_risk_state == risk_state
+
+
+async def test_context_card_preserves_orderbook_snapshot(monkeypatch):
+    cc._pykrx_cache.clear()
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_TTL", 300)
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_MAX_SIZE", 512)
+
+    async def _fake_to_thread(func, *args, **kwargs):
+        return {"prev_close": 50000}
+
+    monkeypatch.setattr(cc.asyncio, "to_thread", _fake_to_thread)
+
+    orderbook = OrderbookSnapshot(
+        ask_price1=52100.0,
+        bid_price1=51900.0,
+        ask_size1=80,
+        bid_size1=120,
+        total_ask_size=2000,
+        total_bid_size=2500,
+        spread_bps=38.5,
+    )
+    mock_kis = AsyncMock()
+    mock_kis.get_price = AsyncMock(return_value=PriceInfo(
+        px=52000, open_px=51000, spread_bps=38.5, cum_value=1e9, fetch_latency_ms=50, orderbook=orderbook,
+    ))
+
+    _card, raw = await cc.build_context_card("005930", kis=mock_kis)
+
+    assert raw.orderbook_snapshot == orderbook
+
+
+async def test_context_card_preserves_participation_fields(monkeypatch):
+    cc._pykrx_cache.clear()
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_TTL", 300)
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_MAX_SIZE", 512)
+
+    async def _fake_to_thread(func, *args, **kwargs):
+        return {"prev_close": 50000, "adv_value_20d": 20_000_000_000}
+
+    monkeypatch.setattr(cc.asyncio, "to_thread", _fake_to_thread)
+
+    mock_kis = AsyncMock()
+    mock_kis.get_price = AsyncMock(return_value=PriceInfo(
+        px=52000,
+        open_px=51000,
+        spread_bps=12.0,
+        cum_value=100_000_000.0,
+        fetch_latency_ms=50,
+        cum_volume=2_500_000.0,
+        listed_shares=400_000_000.0,
+        volume_turnover_rate=0.63,
+        prior_volume_rate=180.2,
+    ))
+
+    card, raw = await cc.build_context_card("005930", kis=mock_kis)
+
+    assert card.intraday_value_vs_adv20d == 0.005
+    assert raw.cum_volume == 2_500_000.0
+    assert raw.listed_shares == 400_000_000.0
+    assert raw.volume_turnover_rate == 0.63
+    assert raw.prior_volume_rate == 180.2
+    assert raw.intraday_value_vs_adv20d == 0.005
+
+
+async def test_context_card_normalizes_quote_and_liquidity_flags(monkeypatch):
+    cc._pykrx_cache.clear()
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_TTL", 300)
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_MAX_SIZE", 512)
+
+    async def _fake_to_thread(func, *args, **kwargs):
+        return {"prev_close": 50000, "adv_value_20d": 20_000_000_000}
+
+    monkeypatch.setattr(cc.asyncio, "to_thread", _fake_to_thread)
+
+    orderbook = OrderbookSnapshot(
+        ask_price1=52_100.0,
+        bid_price1=51_900.0,
+        ask_size1=80,
+        bid_size1=120,
+        total_ask_size=2000,
+        total_bid_size=2500,
+        spread_bps=38.5,
+    )
+    risk_state = QuoteRiskState(temp_stop_yn="Y", sltr_yn="N")
+    mock_kis = AsyncMock()
+    mock_kis.get_price = AsyncMock(return_value=PriceInfo(
+        px=52000,
+        open_px=51000,
+        spread_bps=38.5,
+        cum_value=100_000_000.0,
+        fetch_latency_ms=50,
+        risk_state=risk_state,
+        orderbook=orderbook,
+    ))
+
+    card, _raw = await cc.build_context_card("005930", kis=mock_kis)
+
+    assert card.quote_temp_stop is True
+    assert card.quote_liquidation_trade is False
+    assert card.top_ask_notional == 4_168_000.0
+
+
+def test_context_card_data_defaults():
+    raw = ContextCardData()
+
+    assert raw.adv_value_20d is None
+    assert raw.sector == ""

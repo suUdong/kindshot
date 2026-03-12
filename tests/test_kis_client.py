@@ -4,15 +4,16 @@ import re
 import time
 
 import pytest
-from aioresponses import aioresponses
+from aioresponses import CallbackResult, aioresponses
 import aiohttp
 
 from kindshot.config import Config
-from kindshot.kis_client import KisClient, BASE_URL_PAPER
+from kindshot.kis_client import BASE_URL_PAPER, IndexInfo, KisClient, NewsDisclosure, OrderbookSnapshot, QuoteRiskState
 
 PRICE_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/inquire-price\?.*")
 ORDERBOOK_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn\?.*")
 INDEX_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/inquire-index-price\?.*")
+NEWS_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/news-title(?:\?.*)?$")
 
 
 def _cfg(**kw) -> Config:
@@ -23,21 +24,33 @@ def _token_response():
     return {"access_token": "fake_token", "token_type": "Bearer"}
 
 
-def _price_output(px="50000", cum="1000000000", open_px="49500"):
+def _price_output(px="50000", cum="1000000000", open_px="49500", **extra_fields):
     return {
         "output": {
             "stck_prpr": px,
             "acml_tr_pbmn": cum,
             "stck_oprc": open_px,
+            **extra_fields,
         }
     }
 
 
-def _orderbook_output(askp1="50100", bidp1="49900"):
+def _orderbook_output(
+    askp1="50100",
+    bidp1="49900",
+    ask_size1="200",
+    bid_size1="300",
+    total_ask_size="5000",
+    total_bid_size="7000",
+):
     return {
         "output1": {
             "askp1": askp1,
             "bidp1": bidp1,
+            "askp_rsqn1": ask_size1,
+            "bidp_rsqn1": bid_size1,
+            "total_askp_rsqn": total_ask_size,
+            "total_bidp_rsqn": total_bid_size,
         }
     }
 
@@ -59,6 +72,20 @@ async def test_get_price_success():
     # spread_bps from orderbook: (50100-49900)/50000 * 10000 = 40.0 bps
     assert result.spread_bps is not None
     assert result.spread_bps == pytest.approx(40.0, abs=0.5)
+    assert result.risk_state == QuoteRiskState()
+    assert result.orderbook == OrderbookSnapshot(
+        ask_price1=50100.0,
+        bid_price1=49900.0,
+        ask_size1=200,
+        bid_size1=300,
+        total_ask_size=5000,
+        total_bid_size=7000,
+        spread_bps=40.0,
+    )
+    assert result.cum_volume == 0.0
+    assert result.listed_shares is None
+    assert result.volume_turnover_rate is None
+    assert result.prior_volume_rate is None
 
 
 async def test_get_price_with_spread_from_orderbook():
@@ -175,6 +202,26 @@ async def test_get_index_change_valid_value():
     assert result == -1.23
 
 
+async def test_get_index_info_returns_typed_result():
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(INDEX_URL, payload={"output": {"bstp_nmix_prdy_ctrt": "-0.77", "ascn_issu_cnt": "320", "down_issu_cnt": "540", "stnr_issu_cnt": "45"}})
+            result = await kis.get_index_info("2001")
+
+    assert isinstance(result, IndexInfo)
+    assert result is not None
+    assert result.iscd == "2001"
+    assert result.change_pct == -0.77
+    assert result.up_issue_count == 320
+    assert result.down_issue_count == 540
+    assert result.flat_issue_count == 45
+    assert result.fetch_latency_ms >= 0
+
+
 async def test_token_failure_returns_none():
     """Token endpoint failure should gracefully return None."""
     cfg = _cfg()
@@ -185,6 +232,36 @@ async def test_token_failure_returns_none():
             result = await kis.get_price("005930")
 
     assert result is None
+
+
+async def test_stats_snapshot_tracks_request_failures():
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(PRICE_URL, exception=aiohttp.ClientError("boom"))
+            result = await kis.get_price("005930")
+
+    assert result is None
+    stats = kis.stats_snapshot()
+    assert stats["request_failures"]["FHKST01010100"] == 1
+
+
+async def test_stats_snapshot_tracks_invalid_payloads():
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(PRICE_URL, payload={"output": "invalid"})
+            result = await kis.get_price("005930")
+
+    assert result is None
+    stats = kis.stats_snapshot()
+    assert stats["invalid_payloads"]["FHKST01010100"] == 1
 
 
 async def test_rate_limit_enforced():
@@ -217,3 +294,173 @@ async def test_open_px_returned():
 
     assert result is not None
     assert result.open_px == 49000.0
+
+
+async def test_get_price_maps_quote_risk_state():
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(
+                PRICE_URL,
+                payload=_price_output(
+                    temp_stop_yn="Y",
+                    sltr_yn="N",
+                    short_over_yn="Y",
+                    vi_cls_code="D",
+                    ovtm_vi_cls_code="O",
+                    invt_caful_yn="Y",
+                    mrkt_warn_cls_code="03",
+                    mang_issu_cls_code="M",
+                ),
+            )
+            m.get(ORDERBOOK_URL, payload=_orderbook_output())
+            result = await kis.get_price("005930")
+
+    assert result is not None
+    assert result.risk_state == QuoteRiskState(
+        temp_stop_yn="Y",
+        sltr_yn="N",
+        short_over_yn="Y",
+        vi_cls_code="D",
+        ovtm_vi_cls_code="O",
+        invt_caful_yn="Y",
+        mrkt_warn_cls_code="03",
+        mang_issu_cls_code="M",
+    )
+
+
+async def test_get_price_orderbook_snapshot_parses_zero_sizes_as_zero():
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(PRICE_URL, payload=_price_output())
+            m.get(ORDERBOOK_URL, payload=_orderbook_output(ask_size1="0", bid_size1="0", total_ask_size="0", total_bid_size="0"))
+            result = await kis.get_price("005930")
+
+    assert result is not None
+    assert result.orderbook is not None
+    assert result.orderbook.ask_size1 == 0
+    assert result.orderbook.total_bid_size == 0
+
+
+async def test_get_price_maps_participation_fields():
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(
+                PRICE_URL,
+                payload=_price_output(
+                    acml_vol="1234567",
+                    lstn_stcn="250000000",
+                    vol_tnrt="0.49",
+                    prdy_vrss_vol_rate="215.31",
+                ),
+            )
+            m.get(ORDERBOOK_URL, payload=_orderbook_output())
+            result = await kis.get_price("005930")
+
+    assert result is not None
+    assert result.cum_volume == 1234567.0
+    assert result.listed_shares == 250000000.0
+    assert result.volume_turnover_rate == 0.49
+    assert result.prior_volume_rate == 215.31
+
+
+async def test_get_news_disclosures_wraps_single_output_dict():
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(NEWS_URL, payload={"output": {"cntt_usiq_srno": "NEWS001", "data_tm": "143000"}})
+            result = await kis.get_news_disclosures()
+
+    assert result == [{"cntt_usiq_srno": "NEWS001", "data_tm": "143000"}]
+
+
+async def test_get_news_disclosure_items_returns_typed_rows():
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(
+                NEWS_URL,
+                payload={
+                    "output": {
+                        "cntt_usiq_srno": "NEWS001",
+                        "data_dt": "20260312",
+                        "data_tm": "143000",
+                        "hts_pbnt_titl_cntt": "삼성전자(005930) 공급계약 체결",
+                        "dorg": "한국거래소",
+                        "iscd1": "005930",
+                    }
+                },
+            )
+            result = await kis.get_news_disclosure_items()
+
+    assert result == [
+        NewsDisclosure(
+            news_id="NEWS001",
+            data_dt="20260312",
+            data_tm="143000",
+            title="삼성전자(005930) 공급계약 체결",
+            dorg="한국거래소",
+            tickers=("005930",),
+            provider_code="",
+        )
+    ]
+
+
+async def test_get_news_disclosures_invalid_output_returns_empty():
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(NEWS_URL, payload={"output": "invalid"})
+            result = await kis.get_news_disclosures()
+
+    assert result == []
+
+
+async def test_get_news_disclosures_paginates_on_tr_cont_m():
+    cfg = _cfg()
+    request_tr_conts: list[str] = []
+
+    def _callback(url, **kwargs):
+        request_tr_conts.append(kwargs["headers"].get("tr_cont", ""))
+        if len(request_tr_conts) == 1:
+            return CallbackResult(
+                status=200,
+                payload={"output": [{"cntt_usiq_srno": "NEWS001"}]},
+                headers={"tr_cont": "M"},
+            )
+        return CallbackResult(
+            status=200,
+            payload={"output": [{"cntt_usiq_srno": "NEWS002"}]},
+            headers={"tr_cont": "D"},
+        )
+
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(NEWS_URL, callback=_callback, repeat=True)
+            result = await kis.get_news_disclosures()
+
+    assert result == [{"cntt_usiq_srno": "NEWS001"}, {"cntt_usiq_srno": "NEWS002"}]
+    assert request_tr_conts == ["", "N"]

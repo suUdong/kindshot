@@ -2,6 +2,8 @@
 
 from kindshot.config import Config
 from kindshot.guardrails import check_guardrails, GuardrailResult, GuardrailState
+from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
+from kindshot.models import Action
 
 
 def _cfg(**kw) -> Config:
@@ -149,6 +151,121 @@ def test_restricted_stock():
     r = check_guardrails("005930", cfg, headline="삼성전자(005930) - 관리종목 지정", **_base_args())
     assert r.passed is False
     assert r.reason == "RESTRICTED_STOCK"
+
+
+def test_temp_stop_blocks_trade():
+    cfg = _cfg()
+    r = check_guardrails(
+        "005930",
+        cfg,
+        quote_risk_state=QuoteRiskState(temp_stop_yn="Y"),
+        **_base_args(),
+    )
+    assert r.passed is False
+    assert r.reason == "TEMP_STOP"
+
+
+def test_liquidation_trade_blocks_trade():
+    cfg = _cfg()
+    r = check_guardrails(
+        "005930",
+        cfg,
+        quote_risk_state=QuoteRiskState(sltr_yn="Y"),
+        **_base_args(),
+    )
+    assert r.passed is False
+    assert r.reason == "LIQUIDATION_TRADE"
+
+
+def test_orderbook_top_level_liquidity_blocks_buy():
+    cfg = _cfg(order_size=5_000_000)
+    r = check_guardrails(
+        "005930",
+        cfg,
+        orderbook_snapshot=OrderbookSnapshot(
+            ask_price1=50_000.0,
+            bid_price1=49_900.0,
+            ask_size1=50,
+            bid_size1=100,
+            total_ask_size=500,
+            total_bid_size=800,
+            spread_bps=20.0,
+        ),
+        decision_action=Action.BUY,
+        **_base_args(),
+    )
+    assert r.passed is False
+    assert r.reason == "ORDERBOOK_TOP_LEVEL_LIQUIDITY"
+
+
+def test_orderbook_top_level_liquidity_does_not_block_skip():
+    cfg = _cfg(order_size=5_000_000)
+    r = check_guardrails(
+        "005930",
+        cfg,
+        orderbook_snapshot=OrderbookSnapshot(
+            ask_price1=50_000.0,
+            bid_price1=49_900.0,
+            ask_size1=50,
+            bid_size1=100,
+            total_ask_size=500,
+            total_bid_size=800,
+            spread_bps=20.0,
+        ),
+        decision_action=Action.SKIP,
+        **_base_args(),
+    )
+    assert r.passed is True
+
+
+def test_intraday_value_ratio_blocks_buy():
+    cfg = _cfg(min_intraday_value_vs_adv20d=0.01)
+    r = check_guardrails(
+        "005930",
+        cfg,
+        intraday_value_vs_adv20d=0.005,
+        decision_action=Action.BUY,
+        **_base_args(),
+    )
+    assert r.passed is False
+    assert r.reason == "INTRADAY_VALUE_TOO_THIN"
+
+
+def test_intraday_value_ratio_does_not_block_skip():
+    cfg = _cfg(min_intraday_value_vs_adv20d=0.01)
+    r = check_guardrails(
+        "005930",
+        cfg,
+        intraday_value_vs_adv20d=0.005,
+        decision_action=Action.SKIP,
+        **_base_args(),
+    )
+    assert r.passed is True
+
+
+def test_normalized_quote_temp_stop_blocks_without_raw_dataclass():
+    cfg = _cfg()
+    r = check_guardrails(
+        "005930",
+        cfg,
+        quote_temp_stop=True,
+        **_base_args(),
+    )
+    assert r.passed is False
+    assert r.reason == "TEMP_STOP"
+
+
+def test_normalized_top_ask_notional_blocks_buy_without_raw_dataclass():
+    cfg = _cfg(order_size=5_000_000)
+    r = check_guardrails(
+        "005930",
+        cfg,
+        top_ask_notional=4_000_000.0,
+        decision_action=Action.BUY,
+        **_base_args(),
+    )
+    assert r.passed is False
+    assert r.reason == "ORDERBOOK_TOP_LEVEL_LIQUIDITY"
 
 
 def test_state_reset_daily():

@@ -17,7 +17,7 @@ import aiohttp
 import feedparser
 
 from kindshot.config import Config
-from kindshot.kis_client import KisClient
+from kindshot.kis_client import KisClient, NewsDisclosure
 from kindshot.poll_trace import get_tracer
 
 logger = logging.getLogger(__name__)
@@ -293,6 +293,12 @@ class KisFeed:
             return ""
         return overlapped.strftime("%H%M%S")
 
+    def _sorted_news_items(self, items: list[NewsDisclosure]) -> list[NewsDisclosure]:
+        return sorted(
+            items,
+            key=lambda item: (item.data_dt, item.data_tm, item.news_id),
+        )
+
     async def poll_once(self) -> list[RawDisclosure]:
         """Single poll via KIS news-title API."""
         self._last_poll_at = datetime.now(timezone(timedelta(hours=9)))
@@ -303,7 +309,7 @@ class KisFeed:
         # Always send empty string to get the latest news; rely on seen_ids for dedup.
         t_poll = tracer.poll_start(from_time="") if tracer else None
         try:
-            items = await self._kis.get_news_disclosures(
+            items = await self._kis.get_news_disclosure_items(
                 from_time="",
             )
         except Exception:
@@ -319,8 +325,9 @@ class KisFeed:
                 )
             return []
 
+        items = self._sorted_news_items(items)
         raw_count = len(items) if items else 0
-        raw_times = sorted(item.get("data_tm", "") for item in items if item.get("data_tm", ""))
+        raw_times = sorted(item.data_tm for item in items if item.data_tm)
         raw_min_time = raw_times[0] if raw_times else ""
         raw_max_time = raw_times[-1] if raw_times else ""
 
@@ -369,18 +376,18 @@ class KisFeed:
 
         for item in items:
             # Update last_time BEFORE dup check so polling window always advances
-            data_tm = item.get("data_tm", "")
+            data_tm = item.data_tm
             if data_tm and data_tm > self._last_time:
                 self._last_time = data_tm
 
-            news_id = item.get("cntt_usiq_srno", "")
+            news_id = item.news_id
             if not news_id or news_id in self._seen_ids:
                 seen_dup += 1
                 continue
 
             self._seen_ids[news_id] = None
 
-            title = item.get("hts_pbnt_titl_cntt", "")
+            title = item.title
 
             # Skip noise: price alerts, rankings, general news
             if any(p in title for p in _NOISE_PATTERNS):
@@ -388,7 +395,7 @@ class KisFeed:
                 continue
 
             # Must contain disclosure-relevant keyword or be from disclosure source
-            dorg = item.get("dorg", "")
+            dorg = item.dorg
             is_disclosure_source = any(dorg.startswith(p) for p in ("거래소", "금감원"))
             has_disclosure_keyword = any(kw in title for kw in _DISCLOSURE_KEYWORDS)
 
@@ -397,12 +404,7 @@ class KisFeed:
                 continue
 
             # Extract first non-empty ticker from iscd1~iscd5
-            ticker = ""
-            for i in range(1, 6):
-                t = item.get(f"iscd{i}", "").strip()
-                if t and len(t) == 6 and t.isdigit():
-                    ticker = t
-                    break
+            ticker = item.tickers[0] if item.tickers else ""
 
             # Extract corp name from title (회사명(종목코드) pattern)
             corp_name = ""
@@ -415,7 +417,7 @@ class KisFeed:
                     title=title,
                     link=f"kis://news/{news_id}",
                     rss_guid=news_id,
-                    published=f"{item.get('data_dt', '')} {data_tm}",
+                    published=f"{item.data_dt} {data_tm}",
                     ticker=ticker,
                     corp_name=corp_name,
                     detected_at=now,

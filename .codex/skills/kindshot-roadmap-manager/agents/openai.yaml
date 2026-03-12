@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kindshot Roadmap Manager"
+  short_description: "Manage Kindshot Codex roadmap flow."
+  default_prompt: "Review roadmap.md and latest.md, choose one bounded next step, then update roadmap state after the run."

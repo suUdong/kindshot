@@ -49,7 +49,12 @@ def _build_prompt(
         f"pos_20d={ctx.pos_20d} gap={ctx.gap}"
     )
     adv_display = f"{ctx.adv_value_20d/1e8:.0f}억" if ctx.adv_value_20d else "N/A"
-    ctx_micro = f"adv_20d={adv_display} spread_bps={ctx.spread_bps} vol_pct_20d={ctx.vol_pct_20d}"
+    ctx_micro = (
+        f"adv_20d={adv_display} spread_bps={ctx.spread_bps} vol_pct_20d={ctx.vol_pct_20d} "
+        f"intraday_value_vs_adv20d={ctx.intraday_value_vs_adv20d} "
+        f"top_ask_notional={ctx.top_ask_notional} "
+        f"temp_stop={ctx.quote_temp_stop} liquidation_trade={ctx.quote_liquidation_trade}"
+    )
 
     return f"""event: [{bucket.value}] {corp_name}, {headline}
 corp: {corp_name}({ticker})
@@ -128,7 +133,11 @@ class DecisionEngine:
 
     def _cache_key(self, ticker: str, headline: str, bucket: Bucket, ctx: ContextCard) -> str:
         # Include context card data so market changes invalidate cache
-        ctx_str = f"{ctx.adv_value_20d}|{ctx.spread_bps}|{ctx.ret_today}"
+        ctx_str = (
+            f"{ctx.adv_value_20d}|{ctx.spread_bps}|{ctx.ret_today}|"
+            f"{ctx.intraday_value_vs_adv20d}|{ctx.top_ask_notional}|"
+            f"{ctx.quote_temp_stop}|{ctx.quote_liquidation_trade}"
+        )
         h = hashlib.sha256(f"{headline}|{ctx_str}".encode()).hexdigest()[:16]
         return f"{ticker}:{h}:{bucket.value}"
 

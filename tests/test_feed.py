@@ -12,6 +12,26 @@ import aiohttp
 
 from kindshot.config import Config
 from kindshot.feed import KindFeed, KisFeed, _extract_ticker_corp, _extract_kind_uid
+from kindshot.kis_client import NewsDisclosure
+
+
+def _news_item(
+    news_id: str,
+    data_dt: str,
+    data_tm: str,
+    title: str,
+    *,
+    ticker: str = "005930",
+    dorg: str = "한국거래소",
+) -> NewsDisclosure:
+    return NewsDisclosure(
+        news_id=news_id,
+        data_dt=data_dt,
+        data_tm=data_tm,
+        title=title,
+        dorg=dorg,
+        tickers=(ticker,) if ticker else (),
+    )
 
 
 def test_extract_ticker_corp():
@@ -170,7 +190,7 @@ async def test_kind_feed_updates_last_poll_at():
 async def test_kis_feed_updates_last_poll_at():
     cfg = Config()
     kis = AsyncMock()
-    kis.get_news_disclosures = AsyncMock(return_value=[])
+    kis.get_news_disclosure_items = AsyncMock(return_value=[])
     feed = KisFeed(cfg, kis)
     assert feed.last_poll_at is None
     await feed.poll_once()
@@ -181,15 +201,8 @@ async def test_kis_feed_last_time_updates_on_noise():
     """_last_time should advance even for noise items that get filtered."""
     cfg = Config()
     kis = AsyncMock()
-    kis.get_news_disclosures = AsyncMock(return_value=[
-        {
-            "cntt_usiq_srno": "NOISE001",
-            "data_dt": "20260311",
-            "data_tm": "143000",
-            "hts_pbnt_titl_cntt": "삼성전자(005930) - 급등 관련 뉴스",
-            "iscd1": "005930",
-            "dorg": "한국거래소",
-        }
+    kis.get_news_disclosure_items = AsyncMock(return_value=[
+        _news_item("NOISE001", "20260311", "143000", "삼성전자(005930) - 급등 관련 뉴스")
     ])
     feed = KisFeed(cfg, kis)
     results = await feed.poll_once()
@@ -199,31 +212,39 @@ async def test_kis_feed_last_time_updates_on_noise():
     assert feed._last_time == "143000"
 
 
+async def test_kis_feed_sorts_items_deterministically():
+    cfg = Config()
+    kis = AsyncMock()
+    kis.get_news_disclosure_items = AsyncMock(return_value=[
+        _news_item("NEWS002", "20260312", "143100", "삼성전자(005930) 공급계약 체결"),
+        _news_item("NEWS001", "20260312", "143000", "삼성전자(005930) 공급계약 체결"),
+    ])
+    feed = KisFeed(cfg, kis)
+
+    results = await feed.poll_once()
+
+    assert [item.rss_guid for item in results] == ["NEWS001", "NEWS002"]
+    assert feed._last_time == "143100"
+
+
 async def test_kis_feed_always_queries_without_from_time():
     """KIS API returns items BEFORE from_time, so we always send empty string."""
     cfg = Config()
     kis = AsyncMock()
-    kis.get_news_disclosures = AsyncMock(return_value=[])
+    kis.get_news_disclosure_items = AsyncMock(return_value=[])
     feed = KisFeed(cfg, kis)
     feed._last_time = "143000"
 
     await feed.poll_once()
 
-    kis.get_news_disclosures.assert_awaited_once_with(from_time="")
+    kis.get_news_disclosure_items.assert_awaited_once_with(from_time="")
 
 
 async def test_kis_feed_state_persists_across_restart():
     cfg = Config()
     kis = AsyncMock()
-    kis.get_news_disclosures = AsyncMock(return_value=[
-        {
-            "cntt_usiq_srno": "NEWS001",
-            "data_dt": "20260312",
-            "data_tm": "143000",
-            "hts_pbnt_titl_cntt": "삼성전자(005930) 공급계약 체결",
-            "iscd1": "005930",
-            "dorg": "한국거래소",
-        }
+    kis.get_news_disclosure_items = AsyncMock(return_value=[
+        _news_item("NEWS001", "20260312", "143000", "삼성전자(005930) 공급계약 체결")
     ])
     files: dict[str, str] = {}
     state_dir = Path("virtual-feed-state")

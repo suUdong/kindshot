@@ -157,3 +157,36 @@ async def test_replay_with_buy_decision(tmp_path):
         mock_prices.return_value = {"open": 70000, "close": 72000, "high": 73000, "low": 69000}
 
         await replay(log_file, cfg)
+
+
+async def test_replay_passes_normalized_guardrail_context(tmp_path):
+    evt = _make_event()
+    evt["ctx"]["intraday_value_vs_adv20d"] = 0.005
+    evt["ctx"]["top_ask_notional"] = 4_000_000.0
+    evt["ctx"]["quote_temp_stop"] = True
+    evt["ctx"]["quote_liquidation_trade"] = False
+    log_file = _write_events(tmp_path, [evt])
+    cfg = Config(log_dir=tmp_path / "replay_logs", anthropic_api_key="test")
+
+    mock_decision = MagicMock()
+    mock_decision.action.value = "BUY"
+    mock_decision.confidence = 80
+    mock_decision.mode = "replay"
+    mock_decision.model_dump_json = MagicMock(return_value='{"type":"decision"}')
+
+    with patch("kindshot.replay.DecisionEngine") as MockEngine, \
+         patch("kindshot.replay.check_guardrails") as mock_gr, \
+         patch("kindshot.replay._fetch_post_hoc_prices", new_callable=AsyncMock) as mock_prices:
+        engine_instance = MockEngine.return_value
+        engine_instance.decide = AsyncMock(return_value=mock_decision)
+        from kindshot.guardrails import GuardrailResult
+        mock_gr.return_value = GuardrailResult(passed=False, reason="TEMP_STOP")
+        mock_prices.return_value = {}
+
+        await replay(log_file, cfg)
+
+    assert mock_gr.call_args is not None
+    assert mock_gr.call_args.kwargs["intraday_value_vs_adv20d"] == 0.005
+    assert mock_gr.call_args.kwargs["top_ask_notional"] == 4_000_000.0
+    assert mock_gr.call_args.kwargs["quote_temp_stop"] is True
+    assert mock_gr.call_args.kwargs["quote_liquidation_trade"] is False

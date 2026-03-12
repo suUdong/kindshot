@@ -10,11 +10,21 @@ import pytest
 
 from kindshot.bucket import BucketResult
 from kindshot.config import Config
+from kindshot.context_card import ContextCardData
 from kindshot.decision import LlmTimeoutError, LlmParseError, LlmCallError
+from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
 from kindshot.models import Bucket, SkipStage
 
 
-async def _run_pipeline_once(tmp_path, raw_items, decision_side_effect=None, guardrail_passed=True, dry_run=False, paper=False):
+async def _run_pipeline_once(
+    tmp_path,
+    raw_items,
+    decision_side_effect=None,
+    guardrail_passed=True,
+    dry_run=False,
+    paper=False,
+    ctx_raw=None,
+):
     """Helper: run one iteration of the pipeline and return logged records."""
     from kindshot.event_registry import EventRegistry
     from kindshot.logger import JsonlLogger
@@ -53,7 +63,10 @@ async def _run_pipeline_once(tmp_path, raw_items, decision_side_effect=None, gua
          patch("kindshot.main.check_guardrails") as mock_gr:
         from kindshot.models import ContextCard
         from kindshot.guardrails import GuardrailResult
-        mock_ctx.return_value = (ContextCard(adv_value_20d=10e9, spread_bps=10.0), {"adv_value_20d": 10e9, "spread_bps": 10.0, "ret_today": 5.0})
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0),
+            ctx_raw or ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0),
+        )
         mock_gr.return_value = GuardrailResult(passed=guardrail_passed, reason="BLOCKED" if not guardrail_passed else None)
 
         mode = "dry_run" if dry_run else ("paper" if paper else "live")
@@ -216,6 +229,257 @@ async def test_paper_mode_logs_decision_with_paper_mode(tmp_path):
     assert event_records[0]["mode"] == "paper"
     assert len(decision_records) == 1
     assert decision_records[0]["mode"] == "paper"
+
+
+async def test_pipeline_passes_quote_risk_state_to_guardrails(tmp_path):
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=80,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+    raw = _make_raw()
+    risk_state = QuoteRiskState(temp_stop_yn="Y", vi_cls_code="D")
+
+    from kindshot.event_registry import EventRegistry
+    from kindshot.logger import JsonlLogger
+    from kindshot.market import MarketMonitor
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+    from kindshot.main import _pipeline_loop
+    from kindshot.feed import KindFeed
+    from kindshot.guardrails import GuardrailResult
+    from kindshot.models import ContextCard
+
+    cfg = Config(log_dir=tmp_path / "logs", paper=True)
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+
+    mock_engine = MagicMock()
+    mock_engine.decide = AsyncMock(return_value=mock_decision)
+
+    mock_feed = AsyncMock(spec=KindFeed)
+
+    async def _one_batch():
+        yield [raw]
+    mock_feed.stream = _one_batch
+
+    with patch("kindshot.main.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.main.check_guardrails") as mock_gr:
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0),
+            ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0, quote_risk_state=risk_state),
+        )
+        mock_gr.return_value = GuardrailResult(passed=True)
+
+        await asyncio.wait_for(
+            _pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
+            timeout=1.0,
+        )
+
+    assert mock_gr.call_args is not None
+    assert mock_gr.call_args.kwargs["quote_risk_state"] == risk_state
+
+
+async def test_pipeline_passes_orderbook_snapshot_and_action_to_guardrails(tmp_path):
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=80,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+    raw = _make_raw()
+    orderbook = OrderbookSnapshot(
+        ask_price1=50_100.0,
+        bid_price1=49_900.0,
+        ask_size1=90,
+        bid_size1=120,
+        total_ask_size=2000,
+        total_bid_size=2400,
+        spread_bps=40.0,
+    )
+
+    from kindshot.event_registry import EventRegistry
+    from kindshot.logger import JsonlLogger
+    from kindshot.market import MarketMonitor
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+    from kindshot.main import _pipeline_loop
+    from kindshot.feed import KindFeed
+    from kindshot.guardrails import GuardrailResult
+    from kindshot.models import ContextCard
+
+    cfg = Config(log_dir=tmp_path / "logs", paper=True)
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+
+    mock_engine = MagicMock()
+    mock_engine.decide = AsyncMock(return_value=mock_decision)
+
+    mock_feed = AsyncMock(spec=KindFeed)
+
+    async def _one_batch():
+        yield [raw]
+    mock_feed.stream = _one_batch
+
+    with patch("kindshot.main.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.main.check_guardrails") as mock_gr:
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0),
+            ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0, orderbook_snapshot=orderbook),
+        )
+        mock_gr.return_value = GuardrailResult(passed=True)
+
+        await asyncio.wait_for(
+            _pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
+            timeout=1.0,
+        )
+
+    assert mock_gr.call_args is not None
+    assert mock_gr.call_args.kwargs["orderbook_snapshot"] == orderbook
+    assert mock_gr.call_args.kwargs["decision_action"] == Action.BUY
+
+
+async def test_pipeline_passes_intraday_value_ratio_to_guardrails(tmp_path):
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=80,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+    raw = _make_raw()
+
+    from kindshot.event_registry import EventRegistry
+    from kindshot.logger import JsonlLogger
+    from kindshot.market import MarketMonitor
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+    from kindshot.main import _pipeline_loop
+    from kindshot.feed import KindFeed
+    from kindshot.guardrails import GuardrailResult
+    from kindshot.models import ContextCard
+
+    cfg = Config(log_dir=tmp_path / "logs", paper=True)
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+
+    mock_engine = MagicMock()
+    mock_engine.decide = AsyncMock(return_value=mock_decision)
+
+    mock_feed = AsyncMock(spec=KindFeed)
+
+    async def _one_batch():
+        yield [raw]
+    mock_feed.stream = _one_batch
+
+    with patch("kindshot.main.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.main.check_guardrails") as mock_gr:
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0, intraday_value_vs_adv20d=0.005),
+            ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0, intraday_value_vs_adv20d=0.005),
+        )
+        mock_gr.return_value = GuardrailResult(passed=True)
+
+        await asyncio.wait_for(
+            _pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
+            timeout=1.0,
+        )
+
+    assert mock_gr.call_args is not None
+    assert mock_gr.call_args.kwargs["intraday_value_vs_adv20d"] == 0.005
+    assert mock_gr.call_args.kwargs["decision_action"] == Action.BUY
+
+
+async def test_market_breadth_risk_off_blocks_before_llm(tmp_path):
+    from kindshot.event_registry import EventRegistry
+    from kindshot.logger import JsonlLogger
+    from kindshot.market import MarketMonitor
+    from kindshot.models import MarketContext
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+    from kindshot.main import _pipeline_loop
+    from kindshot.feed import KindFeed
+
+    cfg = Config(log_dir=tmp_path / "logs", paper=True, min_market_breadth_ratio=0.8)
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    market._kospi_change = -0.2
+    market._kosdaq_change = -0.3
+    market._kospi_breadth_ratio = 0.5
+    market._kosdaq_breadth_ratio = 0.6
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+
+    mock_engine = MagicMock()
+    mock_engine.decide = AsyncMock()
+
+    mock_feed = AsyncMock(spec=KindFeed)
+
+    async def _one_batch():
+        yield [_make_raw()]
+    mock_feed.stream = _one_batch
+
+    with patch("kindshot.main.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.main.check_guardrails") as mock_gr:
+        from kindshot.models import ContextCard
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0),
+            ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0),
+        )
+
+        await asyncio.wait_for(
+            _pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
+            timeout=1.0,
+        )
+
+    mock_engine.decide.assert_not_awaited()
+    mock_gr.assert_not_called()
+
+    records = []
+    for f in (tmp_path / "logs").glob("*.jsonl"):
+        for line in f.read_text(encoding="utf-8").strip().split("\n"):
+            if line:
+                records.append(json.loads(line))
+
+    blocked = [r for r in records if r.get("skip_reason") == "MARKET_BREADTH_RISK_OFF"]
+    assert len(blocked) == 1
 
 
 async def test_wait_or_stop_interrupts_timeout():

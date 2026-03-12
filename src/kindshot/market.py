@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from kindshot.config import Config
-from kindshot.kis_client import KisClient
+from kindshot.kis_client import IndexInfo, KisClient
 from kindshot.models import MarketContext
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,8 @@ class MarketMonitor:
         self._init_failures = 0
         self._kospi_change: Optional[float] = None
         self._kosdaq_change: Optional[float] = None
+        self._kospi_breadth_ratio: Optional[float] = None
+        self._kosdaq_breadth_ratio: Optional[float] = None
         self._vkospi: Optional[float] = None
         self._last_ts: Optional[datetime] = None
 
@@ -64,16 +66,30 @@ class MarketMonitor:
         return MarketContext(
             kospi_change_pct=self._kospi_change,
             kosdaq_change_pct=self._kosdaq_change,
+            kospi_breadth_ratio=self._kospi_breadth_ratio,
+            kosdaq_breadth_ratio=self._kosdaq_breadth_ratio,
             vkospi=self._vkospi,
         )
+
+    @staticmethod
+    def _breadth_ratio(info: Optional[IndexInfo]) -> Optional[float]:
+        if info is None or info.up_issue_count is None or info.down_issue_count is None:
+            return None
+        if info.down_issue_count <= 0:
+            return float(info.up_issue_count) if info.up_issue_count > 0 else 1.0
+        return round(info.up_issue_count / info.down_issue_count, 3)
 
     async def update(self) -> None:
         """Check KOSPI/KOSDAQ and update halt status + macro snapshot."""
         # KOSPI + KOSDAQ via KIS (parallel)
         if self._kis:
-            kospi_task = self._kis.get_index_change("0001")
-            kosdaq_task = self._kis.get_index_change("2001")
-            kospi, kosdaq = await asyncio.gather(kospi_task, kosdaq_task)
+            kospi_task = self._kis.get_index_info("0001")
+            kosdaq_task = self._kis.get_index_info("2001")
+            kospi_info, kosdaq_info = await asyncio.gather(kospi_task, kosdaq_task)
+            kospi = kospi_info.change_pct if kospi_info is not None else None
+            kosdaq = kosdaq_info.change_pct if kosdaq_info is not None else None
+            self._kospi_breadth_ratio = self._breadth_ratio(kospi_info)
+            self._kosdaq_breadth_ratio = self._breadth_ratio(kosdaq_info)
 
             if kospi is not None:
                 self._kospi_change = kospi

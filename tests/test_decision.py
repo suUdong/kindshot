@@ -63,7 +63,20 @@ def test_parse_reason_non_string():
 
 
 def test_build_prompt():
-    ctx = ContextCard(ret_today=6.1, ret_1d=0.8, ret_3d=4.2, pos_20d=87, gap=0.3, adv_value_20d=82e9, spread_bps=9, vol_pct_20d=88)
+    ctx = ContextCard(
+        ret_today=6.1,
+        ret_1d=0.8,
+        ret_3d=4.2,
+        pos_20d=87,
+        gap=0.3,
+        adv_value_20d=82e9,
+        spread_bps=9,
+        vol_pct_20d=88,
+        intraday_value_vs_adv20d=0.043,
+        top_ask_notional=8_500_000,
+        quote_temp_stop=False,
+        quote_liquidation_trade=False,
+    )
     prompt = _build_prompt(
         bucket=Bucket.POS_STRONG,
         headline="반도체 사업 미국 대형 공급계약 체결",
@@ -75,6 +88,21 @@ def test_build_prompt():
     assert "POS_STRONG" in prompt
     assert "005930" in prompt
     assert "BUY" in prompt
+    assert "intraday_value_vs_adv20d=0.043" in prompt
+    assert "top_ask_notional=8500000" in prompt
+
+
+def test_cache_key_changes_with_microstructure_context():
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    ctx1 = ContextCard(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0, intraday_value_vs_adv20d=0.01)
+    ctx2 = ContextCard(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0, intraday_value_vs_adv20d=0.02)
+
+    key1 = engine._cache_key("005930", "공급계약 체결", Bucket.POS_STRONG, ctx1)
+    key2 = engine._cache_key("005930", "공급계약 체결", Bucket.POS_STRONG, ctx2)
+
+    assert key1 != key2
 
 
 async def test_cache_hit():
