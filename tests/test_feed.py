@@ -199,24 +199,13 @@ async def test_kis_feed_last_time_updates_on_noise():
     assert feed._last_time == "143000"
 
 
-async def test_kis_feed_uses_overlap_window_for_query():
-    cfg = Config(feed_overlap_s=90)
+async def test_kis_feed_always_queries_without_from_time():
+    """KIS API returns items BEFORE from_time, so we always send empty string."""
+    cfg = Config()
     kis = AsyncMock()
     kis.get_news_disclosures = AsyncMock(return_value=[])
     feed = KisFeed(cfg, kis)
     feed._last_time = "143000"
-
-    await feed.poll_once()
-
-    kis.get_news_disclosures.assert_awaited_once_with(from_time="142830")
-
-
-async def test_kis_feed_overlap_resets_at_day_boundary():
-    cfg = Config(feed_overlap_s=90)
-    kis = AsyncMock()
-    kis.get_news_disclosures = AsyncMock(return_value=[])
-    feed = KisFeed(cfg, kis)
-    feed._last_time = "000045"
 
     await feed.poll_once()
 

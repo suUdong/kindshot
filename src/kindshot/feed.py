@@ -299,11 +299,12 @@ class KisFeed:
         self._prune_if_new_day(self._last_poll_at)
         tracer = get_tracer()
         last_time_before = self._last_time
-        query_from_time = self._query_from_time()
-        t_poll = tracer.poll_start(from_time=query_from_time) if tracer else None
+        # KIS API: FID_INPUT_HOUR_1 returns items BEFORE that time, not after.
+        # Always send empty string to get the latest news; rely on seen_ids for dedup.
+        t_poll = tracer.poll_start(from_time="") if tracer else None
         try:
             items = await self._kis.get_news_disclosures(
-                from_time=query_from_time,
+                from_time="",
             )
         except Exception:
             self._consecutive_failures += 1
