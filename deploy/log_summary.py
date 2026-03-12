@@ -39,7 +39,7 @@ def summarize(log_path: Path) -> None:
                 continue
 
             total += 1
-            rt = rec.get("record_type", "unknown")
+            rt = rec.get("type", rec.get("record_type", "unknown"))
             record_types[rt] += 1
 
             if rt == "event":
