@@ -28,6 +28,28 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-13 (배포 예정)
+
+- Environment: AWS Lightsail (production, paper mode)
+- Branch: `main`
+- Commit: `54c3c86`
+- Deployer: manual (SSH)
+- Summary:
+  1. **IGNORE 버킷 신설** — Bucket enum에 IGNORE 추가. 주총/감사보고서 제출/소유주식수 변동/배당락 등 노이즈 사전 필터링
+  2. **100+ 키워드 보강** (클로드 리서치 실증 근거):
+     - POS_STRONG: 어닝서프라이즈, FDA 승인, 기술수출 계약, 경영권 분쟁, 특별배당 등
+     - NEG_STRONG: 어닝쇼크, 적자전환, 물적분할, 임상 실패, 비적정 감사의견, 경영권 분쟁 종료 등
+     - POS_WEAK: 인적분할, 매출 증가, 중간배당, 행동주의 주주 등
+     - NEG_WEAK: 매출 감소, 최대주주 변경, 임상 지연 등
+  3. **버킷 우선순위** — NEG_STRONG > POS_STRONG > NEG_WEAK > POS_WEAK > IGNORE > UNKNOWN
+  4. **효과**: 3/12 unknown 758건 → 209건 (72% 감소)
+- Validation: `pytest -x -q` 182 passed, 3 skipped
+- Rollback: `git revert 54c3c86`
+- Result: (배포 후 기록)
+- Notes: 리서치 근거 `docs/research/2026-03-13-unknown-bucket-research.md`
+
+---
+
 ### 2026-03-12 10:15 KST
 
 - Environment: AWS Lightsail (production, paper mode)
