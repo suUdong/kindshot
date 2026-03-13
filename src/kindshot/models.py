@@ -17,6 +17,7 @@ class Bucket(str, Enum):
     NEG_STRONG = "NEG_STRONG"
     NEG_WEAK = "NEG_WEAK"
     UNKNOWN = "UNKNOWN"
+    IGNORE = "IGNORE"
 
 
 class EventKind(str, Enum):
