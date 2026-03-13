@@ -317,8 +317,12 @@ async def _process_registered_event(
     if market.is_halted:
         halt_reason = "MARKET_NOT_INITIALIZED" if not market.is_initialized else "MARKET_HALTED"
         logger.info("SKIP (%s): %s", halt_reason, raw.title[:60])
+        event_rec.skip_stage = SkipStage.GUARDRAIL
+        event_rec.skip_reason = halt_reason
         await log.write(event_rec)
-        _mark_skip(counters, stage="MARKET", reason=halt_reason)
+        _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason=halt_reason)
+        if _tracer and _t_proc is not None:
+            _tracer.process_end(_t_proc, processed.event_id, halt_reason)
         return
 
     market_snapshot = market.snapshot
@@ -337,6 +341,8 @@ async def _process_registered_event(
         event_rec.skip_reason = "MARKET_BREADTH_RISK_OFF"
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MARKET_BREADTH_RISK_OFF")
+        if _tracer and _t_proc is not None:
+            _tracer.process_end(_t_proc, processed.event_id, "MARKET_BREADTH_RISK_OFF")
         return
 
     # Dry run: skip LLM
@@ -344,6 +350,8 @@ async def _process_registered_event(
         logger.info("DRY-RUN SKIP decision: %s", raw.title[:60])
         await log.write(event_rec)
         _mark_skip(counters, stage="DRY_RUN", reason="DRY_RUN")
+        if _tracer and _t_proc is not None:
+            _tracer.process_end(_t_proc, processed.event_id, "DRY_RUN")
         return
 
     detected_str = detected_at.strftime("%H:%M:%S")
@@ -426,6 +434,8 @@ async def _process_registered_event(
             stage=SkipStage.GUARDRAIL.value,
             reason=gr.reason,
         )
+        if _tracer and _t_proc is not None:
+            _tracer.process_end(_t_proc, processed.event_id, gr.reason or "GUARDRAIL")
         return
 
     # Success: write event + decision (exactly once each)
@@ -456,6 +466,8 @@ async def _process_registered_event(
         logger.info("PAPER %s [%s] conf=%d hint=%s: %s",
                      decision.action.value, raw.ticker, decision.confidence,
                      decision.size_hint.value, decision.reason)
+        if _tracer and _t_proc is not None:
+            _tracer.process_end(_t_proc, processed.event_id, decision.action.value)
         return
 
     action_str = decision.action.value
@@ -463,6 +475,8 @@ async def _process_registered_event(
         "%s [%s] conf=%d hint=%s: %s",
         action_str, raw.ticker, decision.confidence, decision.size_hint.value, decision.reason,
     )
+    if _tracer and _t_proc is not None:
+        _tracer.process_end(_t_proc, processed.event_id, action_str)
 
 
 async def _pipeline_loop(

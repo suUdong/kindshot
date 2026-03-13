@@ -482,6 +482,58 @@ async def test_market_breadth_risk_off_blocks_before_llm(tmp_path):
     assert len(blocked) == 1
 
 
+async def test_market_halt_block_logged_before_llm(tmp_path):
+    from kindshot.event_registry import EventRegistry
+    from kindshot.logger import JsonlLogger
+    from kindshot.market import MarketMonitor
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+    from kindshot.main import _pipeline_loop
+    from kindshot.feed import KindFeed
+
+    cfg = Config(log_dir=tmp_path / "logs", paper=True)
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = True
+    market._kospi_change = -8.5
+    market._kosdaq_change = -7.2
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+
+    mock_engine = MagicMock()
+    mock_engine.decide = AsyncMock()
+
+    mock_feed = AsyncMock(spec=KindFeed)
+
+    async def _one_batch():
+        yield [_make_raw()]
+    mock_feed.stream = _one_batch
+
+    with patch("kindshot.main.build_context_card", new_callable=AsyncMock) as mock_ctx:
+        from kindshot.models import ContextCard
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0),
+            ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0),
+        )
+
+        await asyncio.wait_for(
+            _pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
+            timeout=1.0,
+        )
+
+    mock_engine.decide.assert_not_awaited()
+
+    records = []
+    for f in (tmp_path / "logs").glob("*.jsonl"):
+        for line in f.read_text(encoding="utf-8").strip().split("\n"):
+            if line:
+                records.append(json.loads(line))
+
+    blocked = [r for r in records if r.get("skip_reason") == "MARKET_HALTED"]
+    assert len(blocked) == 1
+    assert blocked[0]["skip_stage"] == SkipStage.GUARDRAIL.value
+
+
 async def test_wait_or_stop_interrupts_timeout():
     """_wait_or_stop should return immediately when stop_event is set."""
     import time

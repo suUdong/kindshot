@@ -212,6 +212,48 @@ async def test_kis_feed_last_time_updates_on_noise():
     assert feed._last_time == "143000"
 
 
+async def test_kis_feed_filters_non_disclosure_word_fragment_noise():
+    cfg = Config()
+    kis = AsyncMock()
+    kis.get_news_disclosure_items = AsyncMock(return_value=[
+        _news_item(
+            "NOISE002",
+            "20260313",
+            "092333",
+            "[특징주] 비료株, 호르무즈 해협 봉쇄로 공급망 불안해지자 강세",
+            ticker="001550",
+            dorg="연합뉴스",
+        )
+    ])
+    feed = KisFeed(cfg, kis)
+
+    results = await feed.poll_once()
+
+    assert results == []
+    assert feed._last_time == "092333"
+
+
+async def test_kis_feed_keeps_contract_termination_keyword():
+    cfg = Config()
+    kis = AsyncMock()
+    kis.get_news_disclosure_items = AsyncMock(return_value=[
+        _news_item(
+            "DISC001",
+            "20260313",
+            "101500",
+            "A사, 공급계약 해지 결정",
+            ticker="123456",
+            dorg="연합뉴스",
+        )
+    ])
+    feed = KisFeed(cfg, kis)
+
+    results = await feed.poll_once()
+
+    assert len(results) == 1
+    assert results[0].ticker == "123456"
+
+
 async def test_kis_feed_sorts_items_deterministically():
     cfg = Config()
     kis = AsyncMock()

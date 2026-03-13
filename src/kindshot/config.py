@@ -73,7 +73,7 @@ class Config:
     order_size: float = field(default_factory=lambda: _env_float("ORDER_SIZE", 5_000_000))  # won per trade
 
     # --- Market ---
-    kospi_halt_pct: float = -1.0
+    kospi_halt_pct: float = field(default_factory=lambda: _env_float("KOSPI_HALT_PCT", -8.0))
     min_market_breadth_ratio: float = field(default_factory=lambda: _env_float("MIN_MARKET_BREADTH_RATIO", 0.8))
 
     # --- Price snapshots ---

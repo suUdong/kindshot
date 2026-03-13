@@ -1,17 +1,12 @@
-Hypothesis: Surfacing normalized participation and liquidity context in the LLM prompt and cache key will improve BUY/SKIP precision more safely than adding a new predictive subsystem before replay tuning.
+Hypothesis: Before implementing historical collection, the design needs an explicit `live / backfill / replay` split with a finalized-day rule so night/weekend backfill does not collide with same-day live news intake.
 
 Changed files:
-- `src/kindshot/decision.py`
-- `tests/test_decision.py`
-- `memory/codex-loop/roadmap.md`
-- `memory/codex-loop/session.md`
+- `docs/plans/2026-03-13-data-collection-infra.md`
 - `memory/codex-loop/latest.md`
 
 Validation:
-- `$env:UV_CACHE_DIR='C:\workspace\study\kindshot\.uv-cache'; uv run --python 3.11 python -m compileall src tests` passed
-- `$env:UV_CACHE_DIR='C:\workspace\study\kindshot\.uv-cache'; uv run --python 3.11 --extra dev pytest -q tests/test_decision.py` passed (`15 passed`)
-- `$env:UV_CACHE_DIR='C:\workspace\study\kindshot\.uv-cache'; uv run --python 3.11 --extra dev pytest -q` passed (`167 passed, 3 skipped`)
+- Manual review passed for the updated design document structure and the new operational sections covering finalized-day logic, backfill cursoring, and mode separation.
 
 Risk and rollback note:
-- Risk is low to moderate because this run only changes the LLM prompt/cache context surface, but it can shift BUY/SKIP behavior by making the model react to participation and liquidity data that was previously guardrail-only.
-- Roll back by reverting `src/kindshot/decision.py`, `tests/test_decision.py`, and the run-state files if you want to return to the pre-refinement prompt surface.
+- Risk is low because this run only changes the design document, but implementation work should treat KIS historical-news support as a hypothesis until verified.
+- Roll back by reverting `docs/plans/2026-03-13-data-collection-infra.md` and this summary file if you want to return to the earlier collector draft.

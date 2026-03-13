@@ -77,10 +77,47 @@ def _parse_llm_response(raw: str) -> Optional[dict]:
     text = re.sub(r"\s*```$", "", text)
     text = text.strip()
 
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return None
+    def _load_json_candidate(candidate: str) -> Optional[dict]:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    data = _load_json_candidate(text)
+    if data is None:
+        # Some models add one-line commentary before/after the JSON.
+        start = text.find("{")
+        while start >= 0:
+            depth = 0
+            in_string = False
+            escape = False
+            for idx in range(start, len(text)):
+                ch = text[idx]
+                if escape:
+                    escape = False
+                    continue
+                if ch == "\\" and in_string:
+                    escape = True
+                    continue
+                if ch == '"':
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        data = _load_json_candidate(text[start:idx + 1])
+                        if data is not None:
+                            break
+            if data is not None:
+                break
+            start = text.find("{", start + 1)
+        if data is None:
+            return None
 
     # Validate required fields
     action = data.get("action")

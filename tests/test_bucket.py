@@ -22,7 +22,7 @@ def test_neg_strong_override():
     """NEG keyword overrides POS keyword."""
     result = classify("A사, 공급계약 해지 결정")
     assert result.bucket == Bucket.NEG_STRONG
-    assert "해지" in result.keyword_hits
+    assert "공급계약 해지" in result.keyword_hits
 
 
 def test_neg_strong_cb():
@@ -92,6 +92,63 @@ def test_matched_positions_logged():
 def test_withdrawal_still_neg():
     result = classify("정정(취소) 유상증자 결정")
     assert result.bucket == Bucket.NEG_STRONG
+
+
+def test_ignore_buyback_trust_contract_termination():
+    result = classify("하이트진로홀딩스, 15억원 규모 자사주 취득 신탁계약 해지")
+    assert result.bucket == Bucket.IGNORE
+    assert "신탁계약 해지" in result.keyword_hits
+
+
+def test_ignore_trust_termination_without_contract_word():
+    result = classify("실리콘투, 자기주식 신탁 해지 결정")
+    assert result.bucket == Bucket.IGNORE
+    assert "신탁 해지" in result.keyword_hits
+
+
+def test_pos_weak_regulatory_easing_not_negative():
+    result = classify("셀트리온, 바이오시밀러 글로벌 규제 완화로 최대 수혜 전망")
+    assert result.bucket == Bucket.POS_WEAK
+
+
+def test_neg_strong_regulatory_sanction_phrase():
+    result = classify("A사, 금융당국 규제 제재로 신규 영업 차질 우려")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "규제 제재" in result.keyword_hits
+
+
+def test_neg_strong_regulatory_violation_phrase():
+    result = classify("A사, 중대 규제 위반 적발")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "규제 위반" in result.keyword_hits
+
+
+def test_unknown_generic_lawsuit_not_negative():
+    result = classify("삼성전자서비스 퇴직자도 \"퇴직금 더 줘\"...줄소송 현실화")
+    assert result.bucket == Bucket.UNKNOWN
+
+
+def test_unknown_generic_lawsuit_disclosure_title():
+    result = classify("(주)세아제강 소송등의판결ㆍ결정(자율공시:일정금액미만의청구)")
+    assert result.bucket == Bucket.UNKNOWN
+
+
+def test_neg_strong_lawsuit_filing_phrase():
+    result = classify("(주)원일티엔아이 소송등의제기ㆍ신청(일정금액 이상의 청구)")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "소송등의제기" in result.keyword_hits
+
+
+def test_neg_strong_lawsuit_loss_phrase():
+    result = classify("엔씨소프트, '아키에이지 워' 저작권 소송 항소심 패소")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "항소심 패소" in result.keyword_hits
+
+
+def test_pos_weak_lawsuit_win_phrase():
+    result = classify("LX하우시스, 단열재 특허 무효소송 2심서 승소")
+    assert result.bucket == Bucket.POS_STRONG
+    assert "특허" in result.keyword_hits
 
 
 # ── New bucket tests ──────────────────────────────────

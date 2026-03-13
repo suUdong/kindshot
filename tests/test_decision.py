@@ -41,6 +41,27 @@ def test_parse_invalid_json():
     assert result is None
 
 
+def test_parse_json_with_leading_text():
+    raw = '분석 결과:\n{"action":"BUY","confidence":81,"size_hint":"M","reason":"momentum intact"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["action"] == "BUY"
+
+
+def test_parse_json_with_trailing_text():
+    raw = '{"action":"SKIP","confidence":35,"size_hint":"S","reason":"too extended"}\n이상입니다.'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["action"] == "SKIP"
+
+
+def test_parse_json_fenced_with_extra_wrapper_text():
+    raw = '다음 JSON만 사용하세요.\n```json\n{"action":"BUY","confidence":77,"size_hint":"S","reason":"fresh contract"}\n```\n설명 끝.'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["size_hint"] == "S"
+
+
 def test_parse_invalid_action():
     raw = '{"action": "SELL", "confidence": 50, "size_hint": "M", "reason": "test"}'
     result = _parse_llm_response(raw)

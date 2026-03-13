@@ -29,6 +29,12 @@ IGNORE_KEYWORDS: list[str] = [
     "분할합병", "존속법인", "신설법인", "사업부문 분리",
 ]
 
+IGNORE_OVERRIDE_KEYWORDS: list[str] = [
+    "신탁계약 해지",
+    "신탁 계약 해지",
+    "신탁 해지",
+]
+
 NEG_STRONG_KEYWORDS: list[str] = [
     # 기존
     "유증", "유상증자",
@@ -36,9 +42,18 @@ NEG_STRONG_KEYWORDS: list[str] = [
     "전환가 조정", "전환가조정",
     "대주주 매각", "대주주매각",
     "블록딜",
-    "소송",
-    "규제",
-    "해지",
+    "소송 제기", "소송제기",
+    "소송 등의 제기", "소송등의제기",
+    "소송 개시",
+    "피소",
+    "패소", "항소심 패소",
+    "가처분 신청", "가처분",
+    "규제 위반", "규제위반",
+    "규제 제재", "규제제재",
+    "규제 리스크",
+    "규제 강화", "규제강화",
+    "공급계약 해지", "공급 계약 해지",
+    "계약 해지",
     "철회",
     "취소",
     # 실적 (방향성 명확)
@@ -167,6 +182,7 @@ POS_WEAK_KEYWORDS: list[str] = [
     "테마",
     "목표가",
     "재평가",
+    "소송 승소", "항소심 승소", "2심서 승소", "승소 판결", "대법 승소",
     "현금배당",
     "현금 배당",
     "현금ㆍ현물배당",
@@ -233,6 +249,14 @@ def classify(headline: str) -> BucketResult:
     Priority: NEG_STRONG > POS_STRONG > NEG_WEAK > POS_WEAK > IGNORE > UNKNOWN
     """
     text = headline
+
+    ignore_override = _find_keywords(text, IGNORE_OVERRIDE_KEYWORDS)
+    if ignore_override:
+        return BucketResult(
+            bucket=Bucket.IGNORE,
+            keyword_hits=[kw for kw, _ in ignore_override],
+            matched_positions=ignore_override,
+        )
 
     # Priority 1: NEG_STRONG
     neg_strong = _find_keywords(text, NEG_STRONG_KEYWORDS)
