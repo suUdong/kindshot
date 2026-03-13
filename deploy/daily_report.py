@@ -108,7 +108,7 @@ def format_txt(log_path: Path, data: dict) -> str:
     w(f"  총 이벤트: {len(events)}건")
 
     parts = []
-    for b in ["POS_STRONG", "POS_WEAK", "NEG_STRONG", "NEG_WEAK", "UNKNOWN"]:
+    for b in ["POS_STRONG", "POS_WEAK", "NEG_STRONG", "NEG_WEAK", "IGNORE", "UNKNOWN"]:
         if bucket_counts[b]:
             parts.append(f"{b}={bucket_counts[b]}")
     w(f"  버킷: {' | '.join(parts)}")
@@ -218,7 +218,7 @@ def format_telegram(log_path: Path, data: dict) -> str:
     w(f"총 이벤트: {len(events)}건")
 
     parts = []
-    for b in ["POS_STRONG", "POS_WEAK", "NEG_STRONG", "UNKNOWN"]:
+    for b in ["POS_STRONG", "POS_WEAK", "NEG_STRONG", "NEG_WEAK", "IGNORE", "UNKNOWN"]:
         if bucket_counts[b]:
             parts.append(f"{b}={bucket_counts[b]}")
     w(" | ".join(parts))
