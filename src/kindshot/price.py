@@ -16,6 +16,7 @@ from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.models import PriceSnapshot, T0Basis
 
 logger = logging.getLogger(__name__)
+_KST = timezone(timedelta(hours=9))
 
 # Horizon offsets in seconds from t0
 HORIZON_OFFSETS: dict[str, float] = {
@@ -83,6 +84,11 @@ class SnapshotScheduler:
         # Track ticker per event_id for pnl callback
         self._event_tickers: dict[str, str] = {}
 
+    def _close_fire_kst(self, now_kst: Optional[datetime] = None) -> datetime:
+        base = now_kst or datetime.now(_KST)
+        market_close = base.replace(hour=15, minute=30, second=0, microsecond=0)
+        return market_close + timedelta(seconds=self._config.close_snapshot_delay_s)
+
     def schedule_t0(
         self,
         event_id: str,
@@ -128,10 +134,8 @@ class SnapshotScheduler:
             ))
 
         # Close snapshot: 15:30 KST + close_snapshot_delay_s (default 300s = 15:35)
-        kst = timezone(timedelta(hours=9))
-        now_kst = datetime.now(kst)
-        market_close = now_kst.replace(hour=15, minute=30, second=0, microsecond=0)
-        close_fire_kst = market_close + timedelta(seconds=self._config.close_snapshot_delay_s)
+        now_kst = datetime.now(_KST)
+        close_fire_kst = self._close_fire_kst(now_kst)
         seconds_until_close = max(0, (close_fire_kst - now_kst).total_seconds())
         heapq.heappush(self._heap, ScheduledSnapshot(
             fire_at=now + seconds_until_close,
@@ -216,6 +220,35 @@ class SnapshotScheduler:
         )
 
         await self._logger.write(record)
+
+    async def flush_close_on_shutdown(self) -> int:
+        """Fire pending close snapshots if shutdown happens after close fetch time."""
+        now_kst = datetime.now(_KST)
+        if now_kst < self._close_fire_kst(now_kst):
+            return 0
+
+        kept: list[ScheduledSnapshot] = []
+        flushed: list[ScheduledSnapshot] = []
+        while self._heap:
+            snap = heapq.heappop(self._heap)
+            if snap.horizon == "close":
+                flushed.append(snap)
+            else:
+                kept.append(snap)
+        for snap in kept:
+            heapq.heappush(self._heap, snap)
+
+        flushed_count = 0
+        for snap in flushed:
+            try:
+                await self._fire(snap)
+                flushed_count += 1
+            except LogWriteError:
+                raise
+            except Exception:
+                logger.exception("Shutdown close snapshot flush failed: %s/%s", snap.event_id, snap.horizon)
+                heapq.heappush(self._heap, snap)
+        return flushed_count
 
     async def run(self) -> None:
         """Main loop: fire snapshots as they become due."""

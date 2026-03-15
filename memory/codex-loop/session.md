@@ -3,30 +3,31 @@
 ## Current Session
 
 - Branch: `codex/roadmap-loop-foundation`
-- Phase: `Post-roadmap return refinement`
-- Focus: Get the historical collection design correct before starting collector implementation.
-- Active hypothesis: Before implementing historical collection, the design needs an explicit `live / backfill / replay` split with a finalized-day rule so night/weekend backfill does not collide with same-day live news intake.
+- Phase: `Historical Collection Foundation`
+- Focus: Return to the collector foundation now that the immediate runtime ops-backlog slices are cleared.
+- Active hypothesis: collector discovery contract만으로는 replay 연결이 끝나지 않으므로, replay 쪽도 manifest index와 day manifest를 정식 helper로 읽어 collector artifact를 직접 소비할 수 있어야 한다.
 
 ## Environment
 
 - Host: local workspace
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.11.8`
-- Validation status: `$env:UV_CACHE_DIR='C:\workspace\study\kindshot\.uv-cache'; uv run --python 3.11 --extra dev pytest -q` passed (`167 passed, 3 skipped`)
-- Tooling note: the sandbox user cannot use the default `uv` cache under `C:\Users\jooz1\AppData\Local\uv\cache`; use workspace-local `.uv-cache` for validation commands.
+- Validation status: `python3 -m compileall src/kindshot tests` passed for the collector changes; automated pytest execution is currently blocked because this environment has no `pytest`, no `uv`, and no workspace `.venv` test runner.
+- Tooling note: validation commands from prior sessions reference `uv`, but the current sandbox does not have `uv` or `pytest` installed.
 
 ## Last Completed Step
 
-- Updated the historical data collection design doc with explicit `live`, `backfill`, and `replay` modes.
-- Added finalized-day and backfill-cursor rules so the collector only walks backward over dates that are safe to treat as closed.
-- Clarified that microstructure data remains a live-sink concern even if price/news backfill succeeds.
+- Added replay-side helpers to list collected dates from manifest `index.json` and to load a day manifest directly from the collector manifests directory.
+- Updated replay tests so collector artifact discovery is covered on the replay side instead of only the collector side.
+- Compile-checked `src/` and `tests/`; pytest remains unavailable in this environment.
 
 ## Next Intended Step
 
-- At the next implementation step, start with a small feasibility probe for KIS historical-news/date support and collector state handling before building the full backfill module.
+- Replay can now read collector artifacts; the next larger batch can either use those helpers for a collector-backed replay path or move on to runtime ingest persistence.
 
 ## Notes
 
 - Keep branch-based work as the default.
 - Keep automation limited to code changes, validation, summaries, and PR preparation.
 - Keep merge and deployment as manual actions.
+- Validation remains constrained by the missing `pytest`/`uv` runner in the local environment.

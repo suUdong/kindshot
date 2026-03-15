@@ -1,5 +1,7 @@
 """Tests for quant 3-second check."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from kindshot.quant import quant_check, QuantResult
@@ -63,10 +65,24 @@ def test_spread_none_fail_close_when_enabled():
         spread_bps=None,
         ret_today=5.0,
         config=_cfg(spread_check_enabled=True),
+        observed_at=datetime(2026, 3, 13, 9, 5, tzinfo=timezone(timedelta(hours=9))),
     )
     assert r.passed is False
     assert r.detail.spread_bps_ok is False
     assert r.skip_reason == "SPREAD_DATA_MISSING"
+
+
+def test_spread_none_off_hours_uses_distinct_reason():
+    r = quant_check(
+        adv_value_20d=10_000_000_000,
+        spread_bps=None,
+        ret_today=5.0,
+        config=_cfg(spread_check_enabled=True),
+        observed_at=datetime(2026, 3, 13, 8, 40, tzinfo=timezone(timedelta(hours=9))),
+    )
+    assert r.passed is False
+    assert r.detail.spread_bps_ok is False
+    assert r.skip_reason == "SPREAD_DATA_MISSING_OFF_HOURS"
 
 
 def test_extreme_move():

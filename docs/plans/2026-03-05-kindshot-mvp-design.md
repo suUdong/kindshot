@@ -97,6 +97,13 @@ event_id 생성:
   disclosed_at_missing 시: rss_guid 또는 detected_at으로 대체
 ```
 
+운영 보강:
+- 기본 dedup은 여전히 `event_id` 기준이다.
+- 다만 같은 ticker에서 짧은 시간창 안에 비슷한 제목이 연속 유입되는 경우가 많아, 운영 로그 검토용 1차 보강으로 `ticker + short time window + high title overlap` 보조 dedup을 허용한다.
+- 이 보조 dedup은 correction/withdrawal 매칭과 분리해서 ORIGINAL 기사 burst에만 적용한다.
+- 목적은 KIS/KIND 동시 유입이나 증권사 리포트 재가공 다발 기사로 인한 review/LLM 중복 부담을 줄이는 것이지, 서로 다른 실질 이벤트를 넓게 합치는 것이 아니다.
+- 첫 슬라이스에서는 보수적으로 같은 종목, 같은 당일, 10분 내, 높은 토큰 중첩일 때만 duplicate로 처리하고 event-group 통합은 후속 단계로 남긴다.
+
 ### 정정공시 처리
 
 - title에 "정정" / "[정정]" → CORRECTION
@@ -120,6 +127,10 @@ event_id 생성:
 
 **NEG 우선 override**: NEG_STRONG 키워드가 하나라도 있으면 무조건 NEG_STRONG
 
+참고:
+- 위 표는 현재 MVP 동작 기준이다.
+- `UNKNOWN`에 대한 LLM 보조분류, 별도 저장소, 실시간 승격, 사후 검증 로그 설계는 [docs/plans/2026-03-15-unknown-llm-review-loop.md](/home/wdsr88/workspace/kindshot/docs/plans/2026-03-15-unknown-llm-review-loop.md)에 분리해 정리한다.
+
 ### 퀀트 3초 체크 (POS_STRONG만)
 
 1. 유동성: adv_value_20d >= 50억
@@ -127,6 +138,11 @@ event_id 생성:
 3. 극단과열: abs(ret_today_vs_prev_close) <= 20%
 
 Quant fail 중 10% 랜덤 샘플링 → price_snapshot 기록 (QUANT_FAIL_SAMPLE)
+
+운영 메모:
+- `spread_bps`는 KIS 현재가 + 호가 스냅샷 조합에서 계산한다.
+- 장중 연속매매 시간(09:00~15:30 KST) 밖에서 호가가 비어 있으면 매매는 계속 fail-close로 막되, 일반 결측과 섞지 않고 `SPREAD_DATA_MISSING_OFF_HOURS`로 분리 기록한다.
+- 목적은 규칙 완화가 아니라, 장전/장후 호가 부재와 실제 장중 데이터 품질 문제를 운영 로그에서 구분하는 것이다.
 
 ---
 
@@ -177,6 +193,11 @@ MVP에서는 인터페이스만 정의. 실매매 전 구현.
 - horizon: "t0" | "t+1m" | "t+5m" | "t+30m" | "close"
 - ret_long_vs_t0, ret_short_vs_t0
 - KIS 없으면 px=null (UNAVAILABLE)
+
+운영 보강:
+- `close`는 기본적으로 `15:30 KST + close_snapshot_delay_s`에 예약한다.
+- 다만 런타임가 그 시각 직전이나 직후에 종료되면 pending `close`가 유실될 수 있으므로, 종료 시점이 이미 close fetch 가능 구간이면 pending `close`를 종료 전에 flush한다.
+- 이 종료 flush는 `close` horizon에만 적용하고, 아직 만기되지 않은 `t+1m/t+5m/t+30m`를 억지로 당겨 실행하지는 않는다.
 
 ---
 

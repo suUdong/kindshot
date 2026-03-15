@@ -83,6 +83,12 @@ class NewsDisclosure:
 
 
 @dataclass(frozen=True)
+class NewsDisclosureFetchResult:
+    items: list[NewsDisclosure]
+    pagination_truncated: bool = False
+
+
+@dataclass(frozen=True)
 class KisGetSpec:
     path: str
     tr_id: str
@@ -424,8 +430,9 @@ class KisClient:
         self,
         ticker: str = "",
         from_time: str = "",
+        date: str = "",
     ) -> list[dict]:
-        items = await self.get_news_disclosure_items(ticker=ticker, from_time=from_time)
+        items = await self.get_news_disclosure_items(ticker=ticker, from_time=from_time, date=date)
         rows: list[dict[str, str]] = []
         for item in items:
             row: dict[str, str] = {"cntt_usiq_srno": item.news_id}
@@ -448,7 +455,21 @@ class KisClient:
         self,
         ticker: str = "",
         from_time: str = "",
+        date: str = "",
     ) -> list[NewsDisclosure]:
+        result = await self.get_news_disclosure_fetch_result(
+            ticker=ticker,
+            from_time=from_time,
+            date=date,
+        )
+        return result.items
+
+    async def get_news_disclosure_fetch_result(
+        self,
+        ticker: str = "",
+        from_time: str = "",
+        date: str = "",
+    ) -> NewsDisclosureFetchResult:
         """Fetch news/disclosure titles via KIS API (국내주식-141).
 
         Returns list of dicts with keys: cntt_usiq_srno, data_dt, data_tm,
@@ -456,7 +477,7 @@ class KisClient:
         """
         token = await self._ensure_token()
         if not token:
-            return []
+            return NewsDisclosureFetchResult(items=[])
 
         spec = KisGetSpec(
             path="/uapi/domestic-stock/v1/quotations/news-title",
@@ -469,7 +490,7 @@ class KisClient:
             "FID_COND_MRKT_CLS_CODE": "",
             "FID_INPUT_ISCD": ticker,
             "FID_TITL_CNTT": "",
-            "FID_INPUT_DATE_1": "",
+            "FID_INPUT_DATE_1": date,
             "FID_INPUT_HOUR_1": from_time,
             "FID_RANK_SORT_CLS_CODE": "",
             "FID_INPUT_SRNO": "",
@@ -480,15 +501,18 @@ class KisClient:
         for _ in range(10):
             response = await self._get_json(token, spec, params, tr_cont=request_tr_cont)
             if response is None:
-                return self._normalize_news_items(items)
+                return NewsDisclosureFetchResult(items=self._normalize_news_items(items))
 
             items.extend(self._output_list(response.data, spec, context="news disclosure output"))
             if response.tr_cont != "M":
-                return self._normalize_news_items(items)
+                return NewsDisclosureFetchResult(items=self._normalize_news_items(items))
             request_tr_cont = "N"
 
         logger.warning("KIS news disclosure pagination stopped at max pages")
-        return self._normalize_news_items(items)
+        return NewsDisclosureFetchResult(
+            items=self._normalize_news_items(items),
+            pagination_truncated=True,
+        )
 
     def _normalize_news_items(self, items: list[dict[str, Any]]) -> list[NewsDisclosure]:
         normalized: list[NewsDisclosure] = []

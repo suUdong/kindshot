@@ -132,3 +132,53 @@ async def test_live_mode_keeps_unadjusted_returns():
 
     t1_record = log.write.await_args_list[1].args[0]
     assert t1_record.ret_long_vs_t0 == 0.0
+
+
+async def test_flush_close_on_shutdown_fires_pending_close_after_cutoff():
+    cfg = Config(close_snapshot_delay_s=300.0)
+    fetcher = PriceFetcher(kis=None)
+    log = MagicMock()
+    log.write = AsyncMock()
+    scheduler = SnapshotScheduler(cfg, fetcher, log)
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(px=10000.0, open_px=10000.0, spread_bps=10.0, cum_value=1_000_000.0, fetch_latency_ms=10))
+
+    event_ts = datetime(2026, 3, 5, 14, 55, tzinfo=timezone.utc)
+    scheduler.schedule_t0(
+        event_id="evt1",
+        ticker="005930",
+        t0_basis=T0Basis.DETECTED_AT,
+        t0_ts=event_ts,
+        run_id="run1",
+    )
+    close_count_before = len([s for s in scheduler._heap if s.horizon == "close"])
+    assert close_count_before == 1
+
+    with patch("kindshot.price.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 3, 6, 15, 36, tzinfo=timezone(timedelta(hours=9)))
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        flushed = await scheduler.flush_close_on_shutdown()
+
+    assert flushed == 1
+    assert len([s for s in scheduler._heap if s.horizon == "close"]) == 0
+
+
+async def test_flush_close_on_shutdown_skips_before_cutoff():
+    cfg = Config(close_snapshot_delay_s=300.0)
+    fetcher = PriceFetcher(kis=None)
+    scheduler = SnapshotScheduler(cfg, fetcher, MagicMock())
+
+    scheduler.schedule_t0(
+        event_id="evt1",
+        ticker="005930",
+        t0_basis=T0Basis.DETECTED_AT,
+        t0_ts=datetime.now(timezone.utc),
+        run_id="run1",
+    )
+
+    with patch("kindshot.price.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 3, 6, 15, 34, tzinfo=timezone(timedelta(hours=9)))
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        flushed = await scheduler.flush_close_on_shutdown()
+
+    assert flushed == 0
+    assert len([s for s in scheduler._heap if s.horizon == "close"]) == 1

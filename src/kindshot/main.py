@@ -238,7 +238,7 @@ async def _process_registered_event(
         spread = raw_data.spread_bps
         ret_today = raw_data.ret_today
 
-        qr = quant_check(adv, spread, ret_today, config)
+        qr = quant_check(adv, spread, ret_today, config, observed_at=detected_at)
         quant_passed = qr.passed
         quant_detail = qr.detail
 
@@ -710,6 +710,11 @@ async def run() -> None:
             # Idempotent shutdown to cover both signaled and non-signaled exits.
             stop_event.set()
             feed.stop()
+            flushed_close = 0
+            try:
+                flushed_close = await scheduler.flush_close_on_shutdown()
+            except LogWriteError:
+                logger.critical("Close snapshot shutdown flush failed — stopping runtime")
             scheduler.stop()
             for t in tasks:
                 t.cancel()
@@ -717,4 +722,6 @@ async def run() -> None:
             if kis is not None:
                 logger.info("KIS client stats: %s", kis.stats_snapshot())
             logger.info("Runtime counters: %s", _counter_snapshot(counters))
+            if flushed_close:
+                logger.info("Shutdown flushed close snapshots: %d", flushed_close)
             logger.info("Shutdown complete. Pending snapshots lost: %d", scheduler.pending_count)

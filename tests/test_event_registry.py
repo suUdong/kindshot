@@ -193,3 +193,80 @@ def test_persistence_without_state_dir():
     r = _raw()
     e = reg.process(r)
     assert e is not None
+
+
+def test_related_title_duplicate_same_ticker_within_window():
+    reg = EventRegistry()
+    base_dt = datetime(2026, 3, 13, 7, 44, tzinfo=timezone.utc)
+    r1 = RawDisclosure(
+        title="헥토이노베이션, 실적·스테이블코인 모멘텀 모두 매력적-유안타",
+        link="kis://news/1",
+        rss_guid="guid1",
+        published="2026-03-13T16:44:00+09:00",
+        ticker="214180",
+        corp_name="헥토이노베이션",
+        detected_at=base_dt,
+    )
+    r2 = RawDisclosure(
+        title='유안타증권 "헥토이노베이션, 실적·모멘텀 확보…스테이블코인 수혜 기대"',
+        link="kis://news/2",
+        rss_guid="guid2",
+        published="2026-03-13T16:50:00+09:00",
+        ticker="214180",
+        corp_name="헥토이노베이션",
+        detected_at=base_dt.replace(minute=52),
+    )
+
+    assert reg.process(r1) is not None
+    assert reg.process(r2) is None
+
+
+def test_related_title_duplicate_outside_window_not_deduped():
+    reg = EventRegistry()
+    r1 = RawDisclosure(
+        title="셀트리온, 바이오시밀러 글로벌 규제 완화 최대 수혜 기업",
+        link="kis://news/1",
+        rss_guid="guid1",
+        published="2026-03-13T08:00:00+09:00",
+        ticker="068270",
+        corp_name="셀트리온",
+        detected_at=datetime(2026, 3, 13, 8, 0, tzinfo=timezone.utc),
+    )
+    r2 = RawDisclosure(
+        title="셀트리온, 바이오시밀러 규제 완화 최대 수혜 400조 시장 규모의 경제",
+        link="kis://news/2",
+        rss_guid="guid2",
+        published="2026-03-13T08:20:00+09:00",
+        ticker="068270",
+        corp_name="셀트리온",
+        detected_at=datetime(2026, 3, 13, 8, 20, tzinfo=timezone.utc),
+    )
+
+    assert reg.process(r1) is not None
+    assert reg.process(r2) is not None
+
+
+def test_related_title_duplicate_different_ticker_not_deduped():
+    reg = EventRegistry()
+    base_dt = datetime(2026, 3, 13, 7, 44, tzinfo=timezone.utc)
+    r1 = RawDisclosure(
+        title="크래프톤, 한화에어로와 피지컬 AI 합작법인 설립",
+        link="kis://news/1",
+        rss_guid="guid1",
+        published="2026-03-13T16:44:00+09:00",
+        ticker="259960",
+        corp_name="크래프톤",
+        detected_at=base_dt,
+    )
+    r2 = RawDisclosure(
+        title="한화에어로, 크래프톤과 피지컬 AI 합작법인 설립",
+        link="kis://news/2",
+        rss_guid="guid2",
+        published="2026-03-13T16:45:00+09:00",
+        ticker="012450",
+        corp_name="한화에어로스페이스",
+        detected_at=base_dt.replace(minute=45),
+    )
+
+    assert reg.process(r1) is not None
+    assert reg.process(r2) is not None

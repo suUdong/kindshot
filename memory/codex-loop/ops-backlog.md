@@ -50,14 +50,17 @@
 | Priority | Status | Slice | Why It Matters | Evidence |
 |---|---|---|---|---|
 | P0 | BLOCKED | Verify that decision records reappear after the market-halt and LLM-parse fixes on the next live/paper session | No post-fix live/paper log exists yet; this needs the next session's evidence before it can be closed | Post-fix run output not yet available |
-| P1 | ACTIVE | Diagnose `SPREAD_DATA_MISSING` / `SPREAD_TOO_WIDE` path using KIS quote evidence | Spread gating still blocks many `POS_STRONG` candidates and may hide data-quality issues | `docs/operations/2026-03-13-daily-review.md`, replay/log evidence |
-| P2 | ACTIVE | Evaluate ticker+time-window dedup for same-story multi-headline bursts | Duplicate headlines distort bucket counts and review effort | `docs/operations/2026-03-13-daily-review.md` |
-| P2 | ACTIVE | Confirm close snapshot collection timing for late-day events | `close` N/A limits report usefulness and masks outcome quality | `logs/daily_report_20260313.txt` |
+| P1 | DONE | Diagnose `SPREAD_DATA_MISSING` / `SPREAD_TOO_WIDE` path using KIS quote evidence | Off-hours cases are now split into `SPREAD_DATA_MISSING_OFF_HOURS` so premarket/postmarket quote gaps no longer look like generic intraday data failures | `docs/operations/2026-03-13-daily-review.md`, `logs/kindshot_20260313.jsonl`, `logs/polling_trace_20260313.jsonl` |
+| P2 | DONE | Evaluate ticker+time-window dedup for same-story multi-headline bursts | Runtime now applies a conservative same-ticker, 10-minute, high-overlap title dedup for ORIGINAL bursts to reduce repeated review/LLM load | `docs/operations/2026-03-13-daily-review.md`, `logs/kindshot_20260313.jsonl` |
+| P2 | DONE | Confirm close snapshot collection timing for late-day events | Pending `close` snapshots were being dropped on shutdown; runtime now flushes eligible `close` snapshots during shutdown after the configured close cutoff | `logs/daily_report_20260313.txt`, `src/kindshot/price.py`, `src/kindshot/main.py` |
 
 ## Recently Completed
 
 | Priority | Status | Slice | Note |
 |---|---|---|---|
+| P2 | DONE | Confirm close snapshot collection timing for late-day events | Added shutdown-time `close` snapshot flush after the configured cutoff; non-close horizons still keep normal timing semantics |
+| P2 | DONE | Evaluate ticker+time-window dedup for same-story multi-headline bursts | Added conservative same-ticker related-title dedup with a 10-minute window and targeted tests; event-group merging remains deferred |
+| P1 | DONE | Diagnose `SPREAD_DATA_MISSING` / `SPREAD_TOO_WIDE` path using KIS quote evidence | 2026-03-13 `SPREAD_DATA_MISSING` events clustered at 06:02~08:44 KST; runtime now keeps fail-close behavior but records off-hours spread absence separately |
 | P0 | DONE | Reduce over-aggressive market halt gating and log market-halt skips explicitly | Default halt threshold raised to `-8.0`; market-halt skips now write `skip_stage` / `skip_reason` |
 | P0 | DONE | Harden LLM response parsing against wrapper text and fenced JSON | Decision parser now extracts the first valid JSON object |
 | P1 | DONE | Remove generic `규제` from `NEG_STRONG` | `규제 완화` headlines no longer route to `NEG_STRONG` by default |

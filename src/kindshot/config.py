@@ -84,6 +84,20 @@ class Config:
     log_dir: Path = field(default_factory=lambda: Path(_env("LOG_DIR", "logs")))
     schema_version: str = "0.1.2"
 
+    # --- Collector ---
+    data_dir: Path = field(default_factory=lambda: Path(_env("DATA_DIR", "data")))
+    collector_news_dir: Path = field(default_factory=lambda: Path(_env("COLLECTOR_NEWS_DIR", "data/collector/news")))
+    collector_classifications_dir: Path = field(default_factory=lambda: Path(_env("COLLECTOR_CLASSIFICATIONS_DIR", "data/collector/classifications")))
+    collector_daily_prices_dir: Path = field(default_factory=lambda: Path(_env("COLLECTOR_DAILY_PRICES_DIR", "data/collector/daily_prices")))
+    collector_index_dir: Path = field(default_factory=lambda: Path(_env("COLLECTOR_INDEX_DIR", "data/collector/index")))
+    collector_manifests_dir: Path = field(default_factory=lambda: Path(_env("COLLECTOR_MANIFESTS_DIR", "data/collector/manifests")))
+    collector_log_path: Path = field(default_factory=lambda: Path(_env("COLLECTOR_LOG_PATH", "data/collector/collection_log.jsonl")))
+    collector_state_path: Path = field(default_factory=lambda: Path(_env("COLLECTOR_STATE_PATH", "data/collector_state.json")))
+    finalize_cutoff_hour_kst: int = field(default_factory=lambda: _env_int("FINALIZE_CUTOFF_HOUR_KST", 2))
+    finalize_cutoff_minute_kst: int = field(default_factory=lambda: _env_int("FINALIZE_CUTOFF_MINUTE_KST", 30))
+    collector_news_max_attempts: int = field(default_factory=lambda: _env_int("COLLECTOR_NEWS_MAX_ATTEMPTS", 3))
+    collector_retry_delay_s: float = field(default_factory=lambda: _env_float("COLLECTOR_RETRY_DELAY_S", 1.0))
+
     # --- Pipeline ---
     pipeline_workers: int = field(default_factory=lambda: _env_int("PIPELINE_WORKERS", 4))
     pipeline_queue_maxsize: int = field(default_factory=lambda: _env_int("PIPELINE_QUEUE_MAXSIZE", 512))

@@ -16,14 +16,41 @@
 
 - Apply exactly one strategy hypothesis per run.
 - Keep diffs small and reversible.
+- Default to batch-mode execution for implementation work: once a bounded slice is chosen, continue through design, implementation, tests, and run-summary updates without pausing for confirmation unless a real blocker appears.
+- For any non-trivial feature, strategy, or pipeline behavior change, complete a detailed analysis/design pass and write/update the relevant design doc before implementation.
+- Do not start implementation for a new feature hypothesis until the design doc captures scope, rollout, logging, validation, and rollback expectations.
 - Add or update tests for behavior changes.
 - Avoid schema-breaking logging changes unless explicitly requested.
+
+## Batch Mode Rules
+
+- Treat feature development the same as backlog cleanup for execution cadence: finish a meaningful bounded slice before reporting back.
+- Do not stop for intermediate approval once implementation has started unless a real blocker appears.
+- Real blockers are limited to missing credentials or network access, missing permissions, unresolved user-choice forks with material risk, or direct conflicts with existing user changes.
+- If blocked, stop at the blocker, record it clearly, and preserve the next executable step in the session summary.
+- If not blocked, continue to the next bounded slice that matches the active design and phase guidance.
 
 ## Validation
 
 - Run compile and tests after edits.
 - If tests cannot run in the current environment, report the gap explicitly.
 - Write a run summary to `memory/codex-loop/latest.md`.
+
+## Design-First Workflow
+
+- Treat design as a hard gate, not a nice-to-have, for meaningful behavior changes.
+- When a user requests a new feature or strategy change, first:
+  - analyze the current behavior and constraints
+  - write or update a detailed design/plan document
+  - define rollout stages, observability/logging, and validation
+- Only after that design is written and reviewed in the workspace should implementation begin.
+- If the user explicitly wants design first, keep the run documentation-only unless they later ask to build it.
+
+## Session Resume Workflow
+
+- If the user says they want to continue from the previous session, first read `memory/codex-loop/session.md`, `memory/codex-loop/latest.md`, and `memory/codex-loop/roadmap.md` before proposing or making changes.
+- Treat those files as the handoff source of truth for current focus, active hypothesis, completed step, next intended step, and validation state.
+- After restoring that context, continue from the recorded next step unless the user explicitly redirects the priority.
 
 ## Output Requirements
 

@@ -8,7 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from kindshot.config import Config
-from kindshot.replay import _load_actionable_events, _summarize_returns, replay
+from kindshot.replay import (
+    _load_actionable_events,
+    _summarize_returns,
+    list_collected_dates,
+    load_collected_day_manifest,
+    replay,
+)
 
 
 def _write_events(tmp_path: Path, events: list[dict]) -> Path:
@@ -99,6 +105,49 @@ def test_summarize_returns_handles_all_winners():
     summary = _summarize_returns([1.0, 2.0])
     assert summary["avg_loss_pct"] == 0.0
     assert summary["profit_factor"] == float("inf")
+
+
+def test_list_collected_dates_reads_manifest_index(tmp_path):
+    manifests_dir = tmp_path / "data" / "collector" / "manifests"
+    manifests_dir.mkdir(parents=True)
+    (manifests_dir / "index.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-03-15T00:00:00+09:00",
+                "entries": [
+                    {"date": "20260310", "status": "complete", "has_partial_data": False, "generated_at": "2026-03-15T00:01:00+09:00", "manifest_path": str(manifests_dir / "20260310.json")},
+                    {"date": "20260309", "status": "partial", "has_partial_data": True, "generated_at": "2026-03-15T00:02:00+09:00", "manifest_path": str(manifests_dir / "20260309.json")},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = Config(collector_manifests_dir=manifests_dir)
+
+    assert list_collected_dates(cfg) == ["20260310"]
+    assert list_collected_dates(cfg, include_partial=True) == ["20260310", "20260309"]
+
+
+def test_load_collected_day_manifest_reads_manifest(tmp_path):
+    manifests_dir = tmp_path / "data" / "collector" / "manifests"
+    manifests_dir.mkdir(parents=True)
+    manifest_path = manifests_dir / "20260310.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "date": "20260310",
+                "status": "complete",
+                "paths": {"news": str(tmp_path / "data" / "collector" / "news" / "20260310.jsonl")},
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = Config(collector_manifests_dir=manifests_dir)
+
+    payload = load_collected_day_manifest(cfg, "20260310")
+
+    assert payload["date"] == "20260310"
+    assert payload["status"] == "complete"
 
 
 async def test_replay_no_events(tmp_path):

@@ -20,6 +20,17 @@ from kindshot.models import (
 )
 
 logger = logging.getLogger(__name__)
+_TITLE_TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]+")
+_TITLE_STOPWORDS = {
+    "증권",
+    "목표가",
+    "상향",
+    "하향",
+    "리포트",
+    "브리핑",
+    "기대",
+    "전망",
+}
 
 
 @dataclass
@@ -38,6 +49,15 @@ class ProcessedEvent:
     raw: RawDisclosure
 
 
+@dataclass
+class _HistoryEntry:
+    event_id: str
+    normalized_title: str
+    title_tokens: frozenset[str]
+    detected_at: datetime
+    event_kind: EventKind
+
+
 def _hash(*parts: str) -> str:
     joined = "|".join(parts)
     return hashlib.sha256(joined.encode()).hexdigest()[:16]
@@ -50,6 +70,16 @@ def _normalize_title(title: str) -> str:
     t = re.sub(r"정정", "", t)
     t = re.sub(r"\s+", " ", t).strip()
     return t
+
+
+def _title_tokens(title: str) -> frozenset[str]:
+    normalized = _normalize_title(title).lower()
+    tokens = {
+        token
+        for token in _TITLE_TOKEN_RE.findall(normalized)
+        if len(token) >= 2 and token not in _TITLE_STOPWORDS
+    }
+    return frozenset(tokens)
 
 
 def _is_correction(title: str) -> bool:
@@ -67,12 +97,21 @@ class EventRegistry:
     reprocess same-day events.
     """
 
-    def __init__(self, state_dir: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        state_dir: Optional[Path] = None,
+        *,
+        related_title_window_s: int = 600,
+        related_title_min_token_overlap: float = 0.6,
+        related_title_min_shared_tokens: int = 2,
+    ) -> None:
         self._seen_ids: dict[str, datetime] = {}  # event_id -> detected_at
-        # ticker -> list of (event_id, normalized_title, detected_at, event_kind)
-        self._history: dict[str, list[tuple[str, str, datetime, EventKind]]] = {}
+        self._history: dict[str, list[_HistoryEntry]] = {}
         self._current_date: Optional[str] = None  # YYYYMMDD for TTL
         self._state_dir = state_dir
+        self._related_title_window_s = max(0, related_title_window_s)
+        self._related_title_min_token_overlap = related_title_min_token_overlap
+        self._related_title_min_shared_tokens = related_title_min_shared_tokens
         if state_dir:
             state_dir.mkdir(parents=True, exist_ok=True)
             self._load_state()
@@ -116,6 +155,42 @@ class EventRegistry:
         except Exception:
             logger.exception("Failed to persist dedup id %s", event_id)
 
+    def _is_related_title_duplicate(
+        self,
+        *,
+        ticker: str,
+        event_kind: EventKind,
+        normalized_title: str,
+        title_tokens: frozenset[str],
+        detected_at: datetime,
+    ) -> bool:
+        if event_kind != EventKind.ORIGINAL or self._related_title_window_s <= 0:
+            return False
+        if len(title_tokens) < self._related_title_min_shared_tokens:
+            return False
+
+        for entry in reversed(self._history.get(ticker, [])):
+            if entry.event_kind != EventKind.ORIGINAL:
+                continue
+            age_s = (detected_at - entry.detected_at).total_seconds()
+            if age_s < 0:
+                continue
+            if age_s > self._related_title_window_s:
+                break
+            shared_tokens = title_tokens & entry.title_tokens
+            if len(shared_tokens) < self._related_title_min_shared_tokens:
+                continue
+            base_size = min(len(title_tokens), len(entry.title_tokens))
+            if base_size <= 0:
+                continue
+            token_overlap = len(shared_tokens) / base_size
+            if token_overlap < self._related_title_min_token_overlap:
+                continue
+            title_similarity = SequenceMatcher(None, normalized_title, entry.normalized_title).ratio()
+            if title_similarity >= 0.55 or token_overlap >= 0.8:
+                return True
+        return False
+
     def _prune_if_new_day(self, now: datetime) -> None:
         """Clear history when KST date changes (TTL = current trading day)."""
         kst = timezone(timedelta(hours=9))
@@ -152,11 +227,9 @@ class EventRegistry:
                 event_id = _hash(source_prefix, raw.detected_at.isoformat(), raw.ticker, _normalize_title(raw.title), raw.link)
             method = EventIdMethod.FALLBACK
 
-        # Dedup
+        # Exact dedup
         if event_id in self._seen_ids:
             return None
-        self._seen_ids[event_id] = raw.detected_at
-        self._persist_id(event_id, raw.detected_at)
 
         # Determine event_kind
         if _is_withdrawal(raw.title):
@@ -172,11 +245,27 @@ class EventRegistry:
         parent_match_score: Optional[float] = None
         parent_candidate_count: Optional[int] = None
         norm_title = _normalize_title(raw.title)
+        title_tokens = _title_tokens(raw.title)
+
+        if self._is_related_title_duplicate(
+            ticker=raw.ticker,
+            event_kind=event_kind,
+            normalized_title=norm_title,
+            title_tokens=title_tokens,
+            detected_at=raw.detected_at,
+        ):
+            self._seen_ids[event_id] = raw.detected_at
+            self._persist_id(event_id, raw.detected_at)
+            return None
 
         if event_kind in (EventKind.CORRECTION, EventKind.WITHDRAWAL):
             all_entries = self._history.get(raw.ticker, [])
             # Only ORIGINAL events are valid parent candidates
-            candidates = [(eid, t, ts) for eid, t, ts, ek in all_entries if ek == EventKind.ORIGINAL]
+            candidates = [
+                (entry.event_id, entry.normalized_title, entry.detected_at)
+                for entry in all_entries
+                if entry.event_kind == EventKind.ORIGINAL
+            ]
             parent_candidate_count = len(candidates)
 
             best_score = 0.0
@@ -204,10 +293,20 @@ class EventRegistry:
                 parent_match_score = round(best_score, 1) if best_score > 0 else None
 
         event_group_id = parent_id if parent_id else event_id
+        self._seen_ids[event_id] = raw.detected_at
+        self._persist_id(event_id, raw.detected_at)
 
         # Store in history (cap at 100 per ticker to bound memory/fuzzy matching)
         history = self._history.setdefault(raw.ticker, [])
-        history.append((event_id, norm_title, raw.detected_at, event_kind))
+        history.append(
+            _HistoryEntry(
+                event_id=event_id,
+                normalized_title=norm_title,
+                title_tokens=title_tokens,
+                detected_at=raw.detected_at,
+                event_kind=event_kind,
+            )
+        )
         if len(history) > 100:
             self._history[raw.ticker] = history[-100:]
 

@@ -7,7 +7,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from kindshot.config import Config
 from kindshot.decision import DecisionEngine, LlmTimeoutError, LlmCallError, LlmParseError
@@ -22,6 +22,36 @@ from kindshot.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _collector_manifest_index_path(config: Config) -> Path:
+    return config.collector_manifests_dir / "index.json"
+
+
+def _load_collector_manifest_index(config: Config) -> dict[str, Any]:
+    path = _collector_manifest_index_path(config)
+    if not path.exists():
+        return {"generated_at": "", "entries": []}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def list_collected_dates(config: Config, *, include_partial: bool = False) -> list[str]:
+    payload = _load_collector_manifest_index(config)
+    dates: list[str] = []
+    for row in payload.get("entries", []):
+        status = str(row.get("status", "")).strip()
+        if status == "complete" or (include_partial and status == "partial"):
+            dt = str(row.get("date", "")).strip()
+            if dt:
+                dates.append(dt)
+    return dates
+
+
+def load_collected_day_manifest(config: Config, dt: str) -> dict[str, Any]:
+    path = config.collector_manifests_dir / f"{dt}.json"
+    if not path.exists():
+        raise FileNotFoundError(f"collector manifest not found for {dt}: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _summarize_returns(returns: list[float]) -> dict[str, float]:

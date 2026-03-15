@@ -15,10 +15,10 @@
 
 ## Current Focus
 
-- Track: Post-roadmap return refinement
-- Phase: Complete
-- Status: Complete
-- Reason: The roadmap hardening phases are now covered by typed KIS contracts, restart-safe feed handling, market/quote guardrails, normalized context-card plumbing, and structured KIS observability; next work can focus on return-oriented refinements on top of that foundation.
+- Track: Historical Collection Foundation
+- Phase: In Progress
+- Status: In Progress
+- Reason: Data collection is now the highest-value foundation gap. `collect backfill` needs a working collector, finalized-day state handling, and historical news/price/index persistence before broader replay and model-tuning loops can be trusted.
 
 ## Phases
 
@@ -79,11 +79,22 @@
   - Stronger fixture-based tests for KIS edge cases.
   - Clearer rollback notes and roadmap progress at the end of each run.
 
+### Phase 6: Historical Collection Foundation
+
+- Goal: Build a restart-safe `collect backfill` path that can persist historical news and daily market data without colliding with same-day runtime ingest.
+- Status: In Progress
+- Candidate outcomes:
+  - `kindshot collect backfill` CLI entrypoint.
+  - Finalized-day calculation and collector cursor state.
+  - Historical KIS news fetch by date.
+  - Daily price/index persistence for collected dates.
+  - Replay-ready storage layout for subsequent analysis.
+
 ## Next Run Candidates
 
-1. Feed normalized participation/liquidity context into the LLM prompt or cache policy only where it can improve BUY/SKIP precision without loosening guardrails.
-2. Use replay/log evidence to tune newly added market-breadth and participation thresholds toward better risk-adjusted paper returns.
-3. Add a bounded post-decision sizing refinement that reacts to normalized liquidity quality instead of fixed size hints alone.
+1. Extend `collect backfill` with richer collection logs and replay-facing storage contracts once the basic backfill path is validated in a real environment.
+2. Verify KIS historical-news coverage and pagination behavior on actual dates, then harden collector retry/cutoff handling with that evidence.
+3. Add runtime ingest persistence only after the backfill collector path is stable and reviewable.
 
 ## Deferred
 

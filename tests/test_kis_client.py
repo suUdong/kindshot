@@ -8,7 +8,7 @@ from aioresponses import CallbackResult, aioresponses
 import aiohttp
 
 from kindshot.config import Config
-from kindshot.kis_client import BASE_URL_PAPER, IndexInfo, KisClient, NewsDisclosure, OrderbookSnapshot, QuoteRiskState
+from kindshot.kis_client import BASE_URL_PAPER, IndexInfo, KisClient, NewsDisclosure, NewsDisclosureFetchResult, OrderbookSnapshot, QuoteRiskState
 
 PRICE_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/inquire-price\?.*")
 ORDERBOOK_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn\?.*")
@@ -464,3 +464,48 @@ async def test_get_news_disclosures_paginates_on_tr_cont_m():
 
     assert result == [{"cntt_usiq_srno": "NEWS001"}, {"cntt_usiq_srno": "NEWS002"}]
     assert request_tr_conts == ["", "N"]
+
+
+async def test_get_news_disclosure_items_passes_date_and_hour_params():
+    captured_queries: list[dict[str, str]] = []
+
+    def _callback(url, **kwargs):
+        captured_queries.append(dict(url.query))
+        return CallbackResult(
+            status=200,
+            payload={"output": []},
+            headers={"tr_cont": "D"},
+        )
+
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(NEWS_URL, callback=_callback)
+            await kis.get_news_disclosure_items(date="0020260310", from_time="235959")
+
+    assert len(captured_queries) == 1
+    assert captured_queries[0]["FID_INPUT_DATE_1"] == "0020260310"
+    assert captured_queries[0]["FID_INPUT_HOUR_1"] == "235959"
+
+
+async def test_get_news_disclosure_fetch_result_marks_pagination_truncated():
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            for idx in range(10):
+                m.get(
+                    NEWS_URL,
+                    payload={"output": [{"cntt_usiq_srno": f"NEWS{idx:03d}"}]},
+                    headers={"tr_cont": "M"},
+                )
+            result = await kis.get_news_disclosure_fetch_result()
+
+    assert isinstance(result, NewsDisclosureFetchResult)
+    assert result.pagination_truncated is True
+    assert len(result.items) == 10

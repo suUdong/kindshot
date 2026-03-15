@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta, timezone
 from typing import Optional
 
 from kindshot.config import Config
 from kindshot.models import QuantCheckDetail
+
+
+_KST = timezone(timedelta(hours=9))
+_CONTINUOUS_SESSION_START = time(9, 0)
+_CONTINUOUS_SESSION_END = time(15, 30)
 
 
 @dataclass
@@ -19,11 +25,24 @@ class QuantResult:
     analysis_tag: Optional[str]
 
 
+def _is_continuous_session(observed_at: Optional[datetime]) -> bool:
+    if observed_at is None:
+        return True
+    if observed_at.tzinfo is None:
+        localized = observed_at.replace(tzinfo=_KST)
+    else:
+        localized = observed_at.astimezone(_KST)
+    current = localized.timetz().replace(tzinfo=None)
+    return _CONTINUOUS_SESSION_START <= current <= _CONTINUOUS_SESSION_END
+
+
 def quant_check(
     adv_value_20d: float,
     spread_bps: Optional[float],
     ret_today: Optional[float],
     config: Config,
+    *,
+    observed_at: Optional[datetime] = None,
 ) -> QuantResult:
     """Run 3 quant filters. Returns result with pass/fail and skip reason."""
 
@@ -57,7 +76,10 @@ def quant_check(
             skip_reason = "ADV_TOO_LOW"
         elif not spread_ok:
             if config.spread_check_enabled and spread_bps is None:
-                skip_reason = "SPREAD_DATA_MISSING"
+                if _is_continuous_session(observed_at):
+                    skip_reason = "SPREAD_DATA_MISSING"
+                else:
+                    skip_reason = "SPREAD_DATA_MISSING_OFF_HOURS"
             else:
                 skip_reason = "SPREAD_TOO_WIDE"
         elif not extreme_ok:

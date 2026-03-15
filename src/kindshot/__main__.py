@@ -4,13 +4,18 @@ import asyncio
 import sys
 from pathlib import Path
 
+from kindshot.collector import collect_main
+from kindshot.config import load_config
 from kindshot.main import _parse_args, run
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "collect":
+        asyncio.run(collect_main(sys.argv[2:], load_config()))
+        return
+
     args = _parse_args()
     if args.replay:
-        from kindshot.config import load_config
         from kindshot.replay import replay
 
         config = load_config()
