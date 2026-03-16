@@ -14,6 +14,8 @@ Validation:
 - `python3 -m compileall src/kindshot tests` passed.
 - `python3 -m pytest tests/test_replay.py -q` could not run because the current environment has no `pytest`.
 - Workspace `.venv` does not provide a runnable pytest entrypoint in this environment.
+- Local commit created: `0187bd5` (`Build replay ops automation cycle`).
+- `git push origin HEAD` failed because this environment could not resolve `github.com`.
 
 - Risk and rollback note:
 - Risk is moderate because this expands replay ops CLI into higher-level orchestration with failure-policy handling, but it remains additive and leaves existing day-level replay/status/summary paths unchanged.

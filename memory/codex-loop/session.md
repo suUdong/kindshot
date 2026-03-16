@@ -2,7 +2,7 @@
 
 ## Current Session
 
-- Branch: `codex/roadmap-loop-foundation`
+- Branch: `main`
 - Phase: `Historical Collection Foundation`
 - Focus: Return to the collector foundation now that the immediate runtime ops-backlog slices are cleared.
 - Active hypothesis: replay 운영 자동화를 위해 queue, run, summary를 한 번에 수행하는 higher-level ops cycle과 batch failure policy가 필요하다.
@@ -14,6 +14,7 @@
 - Current local venv: `.venv` uses Python `3.11.8`
 - Validation status: `python3 -m compileall src/kindshot tests` passed for the collector changes; automated pytest execution is currently blocked because this environment has no `pytest`, no `uv`, and no workspace `.venv` test runner.
 - Tooling note: validation commands from prior sessions reference `uv`, but the current sandbox does not have `uv` or `pytest` installed.
+- Git note: local commit `0187bd5` (`Build replay ops automation cycle`) exists on `main`; `git push origin HEAD` failed because `github.com` could not be resolved from this environment.
 
 ## Last Completed Step
 
