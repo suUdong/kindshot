@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import heapq
+import json
 import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Optional
 
 from kindshot.config import Config
 from kindshot.kis_client import KisClient, PriceInfo
 from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.models import PriceSnapshot, T0Basis
+from kindshot.runtime_artifacts import update_runtime_artifact_index
 
 logger = logging.getLogger(__name__)
 _KST = timezone(timedelta(hours=9))
@@ -83,6 +86,29 @@ class SnapshotScheduler:
         self._t0_prices: dict[str, tuple[Optional[float], Optional[float]]] = {}
         # Track ticker per event_id for pnl callback
         self._event_tickers: dict[str, str] = {}
+
+    def _runtime_snapshot_path(self, ts: datetime) -> Path:
+        dt = ts.astimezone(_KST).strftime("%Y%m%d")
+        return self._config.runtime_price_snapshots_dir / f"{dt}.jsonl"
+
+    async def _append_runtime_price_snapshot(self, record: PriceSnapshot) -> None:
+        path = self._runtime_snapshot_path(record.ts)
+        line = json.dumps(record.model_dump(mode="json"), ensure_ascii=False)
+        kst_date = record.ts.astimezone(_KST).strftime("%Y%m%d")
+
+        def _write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+
+        await asyncio.to_thread(_write)
+        await update_runtime_artifact_index(
+            self._config,
+            date=kst_date,
+            artifact="price_snapshots",
+            path=path,
+            recorded_at=record.ts,
+        )
 
     def _close_fire_kst(self, now_kst: Optional[datetime] = None) -> datetime:
         base = now_kst or datetime.now(_KST)
@@ -220,6 +246,7 @@ class SnapshotScheduler:
         )
 
         await self._logger.write(record)
+        await self._append_runtime_price_snapshot(record)
 
     async def flush_close_on_shutdown(self) -> int:
         """Fire pending close snapshots if shutdown happens after close fetch time."""

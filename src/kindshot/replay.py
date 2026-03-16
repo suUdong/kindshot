@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -24,12 +25,73 @@ from kindshot.models import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ReplayOpsSelectionPolicy:
+    limit: int = 5
+    include_reported: bool = False
+    require_runtime: bool = False
+    require_collector: bool = False
+    min_merged_events: int = 1
+
+
+def _report_output_path(config: Config, dt: str, explicit_path: str = "") -> Path:
+    if explicit_path:
+        return Path(explicit_path)
+    return config.replay_day_reports_dir / f"{dt}.json"
+
+
+def _status_output_path(config: Config, dt: str, explicit_path: str = "") -> Path:
+    if explicit_path:
+        return Path(explicit_path)
+    return config.replay_day_status_dir / f"{dt}.json"
+
+
+def _ops_output_path(config: Config, explicit_path: str = "") -> Path:
+    if explicit_path:
+        return Path(explicit_path)
+    return config.replay_ops_summary_path
+
+
+def _ops_queue_output_path(config: Config, explicit_path: str = "") -> Path:
+    if explicit_path:
+        return Path(explicit_path)
+    return config.replay_ops_queue_ready_path
+
+
+def _ops_run_output_path(config: Config, explicit_path: str = "") -> Path:
+    if explicit_path:
+        return Path(explicit_path)
+    return config.replay_ops_run_ready_path
+
+
+def _ops_cycle_output_path(config: Config, explicit_path: str = "") -> Path:
+    if explicit_path:
+        return Path(explicit_path)
+    return config.replay_ops_cycle_ready_path
+
+
+def _write_report(path: Path, report: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def _collector_manifest_index_path(config: Config) -> Path:
     return config.collector_manifests_dir / "index.json"
 
 
+def _runtime_manifest_index_path(config: Config) -> Path:
+    return config.runtime_index_path
+
+
 def _load_collector_manifest_index(config: Config) -> dict[str, Any]:
     path = _collector_manifest_index_path(config)
+    if not path.exists():
+        return {"generated_at": "", "entries": []}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_runtime_manifest_index(config: Config) -> dict[str, Any]:
+    path = _runtime_manifest_index_path(config)
     if not path.exists():
         return {"generated_at": "", "entries": []}
     return json.loads(path.read_text(encoding="utf-8"))
@@ -47,11 +109,526 @@ def list_collected_dates(config: Config, *, include_partial: bool = False) -> li
     return dates
 
 
+def list_runtime_dates(config: Config) -> list[str]:
+    payload = _load_runtime_manifest_index(config)
+    dates: list[str] = []
+    for row in payload.get("entries", []):
+        dt = str(row.get("date", "")).strip()
+        if dt:
+            dates.append(dt)
+    return dates
+
+
 def load_collected_day_manifest(config: Config, dt: str) -> dict[str, Any]:
     path = config.collector_manifests_dir / f"{dt}.json"
     if not path.exists():
         raise FileNotFoundError(f"collector manifest not found for {dt}: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_runtime_day_manifest(config: Config, dt: str) -> dict[str, Any]:
+    payload = _load_runtime_manifest_index(config)
+    for row in payload.get("entries", []):
+        if str(row.get("date", "")).strip() == dt:
+            return row
+    raise FileNotFoundError(f"runtime manifest not found for {dt}: {config.runtime_index_path}")
+
+
+def _load_jsonl_records(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rows.append(json.loads(line))
+    return rows
+
+
+def load_runtime_day_artifacts(config: Config, dt: str) -> dict[str, Any]:
+    manifest = load_runtime_day_manifest(config, dt)
+    artifacts = manifest.get("artifacts", {})
+    payload: dict[str, Any] = {"date": dt, "generated_at": manifest.get("generated_at"), "artifacts": {}}
+
+    for artifact_name in ("context_cards", "price_snapshots", "market_context"):
+        artifact_meta = artifacts.get(artifact_name) or {}
+        path_text = str(artifact_meta.get("path", "")).strip()
+        if not path_text:
+            continue
+        path = Path(path_text)
+        payload["artifacts"][artifact_name] = {
+            **artifact_meta,
+            "records": _load_jsonl_records(path) if path.exists() else [],
+        }
+
+    return payload
+
+
+def load_collector_day_bundle(config: Config, dt: str) -> dict[str, Any]:
+    manifest = load_collected_day_manifest(config, dt)
+    paths = manifest.get("paths", {})
+    payload: dict[str, Any] = {"date": dt, "manifest": manifest, "artifacts": {}}
+    for artifact_name in ("news", "classifications", "daily_prices", "daily_index"):
+        path_text = str(paths.get(artifact_name, "")).strip()
+        if not path_text:
+            continue
+        path = Path(path_text)
+        payload["artifacts"][artifact_name] = {
+            "path": str(path),
+            "exists": path.exists(),
+            "records": _load_jsonl_records(path) if path.exists() else [],
+        }
+    return payload
+
+
+def _headline_key(ticker: str, headline: str) -> str:
+    return f"{ticker.strip()}::{headline.strip()}"
+
+
+def _build_runtime_events(context_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        row for row in context_rows
+        if row.get("bucket") == "POS_STRONG" and row.get("quant_check_passed") is True
+    ]
+
+
+def _build_collector_events(bundle: dict[str, Any]) -> list[dict[str, Any]]:
+    news_rows = bundle.get("artifacts", {}).get("news", {}).get("records", [])
+    classification_rows = bundle.get("artifacts", {}).get("classifications", {}).get("records", [])
+    news_by_id = {str(row.get("news_id", "")).strip(): row for row in news_rows if str(row.get("news_id", "")).strip()}
+
+    events: list[dict[str, Any]] = []
+    for row in classification_rows:
+        if row.get("bucket") != "POS_STRONG":
+            continue
+        news_id = str(row.get("news_id", "")).strip()
+        news_row = news_by_id.get(news_id, {})
+        tickers = row.get("tickers") or news_row.get("tickers") or []
+        ticker = str(tickers[0]).strip() if tickers else ""
+        headline = str(row.get("title") or news_row.get("title") or "").strip()
+        if not ticker or not headline:
+            continue
+        detected_at = str(news_row.get("collected_at") or "").strip()
+        disclosed_at = ""
+        if news_row.get("date") and news_row.get("time"):
+            disclosed_at = f"{news_row['date'][:4]}-{news_row['date'][4:6]}-{news_row['date'][6:8]}T{news_row['time'][:2]}:{news_row['time'][2:4]}:{news_row['time'][4:6]}+09:00"
+        events.append(
+            {
+                "type": "collector_event",
+                "event_id": f"collector:{news_id}" if news_id else f"collector:{ticker}:{headline}",
+                "ticker": ticker,
+                "corp_name": str(news_row.get("dorg") or "").strip(),
+                "headline": headline,
+                "bucket": "POS_STRONG",
+                "detected_at": detected_at,
+                "disclosed_at": disclosed_at,
+                "ctx": {},
+                "quant_check_passed": None,
+                "event_source": "collector",
+            }
+        )
+    return events
+
+
+def _merge_day_events(runtime_events: list[dict[str, Any]], collector_events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    merged = list(runtime_events)
+    seen_keys = {
+        _headline_key(str(row.get("ticker", "")), str(row.get("headline", "")))
+        for row in runtime_events
+    }
+    collector_added = 0
+    collector_deduped = 0
+    for row in collector_events:
+        key = _headline_key(str(row.get("ticker", "")), str(row.get("headline", "")))
+        if key in seen_keys:
+            collector_deduped += 1
+            continue
+        merged.append(row)
+        seen_keys.add(key)
+        collector_added += 1
+    return merged, {
+        "runtime_events": len(runtime_events),
+        "collector_events": len(collector_events),
+        "collector_added": collector_added,
+        "collector_deduped": collector_deduped,
+    }
+
+
+def _build_price_snapshot_map(rows: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
+    price_snapshots: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        event_id = str(row.get("event_id", "")).strip()
+        horizon = str(row.get("horizon", "")).strip()
+        if event_id and horizon:
+            price_snapshots.setdefault(event_id, {})[horizon] = row
+    return price_snapshots
+
+
+def _print_day_bundle_summary(
+    dt: str,
+    *,
+    collector_bundle: Optional[dict[str, Any]],
+    runtime_bundle: Optional[dict[str, Any]],
+    merge_stats: dict[str, int],
+) -> None:
+    print("\n" + "=" * 60)
+    print(f"DAY INPUT SUMMARY: {dt}")
+    print("=" * 60)
+    if collector_bundle is not None:
+        manifest = collector_bundle.get("manifest", {})
+        print(
+            "Collector: status=%s news=%s classifications=%s daily_prices=%s daily_index=%s"
+            % (
+                manifest.get("status", "-"),
+                manifest.get("counts", {}).get("news", 0),
+                manifest.get("counts", {}).get("classifications", 0),
+                manifest.get("counts", {}).get("daily_prices", 0),
+                manifest.get("counts", {}).get("daily_index", 0),
+            )
+        )
+    else:
+        print("Collector: unavailable")
+    if runtime_bundle is not None:
+        artifacts = runtime_bundle.get("artifacts", {})
+        print(
+            "Runtime: context_cards=%d price_snapshots=%d market_context=%d"
+            % (
+                len(artifacts.get("context_cards", {}).get("records", [])),
+                len(artifacts.get("price_snapshots", {}).get("records", [])),
+                len(artifacts.get("market_context", {}).get("records", [])),
+            )
+        )
+    else:
+        print("Runtime: unavailable")
+    print(
+        "Replay events: runtime=%d collector_total=%d collector_added=%d collector_deduped=%d"
+        % (
+            merge_stats.get("runtime_events", 0),
+            merge_stats.get("collector_events", 0),
+            merge_stats.get("collector_added", 0),
+            merge_stats.get("collector_deduped", 0),
+        )
+    )
+    print("=" * 60)
+
+
+def _collector_input_summary(bundle: Optional[dict[str, Any]]) -> dict[str, Any]:
+    if bundle is None:
+        return {"available": False}
+    manifest = bundle.get("manifest", {})
+    artifacts = bundle.get("artifacts", {})
+    return {
+        "available": True,
+        "status": manifest.get("status", ""),
+        "counts": manifest.get("counts", {}),
+        "artifacts": {
+            name: {
+                "exists": bool(payload.get("exists", False)),
+                "record_count": len(payload.get("records", [])),
+                "path": payload.get("path", ""),
+            }
+            for name, payload in artifacts.items()
+        },
+    }
+
+
+def _runtime_input_summary(bundle: Optional[dict[str, Any]]) -> dict[str, Any]:
+    if bundle is None:
+        return {"available": False}
+    artifacts = bundle.get("artifacts", {})
+    return {
+        "available": True,
+        "generated_at": bundle.get("generated_at", ""),
+        "artifacts": {
+            name: {
+                "exists": bool(payload.get("exists", False)),
+                "record_count": len(payload.get("records", [])),
+                "path": payload.get("path", ""),
+                "recorded_at": payload.get("recorded_at", ""),
+            }
+            for name, payload in artifacts.items()
+        },
+    }
+
+
+def _build_replay_day_status(dt: str, *, collector_bundle: Optional[dict[str, Any]], runtime_bundle: Optional[dict[str, Any]]) -> dict[str, Any]:
+    warnings: list[str] = []
+    collector_summary = _collector_input_summary(collector_bundle)
+    runtime_summary = _runtime_input_summary(runtime_bundle)
+
+    if not collector_summary.get("available"):
+        warnings.append("COLLECTOR_MANIFEST_MISSING")
+    else:
+        status = str(collector_summary.get("status", "")).strip()
+        if status and status != "complete":
+            warnings.append("COLLECTOR_PARTIAL_STATUS")
+        artifacts = collector_summary.get("artifacts", {})
+        if not artifacts.get("news", {}).get("exists", False):
+            warnings.append("COLLECTOR_NEWS_MISSING")
+        if not artifacts.get("classifications", {}).get("exists", False):
+            warnings.append("COLLECTOR_CLASSIFICATIONS_MISSING")
+
+    if not runtime_summary.get("available"):
+        warnings.extend([
+            "RUNTIME_CONTEXT_CARDS_MISSING",
+            "RUNTIME_PRICE_SNAPSHOTS_MISSING",
+            "RUNTIME_MARKET_CONTEXT_MISSING",
+        ])
+    else:
+        artifacts = runtime_summary.get("artifacts", {})
+        if not artifacts.get("context_cards", {}).get("exists", False):
+            warnings.append("RUNTIME_CONTEXT_CARDS_MISSING")
+        if not artifacts.get("price_snapshots", {}).get("exists", False):
+            warnings.append("RUNTIME_PRICE_SNAPSHOTS_MISSING")
+        if not artifacts.get("market_context", {}).get("exists", False):
+            warnings.append("RUNTIME_MARKET_CONTEXT_MISSING")
+
+    runtime_events = _build_runtime_events(
+        runtime_bundle.get("artifacts", {}).get("context_cards", {}).get("records", [])
+        if runtime_bundle is not None else []
+    )
+    collector_events = _build_collector_events(collector_bundle) if collector_bundle is not None else []
+    merged_events, merge_stats = _merge_day_events(runtime_events, collector_events)
+    if not merged_events:
+        warnings.append("NO_REPLAYABLE_EVENTS")
+
+    if collector_summary.get("available") and runtime_summary.get("available"):
+        health = "partial_inputs" if warnings else "ready"
+    elif collector_summary.get("available"):
+        health = "collector_only" if merged_events else "missing_inputs"
+    elif runtime_summary.get("available"):
+        health = "runtime_only" if merged_events else "missing_inputs"
+    else:
+        health = "missing_inputs"
+
+    return {
+        "date": dt,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "health": health,
+        "warnings": warnings,
+        "input": {
+            "collector": collector_summary,
+            "runtime": runtime_summary,
+        },
+        "replayability": {
+            "runtime_event_count": len(runtime_events),
+            "collector_event_count": len(collector_events),
+            "merged_event_count": len(merged_events),
+            "merge": merge_stats,
+        },
+    }
+
+
+def _print_replay_day_status(report: dict[str, Any]) -> None:
+    print("\n" + "=" * 60)
+    print(f"DAY STATUS: {report['date']}")
+    print("=" * 60)
+    print(f"Health: {report['health']}")
+    print(f"Warnings: {', '.join(report['warnings']) if report['warnings'] else '-'}")
+    print(
+        "Replayability: runtime=%d collector=%d merged=%d"
+        % (
+            report["replayability"]["runtime_event_count"],
+            report["replayability"]["collector_event_count"],
+            report["replayability"]["merged_event_count"],
+        )
+    )
+    collector = report["input"]["collector"]
+    runtime = report["input"]["runtime"]
+    print(f"Collector available: {'yes' if collector.get('available') else 'no'}")
+    print(f"Runtime available: {'yes' if runtime.get('available') else 'no'}")
+    print("=" * 60)
+
+
+def _available_replay_dates(config: Config) -> list[str]:
+    dates = set(list_collected_dates(config, include_partial=True))
+    dates.update(list_runtime_dates(config))
+    return sorted(dates, reverse=True)
+
+
+def _ops_row_for_date(config: Config, dt: str) -> dict[str, Any]:
+    status_path = _status_output_path(config, dt)
+    report_path = _report_output_path(config, dt)
+    status = _read_json_file(status_path) or replay_day_status(dt, config, output_path=str(status_path))
+    report = _read_json_file(report_path)
+    return {
+        "date": dt,
+        "health": status.get("health", "missing_inputs"),
+        "warning_count": len(status.get("warnings", [])),
+        "warnings": status.get("warnings", []),
+        "merged_event_count": status.get("replayability", {}).get("merged_event_count", 0),
+        "collector_available": bool(status.get("input", {}).get("collector", {}).get("available", False)),
+        "runtime_available": bool(status.get("input", {}).get("runtime", {}).get("available", False)),
+        "report_available": bool(report),
+        "buy_decisions": int(report.get("summary", {}).get("buy_decisions", 0) or 0),
+        "price_data_trades": int(report.get("summary", {}).get("price_data_trades", 0) or 0),
+    }
+
+
+def _build_replay_ops_summary(config: Config, *, limit: int) -> dict[str, Any]:
+    dates = _available_replay_dates(config)
+    rows = [_ops_row_for_date(config, dt) for dt in dates]
+    health_counts: dict[str, int] = {}
+    warning_counts: dict[str, int] = {}
+    for row in rows:
+        health = str(row.get("health", "missing_inputs"))
+        health_counts[health] = health_counts.get(health, 0) + 1
+        for warning in row.get("warnings", []):
+            warning_counts[warning] = warning_counts.get(warning, 0) + 1
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "date_count": len(rows),
+        "health_counts": health_counts,
+        "warning_counts": warning_counts,
+        "all_rows": rows,
+        "rows": rows[:limit],
+    }
+
+
+def _selection_reason(row: dict[str, Any], policy: ReplayOpsSelectionPolicy) -> str:
+    if row.get("health") != "ready":
+        return "health_not_ready"
+    if not policy.include_reported and row.get("report_available"):
+        return "existing_report"
+    if policy.require_runtime and not row.get("runtime_available"):
+        return "missing_runtime"
+    if policy.require_collector and not row.get("collector_available"):
+        return "missing_collector"
+    if int(row.get("merged_event_count", 0) or 0) < policy.min_merged_events:
+        return "merged_event_below_min"
+    return "selected"
+
+
+def _build_replay_ops_ready_queue(config: Config, *, policy: ReplayOpsSelectionPolicy) -> dict[str, Any]:
+    ops = _build_replay_ops_summary(config, limit=max(policy.limit, 1))
+    queue_rows: list[dict[str, Any]] = []
+    candidate_count = 0
+    selected_count = 0
+    skipped_counts: dict[str, int] = {}
+
+    for row in ops.get("all_rows", []):
+        reason = _selection_reason(row, policy)
+        if row.get("health") == "ready":
+            candidate_count += 1
+        selected = False
+        if reason == "selected":
+            if selected_count < policy.limit:
+                selected = True
+                selected_count += 1
+            else:
+                reason = "limit_exceeded"
+        if not selected:
+            skipped_counts[reason] = skipped_counts.get(reason, 0) + 1
+        queue_rows.append(
+            {
+                "date": row.get("date", ""),
+                "health": row.get("health", "missing_inputs"),
+                "selected": selected,
+                "selection_reason": "selected" if selected else reason,
+                "report_available": bool(row.get("report_available")),
+                "collector_available": bool(row.get("collector_available")),
+                "runtime_available": bool(row.get("runtime_available")),
+                "merged_event_count": int(row.get("merged_event_count", 0) or 0),
+                "warning_count": int(row.get("warning_count", 0) or 0),
+                "warnings": list(row.get("warnings", [])),
+            }
+        )
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "policy": asdict(policy),
+        "candidate_count": candidate_count,
+        "selected_count": selected_count,
+        "skipped_counts": skipped_counts,
+        "rows": queue_rows,
+    }
+
+
+def _print_replay_ops_summary(report: dict[str, Any]) -> None:
+    print("\n" + "=" * 60)
+    print("REPLAY OPS SUMMARY")
+    print("=" * 60)
+
+
+def _print_replay_ops_queue_ready(report: dict[str, Any]) -> None:
+    print("\n" + "=" * 60)
+    print("REPLAY OPS QUEUE READY")
+    print("=" * 60)
+    print(f"Policy: {report['policy']}")
+    print(f"Candidates: {report['candidate_count']}")
+    print(f"Selected: {report['selected_count']}")
+    print(f"Skipped counts: {report['skipped_counts'] or '-'}")
+    print("\nRows:")
+    for row in report.get("rows", []):
+        print(
+            "%s selected=%s reason=%s health=%s merged=%d collector=%s runtime=%s report=%s"
+            % (
+                row["date"],
+                "yes" if row["selected"] else "no",
+                row["selection_reason"],
+                row["health"],
+                row["merged_event_count"],
+                "yes" if row["collector_available"] else "no",
+                "yes" if row["runtime_available"] else "no",
+                "yes" if row["report_available"] else "no",
+            )
+        )
+    print("=" * 60)
+
+
+def _print_replay_ops_run_ready(report: dict[str, Any]) -> None:
+    print("\n" + "=" * 60)
+    print("REPLAY OPS RUN READY")
+    print("=" * 60)
+    print(f"Policy: {report['policy']}")
+    print(f"Candidates: {report['candidate_count']}")
+    print(f"Selected: {report['selected_count']}")
+    print(f"Executed: {report['executed_count']}")
+    print(f"Skipped counts: {report['skipped_counts'] or '-'}")
+    print("\nRows:")
+    for row in report.get("rows", []):
+        print(
+            "%s selected=%s executed=%s reason=%s report=%s buys=%d price_trades=%d"
+            % (
+                row["date"],
+                "yes" if row["selected"] else "no",
+                "yes" if row["executed"] else "no",
+                row["selection_reason"],
+                row["report_path"] or "-",
+                row["summary"].get("buy_decisions", 0),
+                row["summary"].get("price_data_trades", 0),
+            )
+        )
+    print("=" * 60)
+
+
+def _print_replay_ops_cycle_ready(report: dict[str, Any]) -> None:
+    print("\n" + "=" * 60)
+    print("REPLAY OPS CYCLE READY")
+    print("=" * 60)
+    print(f"Policy: {report['policy']}")
+    print(f"Continue on error: {'yes' if report['continue_on_error'] else 'no'}")
+    print(f"Executed: {report['executed_count']}")
+    print(f"Failed: {report['failed_count']}")
+    print(f"Stopped early: {'yes' if report['stopped_early'] else 'no'}")
+    print(f"Queue path: {report['queue_path']}")
+    print(f"Run path: {report['run_path']}")
+    print(f"Summary path: {report['summary_path']}")
+    print("\nRows:")
+    for row in report.get("rows", []):
+        print(
+            "%s selected=%s executed=%s error=%s report=%s buys=%d price_trades=%d"
+            % (
+                row["date"],
+                "yes" if row["selected"] else "no",
+                "yes" if row["executed"] else "no",
+                row["error"] or "-",
+                row["report_path"] or "-",
+                row["summary"].get("buy_decisions", 0),
+                row["summary"].get("price_data_trades", 0),
+            )
+        )
+    print("=" * 60)
 
 
 def _summarize_returns(returns: list[float]) -> dict[str, float]:
@@ -155,17 +732,36 @@ async def _fetch_post_hoc_prices(ticker: str, date_str: str) -> dict:
     return await asyncio.to_thread(_fetch)
 
 
-async def replay(log_path: Path, config: Config) -> None:
-    """Replay logged events through LLM decision + post-hoc price analysis."""
-    events = _load_actionable_events(log_path)
+async def _run_replay(
+    *,
+    source_name: str,
+    events: list[dict[str, Any]],
+    price_snapshots: dict[str, dict[str, dict[str, Any]]],
+    config: Config,
+    market_context: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
     if not events:
-        logger.info("No actionable events found in %s", log_path)
-        return
+        logger.info("No actionable events found in %s", source_name)
+        return {
+            "source": source_name,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "summary": {
+                "total_actionable_events": 0,
+                "buy_decisions": 0,
+                "skip_decisions": 0,
+                "llm_errors": 0,
+                "returns_summary": {},
+                "price_data_trades": 0,
+                "price_snapshot_trades": 0,
+                "pykrx_fallback_trades": 0,
+            },
+            "returns": [],
+            "market_context_count": len(market_context or []),
+        }
 
-    # Load price snapshots from same log for t0/close return calculation
-    price_snapshots = _load_price_snapshots(log_path)
-
-    logger.info("Replay: %d actionable events from %s", len(events), log_path)
+    logger.info("Replay: %d actionable events from %s", len(events), source_name)
+    if market_context:
+        logger.info("Replay runtime context: %d market snapshots available", len(market_context))
 
     engine = DecisionEngine(config)
     replay_log = JsonlLogger(config.log_dir, run_id=f"replay_{datetime.now().strftime('%Y%m%d_%H%M%S')}", file_prefix="replay")
@@ -283,22 +879,44 @@ async def replay(log_path: Path, config: Config) -> None:
         else:
             stats["skip"] += 1
 
-    # Summary
-    print("\n" + "=" * 60)
-    print(f"REPLAY SUMMARY: {log_path.name}")
-    print("=" * 60)
-    print(f"Total actionable events: {stats['total']}")
-    print(f"BUY decisions: {stats['buy']}")
-    print(f"SKIP decisions: {stats['skip']}")
-    print(f"LLM errors: {stats['error']}")
-
+    returns_summary: dict[str, Any] = {}
+    snapshot_count = 0
+    fallback_count = 0
     if stats["returns"]:
         rets = [r["close_ret_pct"] for r in stats["returns"]]
-        summary = _summarize_returns(rets)
+        returns_summary = _summarize_returns(rets)
         snapshot_count = sum(1 for r in stats["returns"] if r["price_source"] == "price_snapshot")
         fallback_count = len(rets) - snapshot_count
+
+    report = {
+        "source": source_name,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "total_actionable_events": stats["total"],
+            "buy_decisions": stats["buy"],
+            "skip_decisions": stats["skip"],
+            "llm_errors": stats["error"],
+            "returns_summary": returns_summary,
+            "price_data_trades": len(stats["returns"]),
+            "price_snapshot_trades": snapshot_count,
+            "pykrx_fallback_trades": fallback_count,
+        },
+        "returns": sorted(stats["returns"], key=lambda x: x["close_ret_pct"], reverse=True),
+        "market_context_count": len(market_context or []),
+    }
+
+    print("\n" + "=" * 60)
+    print(f"REPLAY SUMMARY: {source_name}")
+    print("=" * 60)
+    print(f"Total actionable events: {report['summary']['total_actionable_events']}")
+    print(f"BUY decisions: {report['summary']['buy_decisions']}")
+    print(f"SKIP decisions: {report['summary']['skip_decisions']}")
+    print(f"LLM errors: {report['summary']['llm_errors']}")
+
+    if report["returns"]:
+        summary = report["summary"]["returns_summary"]
         print(f"\n--- BUY P&L (close vs entry) ---")
-        print(f"Trades with price data: {len(rets)} (snapshot: {snapshot_count}, pykrx fallback: {fallback_count})")
+        print(f"Trades with price data: {report['summary']['price_data_trades']} (snapshot: {report['summary']['price_snapshot_trades']}, pykrx fallback: {report['summary']['pykrx_fallback_trades']})")
         print(f"Win rate: {summary['win_rate_pct']:.0f}%")
         print(f"Avg return: {summary['avg_return_pct']:.2f}%")
         print(f"Avg win / loss: {summary['avg_win_pct']:.2f}% / {summary['avg_loss_pct']:.2f}%")
@@ -309,10 +927,297 @@ async def replay(log_path: Path, config: Config) -> None:
         print(f"Profit factor: {pf_text}")
 
         print(f"\nDetail:")
-        for r in sorted(stats["returns"], key=lambda x: x["close_ret_pct"], reverse=True):
+        for r in report["returns"]:
             src = "snap" if r["price_source"] == "price_snapshot" else "ohlcv"
             print(f"  {r['ticker']} {r['headline']} | conf={r['confidence']} "
                   f"entry={r['entry']:,.0f} close={r['close']:,.0f} ret={r['close_ret_pct']:+.2f}% [{src}]")
     else:
         print("\nNo BUY trades with price data available.")
     print("=" * 60)
+    return report
+
+
+def _read_json_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+async def replay(log_path: Path, config: Config, report_output_path: str = "") -> dict[str, Any]:
+    """Replay logged events through LLM decision + post-hoc price analysis."""
+    report = await _run_replay(
+        source_name=log_path.name,
+        events=_load_actionable_events(log_path),
+        price_snapshots=_load_price_snapshots(log_path),
+        config=config,
+    )
+    if report_output_path:
+        _write_report(Path(report_output_path), report)
+    return report
+
+
+async def replay_runtime_date(dt: str, config: Config, report_output_path: str = "") -> dict[str, Any]:
+    """Replay runtime artifacts for a specific KST date."""
+    bundle = load_runtime_day_artifacts(config, dt)
+    context_rows = bundle.get("artifacts", {}).get("context_cards", {}).get("records", [])
+    price_rows = bundle.get("artifacts", {}).get("price_snapshots", {}).get("records", [])
+    market_rows = bundle.get("artifacts", {}).get("market_context", {}).get("records", [])
+
+    events = [
+        row for row in context_rows
+        if row.get("bucket") == "POS_STRONG" and row.get("quant_check_passed") is True
+    ]
+    price_snapshots: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in price_rows:
+        event_id = str(row.get("event_id", "")).strip()
+        horizon = str(row.get("horizon", "")).strip()
+        if event_id and horizon:
+            price_snapshots.setdefault(event_id, {})[horizon] = row
+
+    report = await _run_replay(
+        source_name=f"runtime:{dt}",
+        events=events,
+        price_snapshots=price_snapshots,
+        config=config,
+        market_context=market_rows,
+    )
+    if report_output_path:
+        _write_report(Path(report_output_path), report)
+    return report
+
+
+async def replay_day(dt: str, config: Config, report_output_path: str = "") -> dict[str, Any]:
+    """Replay a day using both collector manifests and runtime artifacts when available."""
+    collector_bundle: Optional[dict[str, Any]] = None
+    runtime_bundle: Optional[dict[str, Any]] = None
+
+    try:
+        collector_bundle = load_collector_day_bundle(config, dt)
+    except FileNotFoundError:
+        collector_bundle = None
+    try:
+        runtime_bundle = load_runtime_day_artifacts(config, dt)
+    except FileNotFoundError:
+        runtime_bundle = None
+
+    if collector_bundle is None and runtime_bundle is None:
+        raise FileNotFoundError(f"no collector manifest or runtime artifacts found for {dt}")
+
+    runtime_events = _build_runtime_events(
+        runtime_bundle.get("artifacts", {}).get("context_cards", {}).get("records", [])
+        if runtime_bundle is not None else []
+    )
+    collector_events = _build_collector_events(collector_bundle) if collector_bundle is not None else []
+    merged_events, merge_stats = _merge_day_events(runtime_events, collector_events)
+    runtime_prices = _build_price_snapshot_map(
+        runtime_bundle.get("artifacts", {}).get("price_snapshots", {}).get("records", [])
+        if runtime_bundle is not None else []
+    )
+    market_rows = (
+        runtime_bundle.get("artifacts", {}).get("market_context", {}).get("records", [])
+        if runtime_bundle is not None else []
+    )
+
+    _print_day_bundle_summary(
+        dt,
+        collector_bundle=collector_bundle,
+        runtime_bundle=runtime_bundle,
+        merge_stats=merge_stats,
+    )
+    replay_report = await _run_replay(
+        source_name=f"day:{dt}",
+        events=merged_events,
+        price_snapshots=runtime_prices,
+        config=config,
+        market_context=market_rows,
+    )
+    report = {
+        "date": dt,
+        "source": "replay_day",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "input": {
+            "collector": _collector_input_summary(collector_bundle),
+            "runtime": _runtime_input_summary(runtime_bundle),
+            "merge": merge_stats,
+        },
+        "summary": replay_report["summary"],
+        "returns": replay_report["returns"],
+        "market_context_count": replay_report["market_context_count"],
+    }
+    _write_report(_report_output_path(config, dt, report_output_path), report)
+    return report
+
+
+def replay_day_status(dt: str, config: Config, output_path: str = "") -> dict[str, Any]:
+    """Inspect collector/runtime day inputs before replay execution."""
+    try:
+        collector_bundle = load_collector_day_bundle(config, dt)
+    except FileNotFoundError:
+        collector_bundle = None
+    try:
+        runtime_bundle = load_runtime_day_artifacts(config, dt)
+    except FileNotFoundError:
+        runtime_bundle = None
+
+    report = _build_replay_day_status(
+        dt,
+        collector_bundle=collector_bundle,
+        runtime_bundle=runtime_bundle,
+    )
+    _print_replay_day_status(report)
+    _write_report(_status_output_path(config, dt, output_path), report)
+    return report
+
+
+def replay_ops_summary(config: Config, *, limit: int = 10, output_path: str = "") -> dict[str, Any]:
+    """Summarize replay readiness and outcomes across multiple dates."""
+    report = _build_replay_ops_summary(config, limit=limit)
+    _print_replay_ops_summary(report)
+    _write_report(_ops_output_path(config, output_path), report)
+    return report
+
+
+def replay_ops_queue_ready(
+    config: Config,
+    *,
+    limit: int = 5,
+    include_reported: bool = False,
+    require_runtime: bool = False,
+    require_collector: bool = False,
+    min_merged_events: int = 1,
+    output_path: str = "",
+) -> dict[str, Any]:
+    """Build a policy-controlled ready queue without executing replay-day."""
+    policy = ReplayOpsSelectionPolicy(
+        limit=max(1, limit),
+        include_reported=include_reported,
+        require_runtime=require_runtime,
+        require_collector=require_collector,
+        min_merged_events=max(0, min_merged_events),
+    )
+    report = _build_replay_ops_ready_queue(config, policy=policy)
+    _print_replay_ops_queue_ready(report)
+    _write_report(_ops_queue_output_path(config, output_path), report)
+    return report
+
+
+async def _execute_replay_ops_queue(
+    queue_report: dict[str, Any],
+    config: Config,
+    *,
+    continue_on_error: bool,
+) -> tuple[dict[str, Any], bool]:
+    rows: list[dict[str, Any]] = []
+    stopped_early = False
+
+    for row in queue_report.get("rows", []):
+        dt = str(row.get("date", "")).strip()
+        base_row = {
+            **row,
+            "executed": False,
+            "error": "",
+            "report_path": str(_report_output_path(config, dt)) if dt and row.get("report_available") else "",
+            "summary": {},
+        }
+        if not dt or not row.get("selected"):
+            rows.append(base_row)
+            continue
+        try:
+            replay_report = await replay_day(dt, config)
+        except Exception as exc:
+            base_row["error"] = f"{type(exc).__name__}: {exc}"
+            rows.append(base_row)
+            if not continue_on_error:
+                stopped_early = True
+                break
+            continue
+
+        base_row["executed"] = True
+        base_row["report_path"] = str(_report_output_path(config, dt))
+        base_row["summary"] = replay_report.get("summary", {})
+        rows.append(base_row)
+
+    return (
+        {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "policy": queue_report.get("policy", {}),
+            "candidate_count": queue_report.get("candidate_count", 0),
+            "selected_count": queue_report.get("selected_count", 0),
+            "executed_count": sum(1 for row in rows if row.get("executed")),
+            "failed_count": sum(1 for row in rows if row.get("error")),
+            "skipped_counts": queue_report.get("skipped_counts", {}),
+            "rows": rows,
+        },
+        stopped_early,
+    )
+
+
+async def replay_ops_run_ready(
+    config: Config,
+    *,
+    limit: int = 5,
+    include_reported: bool = False,
+    require_runtime: bool = False,
+    require_collector: bool = False,
+    min_merged_events: int = 1,
+    output_path: str = "",
+) -> dict[str, Any]:
+    """Execute replay-day for dates selected by the shared replay ops policy."""
+    policy = ReplayOpsSelectionPolicy(
+        limit=max(1, limit),
+        include_reported=include_reported,
+        require_runtime=require_runtime,
+        require_collector=require_collector,
+        min_merged_events=max(0, min_merged_events),
+    )
+    queue_report = _build_replay_ops_ready_queue(config, policy=policy)
+    report, _ = await _execute_replay_ops_queue(queue_report, config, continue_on_error=False)
+    _print_replay_ops_run_ready(report)
+    _write_report(_ops_run_output_path(config, output_path), report)
+    return report
+
+
+async def replay_ops_cycle_ready(
+    config: Config,
+    *,
+    limit: int = 5,
+    include_reported: bool = False,
+    require_runtime: bool = False,
+    require_collector: bool = False,
+    min_merged_events: int = 1,
+    continue_on_error: bool = False,
+    output_path: str = "",
+) -> dict[str, Any]:
+    """Run queue, execution, and summary refresh in one batch-oriented ops command."""
+    queue_report = replay_ops_queue_ready(
+        config,
+        limit=limit,
+        include_reported=include_reported,
+        require_runtime=require_runtime,
+        require_collector=require_collector,
+        min_merged_events=min_merged_events,
+    )
+    run_report, stopped_early = await _execute_replay_ops_queue(
+        queue_report,
+        config,
+        continue_on_error=continue_on_error,
+    )
+    _write_report(_ops_run_output_path(config), run_report)
+    summary_report = replay_ops_summary(config, limit=max(limit, 10))
+
+    report = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "policy": queue_report.get("policy", {}),
+        "continue_on_error": continue_on_error,
+        "queue_path": str(_ops_queue_output_path(config)),
+        "run_path": str(_ops_run_output_path(config)),
+        "summary_path": str(_ops_output_path(config)),
+        "executed_count": run_report.get("executed_count", 0),
+        "failed_count": run_report.get("failed_count", 0),
+        "stopped_early": stopped_early,
+        "summary_health_counts": summary_report.get("health_counts", {}),
+        "rows": run_report.get("rows", []),
+    }
+    _print_replay_ops_cycle_ready(report)
+    _write_report(_ops_cycle_output_path(config, output_path), report)
+    return report

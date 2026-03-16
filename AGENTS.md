@@ -25,6 +25,10 @@
 ## Batch Mode Rules
 
 - Treat feature development the same as backlog cleanup for execution cadence: finish a meaningful bounded slice before reporting back.
+- Set the default slice size at the capability level, not the helper level: one batch should usually finish a user-visible or operator-visible workflow, CLI path, or report path end-to-end.
+- Do not report progress after adding internal plumbing only; keep going until the batch closes the surrounding usable capability unless a real blocker appears.
+- Prefer batches that bundle the main behavior change with the dependent reader/writer wiring, output shape, tests, and docs needed to make that behavior actually usable.
+- Avoid ending a batch at intermediate states like "index added", "helper added", or "sink added" if the corresponding feature still cannot be exercised as a coherent path.
 - Do not stop for intermediate approval once implementation has started unless a real blocker appears.
 - Real blockers are limited to missing credentials or network access, missing permissions, unresolved user-choice forks with material risk, or direct conflicts with existing user changes.
 - If blocked, stop at the blocker, record it clearly, and preserve the next executable step in the session summary.

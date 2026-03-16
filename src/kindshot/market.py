@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 from kindshot.config import Config
 from kindshot.kis_client import IndexInfo, KisClient
 from kindshot.models import MarketContext
+from kindshot.runtime_artifacts import update_runtime_artifact_index
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,10 @@ class MarketMonitor:
         self._vkospi: Optional[float] = None
         self._last_ts: Optional[datetime] = None
 
+    def _runtime_market_context_path(self, ts: datetime) -> Path:
+        dt = ts.astimezone(_KST).strftime("%Y%m%d")
+        return self._config.runtime_market_context_dir / f"{dt}.jsonl"
+
     @property
     def is_halted(self) -> bool:
         if not self._initialized:
@@ -69,6 +75,30 @@ class MarketMonitor:
             kospi_breadth_ratio=self._kospi_breadth_ratio,
             kosdaq_breadth_ratio=self._kosdaq_breadth_ratio,
             vkospi=self._vkospi,
+        )
+
+    async def append_runtime_snapshot(self) -> None:
+        ts = self._last_ts or datetime.now(timezone.utc)
+        record = {
+            "type": "market_context",
+            "ts": ts.isoformat(),
+            **self.snapshot.model_dump(mode="json"),
+        }
+        path = self._runtime_market_context_path(ts)
+        line = json.dumps(record, ensure_ascii=False)
+
+        def _write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+
+        await asyncio.to_thread(_write)
+        await update_runtime_artifact_index(
+            self._config,
+            date=ts.astimezone(_KST).strftime("%Y%m%d"),
+            artifact="market_context",
+            path=path,
+            recorded_at=ts,
         )
 
     @staticmethod

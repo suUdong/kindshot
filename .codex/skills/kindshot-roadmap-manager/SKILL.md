@@ -12,7 +12,7 @@ description: Maintain roadmap-driven execution for Kindshot Codex improvement ru
 3. Treat `memory/codex-loop/roadmap.md` as the ordering source of truth for strategy/phase work unless the user explicitly overrides it.
 4. Treat `memory/codex-loop/session.md` as the current handoff state for branch, blocker, and next-step context.
 5. For any non-trivial feature, strategy, or pipeline behavior change, perform a design-first pass before implementation: analyze the current state, write/update the relevant design doc, and only then choose an implementation slice.
-6. Choose one hypothesis that fits the active phase, keeps the diff reversible, and is large enough to deliver an operator-visible outcome rather than a helper-only micro-step.
+6. Choose one hypothesis that fits the active phase, keeps the diff reversible, and is large enough to deliver a user-visible or operator-visible capability rather than a helper-only micro-step.
 7. Prefer work that improves data correctness, guardrails, observability, or automation discipline before adding new trading behavior.
 8. After changes and validation, update `memory/codex-loop/latest.md`.
 9. Update `memory/codex-loop/session.md` whenever branch, blocker, active hypothesis, or next step changed.
@@ -24,7 +24,9 @@ description: Maintain roadmap-driven execution for Kindshot Codex improvement ru
 
 - If `ops-backlog.md` contains active items, prefer the first active `P0`, then `P1`, then `P2` item before roadmap candidate work.
 - If the user explicitly requests batch mode, execute consecutive active items from `ops-backlog.md` using that file's batch rules; otherwise still keep feature work in single-slice batch mode.
-- For feature work, prefer a larger bounded batch that completes one coherent user/operator-facing capability, including related summary/detail/format/test/doc updates, instead of stopping after each small helper or log tweak.
+- For feature work, prefer a larger bounded batch that completes one coherent user/operator-facing capability, including related writer/reader wiring, output shape, tests, and doc updates, instead of stopping after each small helper or log tweak.
+- Do not stop a batch at intermediate plumbing states such as "index added", "helper added", "sink added", or "loader added" if the surrounding workflow still is not directly usable.
+- Treat the desired batch size as "one workflow/CLI/report path that a user or operator can actually exercise end-to-end", not "one internal component change".
 - If the requested work is a new feature or behavior change and no current design doc covers it in enough detail, stop at analysis/design for that run unless the user explicitly asks to continue into implementation after the design pass.
 - Pick the first high-confidence candidate from the active phase unless recent evidence points to a clearer defect.
 - If a task would span multiple hypotheses, split it by capability boundary, not helper boundary, and complete only the first reversible slice.
@@ -43,6 +45,7 @@ description: Maintain roadmap-driven execution for Kindshot Codex improvement ru
 - When batch mode is used, summarize the completed batch items together and record the next untouched active item.
 - For default implementation runs, prefer one concise end-of-batch report over frequent progress requests; only surface intermediate updates when work is long-running or a blocker appears.
 - Default feature batches should usually include the main behavior change plus directly dependent polish needed to make that behavior usable and reviewable in one pass.
+- When deciding whether to stop, bias toward continuing until the feature can be demonstrated as a coherent path rather than just described as newly possible.
 - Prefer Python `3.11` validation; if the local environment is mismatched, use `uv run --python 3.11 --extra dev pytest -q`.
 - When describing progress or proposing the next slice to the user, include a short progress snapshot in flat-list form so status is scannable at a glance.
 - Use this exact shape when relevant:

@@ -249,6 +249,20 @@ kindshot collect status --json --output data/collector/status.json
 kindshot collect backfill --cursor 20260310
 kindshot collect backfill --from 20260301 --to 20260313
 kindshot replay --date 20260310
+python -m kindshot --replay-runtime-date 20260310
+python -m kindshot --replay-day 20260310
+python -m kindshot --replay-day 20260310 --replay-report-out data/replay/custom/20260310.json
+python -m kindshot --replay-day-status 20260310
+python -m kindshot --replay-day-status 20260310 --replay-status-out data/replay/status/20260310.json
+python -m kindshot --replay-ops-summary
+python -m kindshot --replay-ops-summary --replay-ops-limit 20 --replay-ops-out data/replay/ops/latest.json
+python -m kindshot --replay-ops-queue-ready
+python -m kindshot --replay-ops-queue-ready --replay-ops-run-limit 10 --replay-ops-require-runtime --replay-ops-min-merged-events 2
+python -m kindshot --replay-ops-run-ready
+python -m kindshot --replay-ops-run-ready --replay-ops-run-limit 5 --replay-ops-run-out data/replay/ops/run_ready_latest.json
+python -m kindshot --replay-ops-run-ready --replay-ops-include-reported --replay-ops-require-collector --replay-ops-min-merged-events 2
+python -m kindshot --replay-ops-cycle-ready
+python -m kindshot --replay-ops-cycle-ready --replay-ops-run-limit 3 --replay-ops-continue-on-error --replay-ops-require-runtime
 ```
 
 입력 규칙:
@@ -285,6 +299,62 @@ kindshot replay --date 20260310
 - `DbSink` 클래스: 파이프라인에 훅으로 추가
 - 비동기 쓰기 (이벤트 처리 지연 방지)
 - 실시간 파이프라인 성능에 영향 없어야 함
+- 1차 bounded slice는 DB까지 바로 가지 않고, 이미 생성 중인 `price_snapshot`을 `data/runtime/price_snapshots/YYYYMMDD.jsonl`에 dual-write하는 JSONL sink부터 넣는다.
+- 이 sink는 scheduler 경로에서 비동기 파일 쓰기로 동작해 기존 run log와 별도로 replay/analysis용 runtime artifact를 남긴다.
+- 다음 bounded slice는 `MarketMonitor.snapshot`을 `data/runtime/market_context/YYYYMMDD.jsonl`에 주기적으로 적재해, 당시 시장 broad state를 replay/analysis가 직접 읽게 한다.
+- 다음 bounded slice는 이벤트 처리 시 이미 생성되는 `ContextCard`와 `ContextCardData`를 `data/runtime/context_cards/YYYYMMDD.jsonl`에 event 단위로 적재해, 당시 normalized context와 raw quote/orderbook 세부값을 같이 복원 가능하게 한다.
+- context-card runtime artifact는 최소한 `run_id`, `mode`, `event_id`, `event_kind`, `ticker`, `headline`, `bucket`, `detected_at`, `disclosed_at`, `delay_ms`, `ctx`, `raw`, `market_ctx`를 포함해 replay/analysis가 로그 재파싱 없이 즉시 join할 수 있어야 한다.
+- context-card runtime artifact는 replay가 actionable event를 바로 고를 수 있게 `quant_check_passed`, `skip_stage`, `skip_reason`도 함께 포함해야 한다.
+- `raw`에는 `adv_value_20d`, `spread_bps`, `ret_today`, `gap`, `prev_close`, `cum_volume`, `listed_shares`, `volume_turnover_rate`, `prior_volume_rate`, `intraday_value_vs_adv20d`와 함께 `quote_risk_state`, `orderbook_snapshot`을 JSON-safe 형태로 포함한다.
+- runtime artifact가 `price_snapshots`, `market_context`, `context_cards`로 늘어나면 replay/analysis가 매번 디렉터리 스캔을 중복하지 않게 `data/runtime/index.json` discovery contract를 유지한다.
+- `runtime/index.json`은 최소한 `generated_at`과 날짜별 엔트리 목록을 포함하고, 각 엔트리는 `date`, `generated_at`, `artifacts.price_snapshots`, `artifacts.market_context`, `artifacts.context_cards`의 `path`, `exists`, `recorded_at`를 가져야 한다.
+- 각 runtime sink는 자신의 JSONL append 직후 대응하는 날짜 엔트리를 upsert한다. 이 index는 additive observability 용도이며 기존 run log contract를 대체하지 않는다.
+- replay 쪽 helper는 우선 `runtime/index.json`에서 available day와 artifact path를 읽고, 필요 시 각 날짜 artifact JSONL을 직접 연다.
+- replay는 후속 bounded slice에서 `runtime/index.json` 기반 day replay 입력도 지원한다. 이 경로는 날짜별 `context_cards`를 event source로, 같은 날짜의 `price_snapshots`를 return source로 사용하고, `market_context`는 보고용 보조 metadata로 읽는다.
+- 다음 큰 batch는 `--replay-day YYYYMMDD` 통합 경로다. 이 경로는 같은 날짜의 collector manifest와 runtime artifacts를 함께 읽고, runtime `context_cards`가 있으면 그 이벤트를 우선 사용하되 부족한 경우 collector `classifications`/`news`에서 day fallback 이벤트를 구성한다.
+- 통합 day replay는 실행 전에 collector coverage와 runtime coverage를 한 번에 요약해 보여줘야 한다. 최소한 collector `status/counts`와 runtime artifact 존재 여부/record count를 함께 출력한다.
+- collector fallback 이벤트는 runtime 미시구조가 없으므로 `ContextCard()` 빈 컨텍스트와 pykrx fallback price만 사용한다. 반대로 runtime event는 `context_cards` + `price_snapshots`를 우선 사용한다.
+- 동일 headline+ticker에 대해 runtime event와 collector fallback event가 동시에 생기면 runtime event를 우선하고 collector fallback duplicate는 제외한다.
+- 통합 day replay의 다음 완성 단계는 machine-readable report artifact다. `--replay-day` 실행 결과는 summary, returns, collector/runtime coverage, merge stats를 포함한 JSON report로도 저장되어야 한다.
+- 기본 report 경로는 `data/replay/day_reports/YYYYMMDD.json`로 두고, 필요 시 CLI output override를 허용한다.
+- day report는 최소한 `date`, `source`, `generated_at`, `input.collector`, `input.runtime`, `input.merge`, `summary`, `returns`를 포함해야 하며, 운영자가 콘솔 출력 없이도 하루치 replay 상태를 다시 읽을 수 있어야 한다.
+- 다음 큰 batch는 실행 전 preflight/status 경로다. `--replay-day-status YYYYMMDD`는 collector/runtime 입력을 읽어 replay 가능성, 누락 artifact, partial collector 상태, runtime-only/collector-only fallback 여부를 warning과 health label로 보여줘야 한다.
+- day status report는 최소한 `date`, `generated_at`, `health`, `warnings`, `input.collector`, `input.runtime`, `replayability`를 포함해야 한다.
+- 대표 warning 예시는 `COLLECTOR_MANIFEST_MISSING`, `COLLECTOR_PARTIAL_STATUS`, `COLLECTOR_NEWS_MISSING`, `COLLECTOR_CLASSIFICATIONS_MISSING`, `RUNTIME_CONTEXT_CARDS_MISSING`, `RUNTIME_PRICE_SNAPSHOTS_MISSING`, `RUNTIME_MARKET_CONTEXT_MISSING`, `NO_REPLAYABLE_EVENTS`다.
+- health는 최소한 `ready`, `collector_only`, `runtime_only`, `partial_inputs`, `missing_inputs` 수준으로 요약해 운영자가 실행 전 판단할 수 있어야 한다.
+- 기본 status report 경로는 `data/replay/day_status/YYYYMMDD.json`로 두고, 필요 시 CLI output override를 허용한다.
+- 다음 큰 batch는 multi-day ops summary 경로다. `--replay-ops-summary`는 collector/runtime indices를 함께 읽어 여러 날짜의 replay readiness를 한 번에 집계하고, 기존 day status/day report가 있으면 함께 요약해야 한다.
+- ops summary는 최소한 `generated_at`, `date_count`, `health_counts`, `warning_counts`, `rows`를 포함해야 한다. 각 row는 `date`, `health`, `warning_count`, `merged_event_count`, `collector_available`, `runtime_available`, `report_available`, `buy_decisions`, `price_data_trades`를 가져야 한다.
+- 기본 ops summary 출력은 최신 날짜 우선 limit를 두되, aggregate counts는 전체 대상 날짜 기준을 유지해야 한다.
+- 기본 ops summary 경로는 `data/replay/ops/latest.json`로 두고, 필요 시 CLI output override를 허용한다.
+- 다음 큰 batch는 action-oriented ready queue/run 경로다. `--replay-ops-run-ready`는 ops summary/status를 기반으로 `health=ready`이면서 아직 day report가 없는 날짜를 최신순으로 골라 실제 `replay-day`를 실행해야 한다.
+- 기본 선택 규칙은 `ready` + `report_available == false`다. 이미 report가 있는 날짜를 다시 돌리는 override는 후속 단계로 남긴다.
+- ops run report는 최소한 `generated_at`, `candidate_count`, `selected_count`, `executed_count`, `skipped_existing_report`, `rows`를 포함해야 한다. 각 row는 `date`, `health`, `selected`, `executed`, `report_path`, `summary.buy_decisions`, `summary.price_data_trades`를 포함한다.
+- 기본 ops run report 경로는 `data/replay/ops/run_ready_latest.json`로 두고, 필요 시 CLI output override를 허용한다.
+- 다음 큰 batch는 policy-controlled queue/run 경로다. `--replay-ops-queue-ready`와 `--replay-ops-run-ready`는 같은 selection policy를 공유해야 하며, queue는 실행 전 후보군을 설명하고 run은 그 결과를 실제 실행으로 이어야 한다.
+- queue artifact 기본 경로는 `data/replay/ops/queue_ready_latest.json`로 둔다.
+- selection policy 기본값은 `health=ready`, existing report 없음, 최신순, limit 적용이다.
+- 추가 policy 플래그는 다음을 포함한다:
+  - `--replay-ops-include-reported`: 기존 day report가 있어도 rerun 후보에 포함
+  - `--replay-ops-require-runtime`: runtime artifact가 있는 날짜만 허용
+  - `--replay-ops-require-collector`: collector artifact가 있는 날짜만 허용
+  - `--replay-ops-min-merged-events N`: merged replayable event가 N개 이상인 날짜만 허용
+- queue/run은 동일한 policy evaluator를 공유하고, row마다 `selection_reason`을 남겨 왜 선택/제외됐는지 운영자가 바로 볼 수 있어야 한다.
+- queue/run artifact는 공통으로 `generated_at`, `policy`, `candidate_count`, `selected_count`, `skipped_counts`, `rows`를 포함해야 한다.
+- queue row는 최소한 `date`, `health`, `selected`, `selection_reason`, `report_available`, `collector_available`, `runtime_available`, `merged_event_count`를 제공해야 한다.
+- run row는 queue row 필드에 더해 `executed`, `report_path`, `summary`를 제공해야 한다.
+- 다음 큰 batch는 higher-level replay ops cycle 경로다. `--replay-ops-cycle-ready`는 같은 selection policy로 queue를 만들고, 선택된 날짜를 실행한 뒤, 마지막에 refreshed ops summary까지 남겨야 한다.
+- cycle artifact 기본 경로는 `data/replay/ops/cycle_ready_latest.json`로 둔다.
+- cycle은 최소한 다음 단계를 한 command 안에서 수행해야 한다:
+  - queue build
+  - selected date execution
+  - post-run ops summary refresh
+- cycle report는 최소한 `generated_at`, `policy`, `queue_path`, `run_path`, `summary_path`, `executed_count`, `failed_count`, `stopped_early`, `continue_on_error`, `rows`를 포함해야 한다.
+- cycle row는 최소한 `date`, `selected`, `executed`, `error`, `report_path`, `summary`를 포함해야 한다.
+- batch failure policy:
+  - 기본은 `stop_on_error`로 두어 첫 replay-day 실패 시 이후 날짜 실행을 멈춘다.
+  - `--replay-ops-continue-on-error`가 주어지면 실패 날짜를 기록만 하고 다음 selected 날짜를 계속 실행한다.
+- cycle은 queue/run/summary artifact를 각각 기존 contract로 유지하면서, 그 세 결과를 묶는 상위 orchestration report를 추가하는 방식으로 구현한다.
 
 ### 왜 필요한가
 

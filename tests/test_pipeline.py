@@ -534,6 +534,93 @@ async def test_market_halt_block_logged_before_llm(tmp_path):
     assert blocked[0]["skip_stage"] == SkipStage.GUARDRAIL.value
 
 
+async def test_pipeline_persists_runtime_context_card(tmp_path):
+    from kindshot.event_registry import EventRegistry
+    from kindshot.feed import KindFeed
+    from kindshot.guardrails import GuardrailResult
+    from kindshot.logger import JsonlLogger
+    from kindshot.main import _pipeline_loop
+    from kindshot.market import MarketMonitor
+    from kindshot.models import ContextCard, DecisionRecord, Action, SizeHint
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+
+    cfg = Config(
+        log_dir=tmp_path / "logs",
+        paper=True,
+        runtime_context_cards_dir=tmp_path / "data" / "runtime" / "context_cards",
+    )
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    market._kospi_change = -0.2
+    market._kosdaq_change = 0.1
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=80,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+    mock_engine = MagicMock()
+    mock_engine.decide = AsyncMock(return_value=mock_decision)
+
+    raw = _make_raw()
+    mock_feed = AsyncMock(spec=KindFeed)
+
+    async def _one_batch():
+        yield [raw]
+    mock_feed.stream = _one_batch
+
+    with patch("kindshot.main.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.main.check_guardrails") as mock_gr:
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0),
+            ContextCardData(
+                adv_value_20d=10e9,
+                spread_bps=10.0,
+                ret_today=5.0,
+                quote_risk_state=QuoteRiskState(temp_stop_yn="Y", vi_cls_code="D"),
+                orderbook_snapshot=OrderbookSnapshot(
+                    ask_price1=50_100.0,
+                    bid_price1=49_900.0,
+                    ask_size1=90,
+                    bid_size1=120,
+                    total_ask_size=2000,
+                    total_bid_size=2400,
+                    spread_bps=40.0,
+                ),
+            ),
+        )
+        mock_gr.return_value = GuardrailResult(passed=True)
+
+        await asyncio.wait_for(
+            _pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
+            timeout=1.0,
+        )
+
+    files = list((tmp_path / "data" / "runtime" / "context_cards").glob("*.jsonl"))
+    assert len(files) == 1
+    rows = [json.loads(line) for line in files[0].read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["type"] == "context_card"
+    assert rows[0]["ticker"] == "005930"
+    assert rows[0]["bucket"] == "POS_STRONG"
+    assert rows[0]["quant_check_passed"] is True
+    assert rows[0]["ctx"]["ret_today"] == 5.0
+    assert rows[0]["raw"]["quote_risk_state"]["vi_cls_code"] == "D"
+    assert rows[0]["raw"]["orderbook_snapshot"]["total_bid_size"] == 2400
+    mock_engine.decide.assert_awaited_once()
+
+
 async def test_wait_or_stop_interrupts_timeout():
     """_wait_or_stop should return immediately when stop_event is set."""
     import time

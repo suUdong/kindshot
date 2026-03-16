@@ -5,14 +5,18 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass
+from dataclasses import asdict, is_dataclass
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 from kindshot.config import Config
 from kindshot.kis_client import KisClient
 from kindshot.models import ContextCard
+from kindshot.runtime_artifacts import update_runtime_artifact_index
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,9 @@ class ContextCardData:
     quote_risk_state: object = None
     orderbook_snapshot: object = None
     sector: str = ""
+
+
+_KST = timezone(timedelta(hours=9))
 
 
 def configure_cache(ttl_s: int, max_size: int) -> None:
@@ -211,3 +218,89 @@ async def build_context_card(
         orderbook_snapshot=price_info.orderbook if kis and price_info else None,
     )
     return card, raw
+
+
+def _runtime_context_card_path(config: Config, ts: datetime) -> Path:
+    dt = ts.astimezone(_KST).strftime("%Y%m%d")
+    return config.runtime_context_cards_dir / f"{dt}.jsonl"
+
+
+def _json_safe_value(value: object) -> object:
+    if value is None:
+        return None
+    if is_dataclass(value):
+        return asdict(value)
+    return value
+
+
+async def append_runtime_context_card(
+    config: Config,
+    *,
+    run_id: str,
+    mode: str,
+    event_id: str,
+    event_kind: str,
+    ticker: str,
+    corp_name: str,
+    headline: str,
+    bucket: str,
+    detected_at: datetime,
+    disclosed_at: Optional[datetime],
+    delay_ms: Optional[int],
+    quant_check_passed: Optional[bool],
+    skip_stage: Optional[str],
+    skip_reason: Optional[str],
+    ctx: ContextCard,
+    raw: ContextCardData,
+    market_ctx: object,
+) -> None:
+    record = {
+        "type": "context_card",
+        "run_id": run_id,
+        "mode": mode,
+        "event_id": event_id,
+        "event_kind": event_kind,
+        "ticker": ticker,
+        "corp_name": corp_name,
+        "headline": headline,
+        "bucket": bucket,
+        "detected_at": detected_at.isoformat(),
+        "disclosed_at": disclosed_at.isoformat() if disclosed_at is not None else None,
+        "delay_ms": delay_ms,
+        "quant_check_passed": quant_check_passed,
+        "skip_stage": skip_stage,
+        "skip_reason": skip_reason,
+        "ctx": ctx.model_dump(mode="json"),
+        "raw": {
+            "adv_value_20d": raw.adv_value_20d,
+            "spread_bps": raw.spread_bps,
+            "ret_today": raw.ret_today,
+            "gap": raw.gap,
+            "prev_close": raw.prev_close,
+            "cum_volume": raw.cum_volume,
+            "listed_shares": raw.listed_shares,
+            "volume_turnover_rate": raw.volume_turnover_rate,
+            "prior_volume_rate": raw.prior_volume_rate,
+            "intraday_value_vs_adv20d": raw.intraday_value_vs_adv20d,
+            "quote_risk_state": _json_safe_value(raw.quote_risk_state),
+            "orderbook_snapshot": _json_safe_value(raw.orderbook_snapshot),
+            "sector": raw.sector,
+        },
+        "market_ctx": market_ctx.model_dump(mode="json") if hasattr(market_ctx, "model_dump") else market_ctx,
+    }
+    path = _runtime_context_card_path(config, detected_at)
+    line = json.dumps(record, ensure_ascii=False)
+
+    def _write() -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+    await asyncio.to_thread(_write)
+    await update_runtime_artifact_index(
+        config,
+        date=detected_at.astimezone(_KST).strftime("%Y%m%d"),
+        artifact="context_cards",
+        path=path,
+        recorded_at=detected_at,
+    )

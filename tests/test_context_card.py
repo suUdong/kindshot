@@ -1,5 +1,7 @@
 """Tests for context_card pykrx cache behavior and gap calculation."""
 
+import json
+from datetime import datetime, timezone
 import time
 from unittest.mock import AsyncMock, MagicMock
 
@@ -7,6 +9,7 @@ import kindshot.context_card as cc
 from kindshot.config import Config
 from kindshot.context_card import ContextCardData
 from kindshot.kis_client import OrderbookSnapshot, PriceInfo, QuoteRiskState
+from kindshot.models import ContextCard, MarketContext
 
 
 async def test_pykrx_features_cache_hit(monkeypatch):
@@ -243,3 +246,61 @@ def test_context_card_data_defaults():
 
     assert raw.adv_value_20d is None
     assert raw.sector == ""
+
+
+async def test_append_runtime_context_card_writes_jsonl(tmp_path):
+    cfg = Config(
+        runtime_context_cards_dir=tmp_path / "data" / "runtime" / "context_cards",
+        runtime_index_path=tmp_path / "data" / "runtime" / "index.json",
+    )
+    detected_at = datetime(2026, 3, 16, 0, 15, tzinfo=timezone.utc)
+    ctx = ContextCard(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0)
+    raw = ContextCardData(
+        adv_value_20d=10e9,
+        spread_bps=10.0,
+        ret_today=5.0,
+        quote_risk_state=QuoteRiskState(temp_stop_yn="Y", vi_cls_code="D"),
+        orderbook_snapshot=OrderbookSnapshot(
+            ask_price1=50_100.0,
+            bid_price1=49_900.0,
+            ask_size1=90,
+            bid_size1=120,
+            total_ask_size=2000,
+            total_bid_size=2400,
+            spread_bps=40.0,
+        ),
+    )
+
+    await cc.append_runtime_context_card(
+        cfg,
+        run_id="run1",
+        mode="paper",
+        event_id="evt1",
+        event_kind="ORIGINAL",
+        ticker="005930",
+        corp_name="삼성전자",
+        headline="공급계약 체결",
+        bucket="POS_STRONG",
+        detected_at=detected_at,
+        disclosed_at=None,
+        delay_ms=1234,
+        quant_check_passed=True,
+        skip_stage=None,
+        skip_reason=None,
+        ctx=ctx,
+        raw=raw,
+        market_ctx=MarketContext(kospi_change_pct=-0.5, kosdaq_change_pct=0.3),
+    )
+
+    files = list((tmp_path / "data" / "runtime" / "context_cards").glob("*.jsonl"))
+    assert len(files) == 1
+    rows = [json.loads(line) for line in files[0].read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["type"] == "context_card"
+    assert rows[0]["event_id"] == "evt1"
+    assert rows[0]["quant_check_passed"] is True
+    assert rows[0]["ctx"]["spread_bps"] == 10.0
+    assert rows[0]["raw"]["quote_risk_state"]["temp_stop_yn"] == "Y"
+    assert rows[0]["raw"]["orderbook_snapshot"]["ask_price1"] == 50100.0
+
+    index_payload = json.loads((tmp_path / "data" / "runtime" / "index.json").read_text(encoding="utf-8"))
+    assert index_payload["entries"][0]["artifacts"]["context_cards"]["exists"] is True

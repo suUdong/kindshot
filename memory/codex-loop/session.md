@@ -5,7 +5,7 @@
 - Branch: `codex/roadmap-loop-foundation`
 - Phase: `Historical Collection Foundation`
 - Focus: Return to the collector foundation now that the immediate runtime ops-backlog slices are cleared.
-- Active hypothesis: collector discovery contract만으로는 replay 연결이 끝나지 않으므로, replay 쪽도 manifest index와 day manifest를 정식 helper로 읽어 collector artifact를 직접 소비할 수 있어야 한다.
+- Active hypothesis: replay 운영 자동화를 위해 queue, run, summary를 한 번에 수행하는 higher-level ops cycle과 batch failure policy가 필요하다.
 
 ## Environment
 
@@ -17,13 +17,13 @@
 
 ## Last Completed Step
 
-- Added replay-side helpers to list collected dates from manifest `index.json` and to load a day manifest directly from the collector manifests directory.
-- Updated replay tests so collector artifact discovery is covered on the replay side instead of only the collector side.
+- Added `python -m kindshot --replay-ops-cycle-ready`, which builds the ready queue, executes selected dates, and refreshes ops summary in one orchestration command.
+- Added batch failure policy via `--replay-ops-continue-on-error` and persisted cycle output under `data/replay/ops/cycle_ready_latest.json`, while reusing the existing queue/run/summary artifact contracts.
 - Compile-checked `src/` and `tests/`; pytest remains unavailable in this environment.
 
 ## Next Intended Step
 
-- Replay can now read collector artifacts; the next larger batch can either use those helpers for a collector-backed replay path or move on to runtime ingest persistence.
+- Continue the same capability-sized approach with the next slice: add scheduled-automation-friendly observability on top of replay ops cycle, such as stale queue/status detection, partial-cycle health labels, or retry/rerun policies for failed dates.
 
 ## Notes
 

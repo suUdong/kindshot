@@ -19,7 +19,12 @@ import aiohttp
 
 from kindshot.bucket import classify
 from kindshot.config import Config, load_config
-from kindshot.context_card import ContextCardData, build_context_card, configure_cache as configure_context_card_cache
+from kindshot.context_card import (
+    ContextCardData,
+    append_runtime_context_card,
+    build_context_card,
+    configure_cache as configure_context_card_cache,
+)
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import KindFeed, KisFeed, RawDisclosure
@@ -113,6 +118,46 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--paper", action="store_true", help="Full pipeline (incl. LLM) but no order execution")
     p.add_argument("--replay", type=str, default=None, metavar="JSONL_PATH",
                    help="Replay mode: re-run LLM decisions on logged events")
+    p.add_argument("--replay-runtime-date", type=str, default=None, metavar="YYYYMMDD",
+                   help="Replay mode: re-run decisions from runtime artifacts for a KST date")
+    p.add_argument("--replay-day", type=str, default=None, metavar="YYYYMMDD",
+                   help="Replay mode: re-run decisions from the combined collector/runtime day bundle")
+    p.add_argument("--replay-report-out", type=str, default=None, metavar="JSON_PATH",
+                   help="Optional path to write a machine-readable replay report JSON")
+    p.add_argument("--replay-day-status", type=str, default=None, metavar="YYYYMMDD",
+                   help="Replay mode: inspect combined collector/runtime day inputs before execution")
+    p.add_argument("--replay-status-out", type=str, default=None, metavar="JSON_PATH",
+                   help="Optional path to write a machine-readable replay day status JSON")
+    p.add_argument("--replay-ops-summary", action="store_true",
+                   help="Replay mode: summarize replay readiness across multiple dates")
+    p.add_argument("--replay-ops-limit", type=int, default=10, metavar="N",
+                   help="Replay ops summary: number of latest dates to include in printed rows")
+    p.add_argument("--replay-ops-out", type=str, default=None, metavar="JSON_PATH",
+                   help="Optional path to write a machine-readable replay ops summary JSON")
+    p.add_argument("--replay-ops-queue-ready", action="store_true",
+                   help="Replay mode: build a policy-controlled ready queue without executing replay-day")
+    p.add_argument("--replay-ops-run-ready", action="store_true",
+                   help="Replay mode: execute replay-day for ready dates without existing day reports")
+    p.add_argument("--replay-ops-cycle-ready", action="store_true",
+                   help="Replay mode: queue, execute, and summarize ready dates in one batch")
+    p.add_argument("--replay-ops-run-limit", type=int, default=5, metavar="N",
+                   help="Replay ops queue/run: max number of ready dates to select")
+    p.add_argument("--replay-ops-include-reported", action="store_true",
+                   help="Replay ops queue/run: include dates that already have persisted day reports")
+    p.add_argument("--replay-ops-require-runtime", action="store_true",
+                   help="Replay ops queue/run: require runtime artifacts to be present")
+    p.add_argument("--replay-ops-require-collector", action="store_true",
+                   help="Replay ops queue/run: require collector artifacts to be present")
+    p.add_argument("--replay-ops-min-merged-events", type=int, default=1, metavar="N",
+                   help="Replay ops queue/run: minimum merged replayable events required for selection")
+    p.add_argument("--replay-ops-queue-out", type=str, default=None, metavar="JSON_PATH",
+                   help="Optional path to write a machine-readable replay ops queue JSON")
+    p.add_argument("--replay-ops-run-out", type=str, default=None, metavar="JSON_PATH",
+                   help="Optional path to write a machine-readable replay ops run JSON")
+    p.add_argument("--replay-ops-cycle-out", type=str, default=None, metavar="JSON_PATH",
+                   help="Optional path to write a machine-readable replay ops cycle JSON")
+    p.add_argument("--replay-ops-continue-on-error", action="store_true",
+                   help="Replay ops cycle: continue executing later selected dates after a replay-day failure")
     return p.parse_args()
 
 
@@ -289,6 +334,28 @@ async def _process_registered_event(
         ctx=ctx,
         market_ctx=market.snapshot,
     )
+
+    if ctx is not None:
+        await append_runtime_context_card(
+            config,
+            run_id=run_id,
+            mode=mode,
+            event_id=processed.event_id,
+            event_kind=processed.event_kind.value,
+            ticker=raw.ticker,
+            corp_name=raw.corp_name,
+            headline=raw.title,
+            bucket=bucket_result.bucket.value,
+            detected_at=detected_at,
+            disclosed_at=disclosed_at,
+            delay_ms=delay_ms,
+            quant_check_passed=quant_passed,
+            skip_stage=event_rec.skip_stage.value if event_rec.skip_stage else None,
+            skip_reason=event_rec.skip_reason,
+            ctx=ctx,
+            raw=raw_data,
+            market_ctx=event_rec.market_ctx,
+        )
 
     # Schedule price tracking if needed
     if should_track_price:
@@ -684,6 +751,7 @@ async def run() -> None:
                 try:
                     guardrail_state.check_daily_reset()
                     await market.update()
+                    await market.append_runtime_snapshot()
                 except Exception:
                     logger.exception("Market monitor error")
                 await _wait_or_stop(stop_event, 60)

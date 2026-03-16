@@ -1,6 +1,7 @@
 """Tests for price snapshot scheduling."""
 
 import asyncio
+import json
 import time
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -132,6 +133,43 @@ async def test_live_mode_keeps_unadjusted_returns():
 
     t1_record = log.write.await_args_list[1].args[0]
     assert t1_record.ret_long_vs_t0 == 0.0
+
+
+async def test_scheduler_persists_runtime_price_snapshots(tmp_path):
+    cfg = Config(
+        runtime_price_snapshots_dir=tmp_path / "data" / "runtime" / "price_snapshots",
+        runtime_index_path=tmp_path / "data" / "runtime" / "index.json",
+    )
+    fetcher = PriceFetcher(kis=None)
+    log = MagicMock()
+    log.write = AsyncMock()
+    scheduler = SnapshotScheduler(cfg, fetcher, log)
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(px=10000.0, open_px=10000.0, spread_bps=20.0, cum_value=1_000_000.0, fetch_latency_ms=10))
+
+    scheduler.schedule_t0(
+        event_id="evt1",
+        ticker="005930",
+        t0_basis=T0Basis.DECIDED_AT,
+        t0_ts=datetime.now(timezone.utc),
+        run_id="run1",
+        mode="paper",
+        is_buy_decision=True,
+    )
+
+    snap = sorted([s for s in scheduler._heap if s.horizon == "t0"], key=lambda s: s.fire_at)[0]
+    await scheduler._fire(snap)
+
+    files = list((tmp_path / "data" / "runtime" / "price_snapshots").glob("*.jsonl"))
+    assert len(files) == 1
+    rows = [json.loads(line) for line in files[0].read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["type"] == "price_snapshot"
+    assert rows[0]["event_id"] == "evt1"
+    assert rows[0]["horizon"] == "t0"
+    assert rows[0]["px"] == 10000.0
+
+    index_payload = json.loads((tmp_path / "data" / "runtime" / "index.json").read_text(encoding="utf-8"))
+    assert index_payload["entries"][0]["date"]
+    assert index_payload["entries"][0]["artifacts"]["price_snapshots"]["exists"] is True
 
 
 async def test_flush_close_on_shutdown_fires_pending_close_after_cutoff():

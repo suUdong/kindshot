@@ -1,6 +1,7 @@
 """Tests for MarketMonitor with KOSPI/KOSDAQ/VKOSPI."""
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -136,3 +137,38 @@ async def test_snapshot_returns_market_context():
     monitor = MarketMonitor(_cfg())
     snap = monitor.snapshot
     assert isinstance(snap, MarketContext)
+
+
+async def test_append_runtime_snapshot_writes_jsonl(tmp_path):
+    mock_kis = AsyncMock()
+    mock_kis.get_index_info = AsyncMock(
+        side_effect=lambda iscd: IndexInfo(
+            iscd=iscd,
+            change_pct=-0.5 if iscd == "0001" else 0.3,
+            fetch_latency_ms=10,
+            up_issue_count=500 if iscd == "0001" else 700,
+            down_issue_count=400 if iscd == "0001" else 350,
+        )
+    )
+    monitor = MarketMonitor(
+        _cfg(
+            runtime_market_context_dir=tmp_path / "data" / "runtime" / "market_context",
+            runtime_index_path=tmp_path / "data" / "runtime" / "index.json",
+        ),
+        kis=mock_kis,
+    )
+
+    with patch("kindshot.market._fetch_vkospi", new_callable=AsyncMock, return_value=18.5):
+        await monitor.update()
+    await monitor.append_runtime_snapshot()
+
+    files = list((tmp_path / "data" / "runtime" / "market_context").glob("*.jsonl"))
+    assert len(files) == 1
+    rows = [json.loads(line) for line in files[0].read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["type"] == "market_context"
+    assert rows[0]["kospi_change_pct"] == -0.5
+    assert rows[0]["kosdaq_change_pct"] == 0.3
+    assert rows[0]["vkospi"] == 18.5
+
+    index_payload = json.loads((tmp_path / "data" / "runtime" / "index.json").read_text(encoding="utf-8"))
+    assert index_payload["entries"][0]["artifacts"]["market_context"]["exists"] is True
