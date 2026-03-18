@@ -157,6 +157,7 @@ def check_guardrails(
     quote_liquidation_trade: Optional[bool] = None,
     top_ask_notional: Optional[float] = None,
     decision_action: Optional[Action] = None,
+    decision_confidence: Optional[int] = None,
     **kwargs: object,
 ) -> GuardrailResult:
     """Final safety checks before order execution."""
@@ -192,7 +193,23 @@ def check_guardrails(
     if quote_liquidation_trade is True:
         return GuardrailResult(passed=False, reason="LIQUIDATION_TRADE")
 
-    # 5. Chase-buy prevention: 당일 이미 크게 상승한 종목은 BUY 차단
+    # 5a. Minimum confidence for BUY
+    if decision_action == Action.BUY and decision_confidence is not None:
+        if decision_confidence < config.min_buy_confidence:
+            return GuardrailResult(passed=False, reason="LOW_CONFIDENCE")
+
+    # 5b. No BUY after cutoff time (장 마감 임박 시 진입 차단)
+    if decision_action == Action.BUY:
+        now_kst = datetime.now(_KST)
+        cutoff = now_kst.replace(
+            hour=config.no_buy_after_kst_hour,
+            minute=config.no_buy_after_kst_minute,
+            second=0, microsecond=0,
+        )
+        if now_kst >= cutoff:
+            return GuardrailResult(passed=False, reason="MARKET_CLOSE_CUTOFF")
+
+    # 5c. Chase-buy prevention: 당일 이미 크게 상승한 종목은 BUY 차단
     if decision_action == Action.BUY and ret_today is not None:
         if ret_today > config.chase_buy_pct:
             return GuardrailResult(passed=False, reason="CHASE_BUY_BLOCKED")

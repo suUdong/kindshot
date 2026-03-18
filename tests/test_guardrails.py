@@ -376,3 +376,32 @@ def test_chase_buy_passes_under_threshold():
         decision_action=Action.BUY,
     )
     assert r.passed is True
+
+
+def test_low_confidence_blocked():
+    """confidence < 70 → LOW_CONFIDENCE."""
+    r = check_guardrails(
+        ticker="005930",
+        config=_cfg(spread_check_enabled=True, min_buy_confidence=70),
+        spread_bps=10.0,
+        adv_value_20d=10e9,
+        ret_today=2.0,
+        decision_action=Action.BUY,
+        decision_confidence=65,
+    )
+    assert r.passed is False
+    assert r.reason == "LOW_CONFIDENCE"
+
+
+def test_high_confidence_passes():
+    """confidence >= 70 → 통과."""
+    r = check_guardrails(
+        ticker="005930",
+        config=_cfg(spread_check_enabled=True, min_buy_confidence=70),
+        spread_bps=10.0,
+        adv_value_20d=10e9,
+        ret_today=2.0,
+        decision_action=Action.BUY,
+        decision_confidence=75,
+    )
+    assert r.passed is True

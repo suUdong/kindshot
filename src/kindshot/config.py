@@ -67,6 +67,9 @@ class Config:
     spread_check_enabled: bool = field(default_factory=lambda: _env_bool("SPREAD_CHECK_ENABLED", True))
     min_intraday_value_vs_adv20d: float = field(default_factory=lambda: _env_float("MIN_INTRADAY_VALUE_VS_ADV20D", 0.01))
     chase_buy_pct: float = field(default_factory=lambda: _env_float("CHASE_BUY_PCT", 5.0))  # 당일 5%+ 상승 시 BUY 차단
+    min_buy_confidence: int = field(default_factory=lambda: _env_int("MIN_BUY_CONFIDENCE", 70))  # BUY 최소 confidence
+    no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_HOUR", 15))  # 15시 이후 BUY 차단
+    no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_MINUTE", 0))  # 15:00 이후 차단
     quant_fail_sample_rate: float = 0.10
     daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 3_000_000))  # won
     max_positions: int = field(default_factory=lambda: _env_int("MAX_POSITIONS", 5))

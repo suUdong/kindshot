@@ -462,6 +462,7 @@ async def _execute_bucket_path(
         orderbook_snapshot=raw_data.orderbook_snapshot if ctx else None,
         intraday_value_vs_adv20d=raw_data.intraday_value_vs_adv20d if ctx else None,
         decision_action=decision.action,
+        decision_confidence=decision.confidence,
     )
     if not gr.passed:
         event_rec.skip_stage = SkipStage.GUARDRAIL
