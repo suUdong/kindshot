@@ -76,19 +76,24 @@ ctx_micro: {ctx_micro}{market_line}
 constraints: max_pos=10% no_overnight=true daily_loss_remaining=85%
 
 strategy_guide:
-- 수주·공급계약: 매출 대비 10%+ → BUY(80+), 5-10% → BUY(70), <5% → SKIP
-- 바이오/제약 FDA허가·임상3상 성공 → BUY(85+), 임상1-2상 결과 → BUY(70)
+- 수주·공급계약: 매출 대비 10%+ → BUY(85+,L), 5-10% → BUY(75,M), <5% → SKIP
+- 바이오/제약 FDA허가·임상3상 성공 → BUY(90,L), 임상1-2상 결과 → BUY(75,M)
 - 유증·CB발행 → SKIP (희석 리스크)
-- 자사주 소각·취득 → BUY(70-75), 주주환원 호재
-- 대형 M&A·합작법인 → BUY(70), 뉴스 초기 반응 후 차익실현 주의
-- 목표가 상향 리포트 → BUY(65-70), 이미 시장 반영 가능
+- 자사주 소각·취득 → BUY(75,M), 주주환원 호재
+- 대형 M&A·합작법인 → BUY(78,M), 뉴스 초기 반응 후 차익실현 주의
 - 이미 당일 5%+ 상승(ret_today>5) → SKIP, 추격 매수 위험
-- spread_bps>30 → size_hint=S, 슬리피지 주의
-- confidence는 실제 수익 확률 반영: 85+=매우 확신, 70-80=보통, <65=SKIP 권장
+- spread_bps>30 → size_hint 한 단계 낮춤 (L→M, M→S)
 - 같은 종목 반복 뉴스(중복 보도) → 처음만 BUY, 후속은 SKIP
-- 시장 하락장(KOSPI<-2%) → confidence -5, size_hint 한 단계 낮춤 (L→M, M→S)
+- 시장 하락장(KOSPI<-2%) → confidence -5, size_hint 한 단계 낮춤
 
-task: decide BUY or SKIP. respond with ONLY a JSON object.
+confidence & size_hint 매핑 (반드시 준수):
+- 90-100: 확실한 촉매(FDA승인, 대형수주, 사상최대실적) → size_hint=L
+- 80-89: 강한 촉매(임상성공, 공급계약, 기술수출) → size_hint=L
+- 75-79: 보통 촉매(M&A, 자사주, 중형계약) → size_hint=M
+- 70-74: 약한 촉매(소규모 계약, 모멘텀 의존) → size_hint=S
+- <70: 촉매 불충분 → SKIP
+
+task: decide BUY or SKIP. respond with ONLY a JSON object (no markdown, no code fences).
 example: {{"action":"BUY","confidence":85,"size_hint":"L","reason":"FDA 허가 획득, 바이오 강한 촉매"}}
 fields: action="BUY" or "SKIP", confidence=0-100, size_hint="S" or "M" or "L", reason=max 100 chars"""
 
@@ -100,6 +105,10 @@ def _parse_llm_response(raw: str) -> Optional[dict]:
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     text = text.strip()
+
+    # LLM이 {} 없이 bare key-value JSON 반환하는 경우 보정
+    if text and not text.startswith("{") and text.startswith('"'):
+        text = "{" + text + "}"
 
     def _load_json_candidate(candidate: str) -> Optional[dict]:
         try:
