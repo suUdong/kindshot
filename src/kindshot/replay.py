@@ -395,7 +395,11 @@ def _build_replay_day_status(dt: str, *, collector_bundle: Optional[dict[str, An
     if collector_summary.get("available") and runtime_summary.get("available"):
         health = "partial_inputs" if warnings else "ready"
     elif collector_summary.get("available"):
-        health = "collector_only" if merged_events else "missing_inputs"
+        collector_status = str(collector_summary.get("status", "")).strip()
+        if collector_status and collector_status != "complete":
+            health = "partial_inputs"
+        else:
+            health = "collector_only" if merged_events else "missing_inputs"
     elif runtime_summary.get("available"):
         health = "runtime_only" if merged_events else "missing_inputs"
     else:

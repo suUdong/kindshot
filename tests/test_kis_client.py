@@ -8,11 +8,12 @@ from aioresponses import CallbackResult, aioresponses
 import aiohttp
 
 from kindshot.config import Config
-from kindshot.kis_client import BASE_URL_PAPER, IndexInfo, KisClient, NewsDisclosure, NewsDisclosureFetchResult, OrderbookSnapshot, QuoteRiskState
+from kindshot.kis_client import BASE_URL_PAPER, IndexDailyInfo, IndexInfo, KisClient, NewsDisclosure, NewsDisclosureFetchResult, OrderbookSnapshot, QuoteRiskState
 
 PRICE_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/inquire-price\?.*")
 ORDERBOOK_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn\?.*")
 INDEX_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/inquire-index-price\?.*")
+INDEX_DAILY_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/inquire-index-daily-price\?.*")
 NEWS_URL = re.compile(rf"^{re.escape(BASE_URL_PAPER)}/uapi/domestic-stock/v1/quotations/news-title(?:\?.*)?$")
 
 
@@ -220,6 +221,78 @@ async def test_get_index_info_returns_typed_result():
     assert result.down_issue_count == 540
     assert result.flat_issue_count == 45
     assert result.fetch_latency_ms >= 0
+
+
+async def test_get_index_daily_info_returns_exact_date_row():
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(
+                INDEX_DAILY_URL,
+                payload={
+                    "output2": [
+                        {
+                            "stck_bsop_date": "20260312",
+                            "bstp_nmix_prpr": "510.0",
+                            "bstp_nmix_oprc": "500.0",
+                            "bstp_nmix_hgpr": "515.0",
+                            "bstp_nmix_lwpr": "495.0",
+                            "acml_vol": "1200",
+                            "acml_tr_pbmn": "45000",
+                        },
+                        {
+                            "stck_bsop_date": "20260313",
+                            "bstp_nmix_prpr": "520.0",
+                            "bstp_nmix_oprc": "511.0",
+                            "bstp_nmix_hgpr": "525.0",
+                            "bstp_nmix_lwpr": "509.0",
+                            "acml_vol": "1300",
+                            "acml_tr_pbmn": "47000",
+                        },
+                    ]
+                },
+            )
+            result = await kis.get_index_daily_info("0001", "20260313")
+
+    assert isinstance(result, IndexDailyInfo)
+    assert result is not None
+    assert result.iscd == "0001"
+    assert result.date == "20260313"
+    assert result.close == 520.0
+    assert result.open_px == 511.0
+    assert result.high == 525.0
+    assert result.low == 509.0
+    assert result.volume == 1300.0
+    assert result.value == 47000.0
+
+
+async def test_get_index_daily_info_returns_none_when_exact_date_missing():
+    cfg = _cfg()
+    async with aiohttp.ClientSession() as session:
+        kis = KisClient(cfg, session)
+        kis._last_request = 0.0
+        with aioresponses() as m:
+            m.post(f"{BASE_URL_PAPER}/oauth2/tokenP", payload=_token_response())
+            m.get(
+                INDEX_DAILY_URL,
+                payload={
+                    "output2": [
+                        {
+                            "stck_bsop_date": "20260312",
+                            "bstp_nmix_prpr": "510.0",
+                            "bstp_nmix_oprc": "500.0",
+                            "bstp_nmix_hgpr": "515.0",
+                            "bstp_nmix_lwpr": "495.0",
+                        }
+                    ]
+                },
+            )
+            result = await kis.get_index_daily_info("0001", "20260313")
+
+    assert result is None
 
 
 async def test_token_failure_returns_none():

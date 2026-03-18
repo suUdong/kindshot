@@ -191,9 +191,17 @@
 - skip된 날짜도 `collection_log`에 `status="skipped"`로 남겨서 재개 판단과 운영 리뷰에서 구분 가능하게 한다.
 - `skipped` 레코드에는 가능한 한 `skip_reason`을 함께 남겨서 "already_complete" 같은 운영 원인을 구분 가능하게 한다.
 - skip된 완료 날짜를 지나면 `cursor_date`도 다음 과거 날짜로 전진시켜, 재실행 시 같은 완료 구간을 계속 다시 훑지 않게 한다.
+- 기존 로그에 남은 오래된 `complete` 표시는 manifest와 최소 데이터 완결성으로 다시 검증해야 한다. manifest가 없거나 거래일 필수 카운트가 0이면 그 날짜는 trusted complete로 보지 않고 재처리한다.
+- 휴일/비거래일은 과거에 잘못 `complete`가 찍혔더라도 trusted complete로 취급하지 않는다. 현재 정책이 `skipped non_trading_day`이므로, 재실행 시 휴일 기록은 이 상태로 정규화해야 한다.
 - `partial` 날짜는 `last_completed_date`로 승격하지 않고 `cursor_date`도 그 날짜에 남겨서, 다음 기본 실행에서 자동 재시도되게 한다.
 - backfill 결과 요약과 CLI 완료 로그는 `processed` 안에서 `complete`와 `partial`을 따로 구분해 보여주어, 운영자가 실제 완료분과 재시도 필요분을 즉시 구분할 수 있어야 한다.
 - collector 내부 helper는 `collection_log`를 한 번만 읽고 최신 per-date outcome과 현재 `partial/error` backlog를 함께 제공해, resume 로직과 운영 리뷰가 JSONL 파싱을 중복 구현하지 않게 한다.
+- 휴일/비거래일은 `skipped`로 처리해야 한다. 최소 1차 구현은 대표 거래 종목의 일봉 존재 여부로 비거래일을 판정하고 `skip_reason="non_trading_day"`를 남긴다.
+- 거래일인데 `daily_prices` 또는 `daily_index`가 0건이면 `complete`로 승격하면 안 된다. 이런 날짜는 `partial`로 남기고 `status_reason`/`skip_reason`에 누락 원인을 함께 기록해야 한다. 예: `daily_prices_missing`, `daily_index_missing`
+- 예외: 해당 날짜에 뉴스/분류 결과가 0건이면 `daily_index_missing`만으로 backlog를 만들지 않는다. 무뉴스 날짜는 replay/strategy 관점에서 핵심 입력이 아니므로, index 누락 하나 때문에 collect cursor가 멈추지 않아야 한다.
+- pykrx index fetch는 라이브러리 기본 이름 처리 차이로 실패할 수 있으므로, collector는 이름 표기 부가동작 없이 OHLCV 원본만 안전하게 수집해야 한다.
+- 국내 지수 일봉은 pykrx 단일 의존으로 두지 않는다. 공식 KIS `inquire-index-daily-price` endpoint를 1차 소스로 쓰고, exact date row가 없을 때만 pykrx를 fallback으로 사용한다.
+- KIS index daily 응답은 window 형태로 내려올 수 있으므로, collector는 응답 row 중 `stck_bsop_date == target_date` exact match만 채택해야 한다.
 
 ### Collector 상태 파일
 
@@ -236,6 +244,8 @@
 - `partial` 날짜는 manifest만 읽어도 왜 불완전한지 알 수 있게 `status_reason`을 채워야 한다. 현재 1차 값은 `pagination_truncated`다.
 - `index.json`은 최소한 `generated_at`과 날짜별 엔트리 목록을 포함해야 하며, 각 엔트리는 `date`, `status`, `has_partial_data`, `manifest_path`, `generated_at`를 가져야 한다.
 - replay 쪽 helper는 우선 `index.json`에서 available date를 읽고, 필요 시 각 날짜 manifest를 열어 dataset path와 status metadata를 해석해야 한다.
+- 운영 알림 요약은 날짜 목록만이 아니라 `daily_index_missing`, `non_trading_day` 같은 per-date reason도 함께 포함해야 한다. 그래야 텔레그램만 보고도 재시도와 무시를 구분할 수 있다.
+- 재실행/재수집 판단은 "이번 실행에서 새로 append된 수"가 아니라 "실제 저장소에 남아 있는 총 레코드 수"를 기준으로 해야 한다. 중복 방지 append가 0이어도 기존 파일에 데이터가 있으면 `missing`으로 오판하면 안 된다.
 
 ### CLI
 ```

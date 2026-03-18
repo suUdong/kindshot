@@ -15,6 +15,7 @@ from kindshot.models import MarketContext
 from kindshot.runtime_artifacts import update_runtime_artifact_index
 
 logger = logging.getLogger(__name__)
+_KST = timezone(timedelta(hours=9))
 
 
 async def _fetch_vkospi() -> Optional[float]:
@@ -92,7 +93,7 @@ class MarketMonitor:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
 
-        await asyncio.to_thread(_write)
+        _write()
         await update_runtime_artifact_index(
             self._config,
             date=ts.astimezone(_KST).strftime("%Y%m%d"),

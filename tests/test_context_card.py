@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 import time
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 import kindshot.context_card as cc
 from kindshot.config import Config
 from kindshot.context_card import ContextCardData
@@ -287,6 +289,10 @@ async def test_append_runtime_context_card_writes_jsonl(tmp_path):
         quant_check_passed=True,
         skip_stage=None,
         skip_reason=None,
+        promotion_original_event_id="evt0",
+        promotion_original_bucket="UNKNOWN",
+        promotion_confidence=91,
+        promotion_policy="paper_only_conf85_strong_only",
         ctx=ctx,
         raw=raw,
         market_ctx=MarketContext(kospi_change_pct=-0.5, kosdaq_change_pct=0.3),
@@ -301,6 +307,46 @@ async def test_append_runtime_context_card_writes_jsonl(tmp_path):
     assert rows[0]["ctx"]["spread_bps"] == 10.0
     assert rows[0]["raw"]["quote_risk_state"]["temp_stop_yn"] == "Y"
     assert rows[0]["raw"]["orderbook_snapshot"]["ask_price1"] == 50100.0
+    assert rows[0]["promotion_original_event_id"] == "evt0"
+    assert rows[0]["promotion_original_bucket"] == "UNKNOWN"
 
     index_payload = json.loads((tmp_path / "data" / "runtime" / "index.json").read_text(encoding="utf-8"))
     assert index_payload["entries"][0]["artifacts"]["context_cards"]["exists"] is True
+
+
+async def test_append_runtime_context_card_normalizes_numpy_scalar_market_ctx(tmp_path):
+    np = pytest.importorskip("numpy")
+    cfg = Config(
+        runtime_context_cards_dir=tmp_path / "data" / "runtime" / "context_cards",
+        runtime_index_path=tmp_path / "data" / "runtime" / "index.json",
+    )
+    detected_at = datetime(2026, 3, 16, 7, 0, tzinfo=timezone.utc)
+
+    await cc.append_runtime_context_card(
+        cfg,
+        run_id="run_numpy",
+        mode="paper",
+        event_id="evt_numpy",
+        event_kind="ORIGINAL",
+        ticker="005930",
+        corp_name="삼성전자",
+        headline="시황 테스트",
+        bucket="IGNORE",
+        detected_at=detected_at,
+        disclosed_at=None,
+        delay_ms=None,
+        quant_check_passed=True,
+        skip_stage=None,
+        skip_reason=None,
+        promotion_original_event_id=None,
+        promotion_original_bucket=None,
+        promotion_confidence=None,
+        promotion_policy=None,
+        ctx=ContextCard(),
+        raw=ContextCardData(),
+        market_ctx={"breadth_ok": np.bool_(True)},
+    )
+
+    files = list((tmp_path / "data" / "runtime" / "context_cards").glob("*.jsonl"))
+    rows = [json.loads(line) for line in files[0].read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["market_ctx"]["breadth_ok"] is True

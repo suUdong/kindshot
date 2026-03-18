@@ -17,6 +17,8 @@ from kindshot.collector import (
     _build_status_report,
     _compute_status_health,
     _collect_all_news_for_date,
+    _collect_daily_index,
+    _is_trusted_complete_date,
     _load_latest_collection_statuses,
     _parse_status_args,
     _resolve_backfill_range,
@@ -155,6 +157,7 @@ def test_write_collection_day_manifest_writes_json(tmp_path):
         classifications_path=tmp_path / "classifications" / "20260310.jsonl",
         daily_prices_path=tmp_path / "daily_prices" / "20260310.jsonl",
         daily_index_path=tmp_path / "index" / "20260310.jsonl",
+        daily_index_source="kis",
     )
 
     assert isinstance(manifest, CollectionDayManifest)
@@ -171,6 +174,7 @@ def test_write_collection_day_manifest_writes_json(tmp_path):
     assert payload["news_range"]["start_time"] == "101500"
     assert payload["news_range"]["end_time"] == "101501"
     assert payload["sources"]["daily_prices"] == "pykrx"
+    assert payload["sources"]["daily_index"] == "kis"
     assert payload["exists"]["news"] is False
     index_payload = json.loads(_manifest_index_path(tmp_path / "manifests").read_text(encoding="utf-8"))
     assert index_payload["entries"][0]["date"] == "20260310"
@@ -237,6 +241,61 @@ def test_update_collection_manifest_index_upserts_and_orders_dates(tmp_path):
     assert payload["entries"][1]["date"] == "20260309"
     assert payload["entries"][1]["status"] == "complete"
     assert payload["entries"][1]["has_partial_data"] is False
+
+
+async def test_is_trusted_complete_date_requires_manifest(tmp_path):
+    cfg = Config(collector_manifests_dir=tmp_path / "data" / "collector" / "manifests")
+
+    with patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=True)):
+        assert await _is_trusted_complete_date(cfg, "20260313") is False
+
+
+async def test_is_trusted_complete_date_rejects_trading_day_zero_index(tmp_path):
+    cfg = Config(collector_manifests_dir=tmp_path / "data" / "collector" / "manifests")
+    write_collection_day_manifest(
+        cfg.collector_manifests_dir,
+        dt="20260313",
+        status="complete",
+        status_reason="",
+        finalized_date="20260313",
+        items=[NewsDisclosure(news_id="NEWS001", data_dt="20260313", data_tm="101500", title="A", dorg="KIS", tickers=("005930",))],
+        tickers=["005930"],
+        news_count=1,
+        classification_count=1,
+        price_count=1,
+        index_count=0,
+        news_path=tmp_path / "news" / "20260313.jsonl",
+        classifications_path=tmp_path / "classifications" / "20260313.jsonl",
+        daily_prices_path=tmp_path / "daily_prices" / "20260313.jsonl",
+        daily_index_path=tmp_path / "index" / "20260313.jsonl",
+    )
+
+    with patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=True)):
+        assert await _is_trusted_complete_date(cfg, "20260313") is False
+
+
+async def test_is_trusted_complete_date_rejects_non_trading_day_complete_manifest(tmp_path):
+    cfg = Config(collector_manifests_dir=tmp_path / "data" / "collector" / "manifests")
+    write_collection_day_manifest(
+        cfg.collector_manifests_dir,
+        dt="20260315",
+        status="complete",
+        status_reason="",
+        finalized_date="20260315",
+        items=[],
+        tickers=[],
+        news_count=0,
+        classification_count=0,
+        price_count=0,
+        index_count=0,
+        news_path=tmp_path / "news" / "20260315.jsonl",
+        classifications_path=tmp_path / "classifications" / "20260315.jsonl",
+        daily_prices_path=tmp_path / "daily_prices" / "20260315.jsonl",
+        daily_index_path=tmp_path / "index" / "20260315.jsonl",
+    )
+
+    with patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=False)):
+        assert await _is_trusted_complete_date(cfg, "20260315") is False
 
 
 def test_load_latest_collection_statuses_uses_last_status_per_date(tmp_path):
@@ -443,7 +502,49 @@ async def test_collect_all_news_for_date_continues_after_pagination_truncation()
     assert result.pagination_truncated is False
     first_fetch.assert_awaited_once()
     next_fetch.assert_awaited_once()
-    assert next_fetch.await_args.kwargs["from_time"] == "115499"
+    assert next_fetch.await_args.kwargs["from_time"] == "115459"
+
+
+async def test_collect_daily_index_prefers_kis_exact_rows():
+    kis = AsyncMock()
+    kis.get_index_daily_info = AsyncMock(
+        side_effect=[
+            type("IndexDailyInfo", (), {"open_px": 2500.0, "high": 2510.0, "low": 2490.0, "close": 2505.0, "volume": 1000.0, "value": 2000.0})(),
+            type("IndexDailyInfo", (), {"open_px": 800.0, "high": 810.0, "low": 790.0, "close": 805.0, "volume": 3000.0, "value": 4000.0})(),
+        ]
+    )
+
+    rows, source = await _collect_daily_index(kis, "20260313")
+
+    assert [row["index_code"] for row in rows] == ["1001", "2001"]
+    assert source == "kis"
+    assert rows[0]["close"] == 2505.0
+    assert rows[1]["close"] == 805.0
+
+
+async def test_collect_daily_index_falls_back_to_pykrx_when_kis_empty():
+    kis = AsyncMock()
+    kis.get_index_daily_info = AsyncMock(side_effect=[None, None])
+    pykrx_rows = [
+        {
+            "index_date": "1001:20260313",
+            "index_code": "1001",
+            "date": "20260313",
+            "open": 1.0,
+            "high": 2.0,
+            "low": 0.5,
+            "close": 1.5,
+            "volume": 10,
+            "value": 20.0,
+            "collected_at": "now",
+        }
+    ]
+
+    with patch("kindshot.collector.asyncio.to_thread", new=AsyncMock(return_value=(pykrx_rows, "pykrx"))):
+        rows, source = await _collect_daily_index(kis, "20260313")
+
+    assert rows == pykrx_rows
+    assert source == "pykrx"
 
 
 async def test_run_backfill_collects_news_and_updates_state(tmp_path):
@@ -466,9 +567,10 @@ async def test_run_backfill_collects_news_and_updates_state(tmp_path):
     index_rows = [{"index_date": "1001:20260310", "index_code": "1001", "date": "20260310"}]
 
     with patch("kindshot.collector.compute_finalized_date", return_value="20260310"), \
+         patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=True)), \
          patch("kindshot.collector._collect_news_for_date_with_retry", new=AsyncMock(return_value=NewsDisclosureFetchResult(items=items))), \
          patch("kindshot.collector._collect_daily_prices", new=AsyncMock(return_value=price_rows)), \
-         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=index_rows)):
+         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=(index_rows, "pykrx"))):
         result = await run_backfill(cfg, cursor="20260310")
 
     assert result.processed_dates == ["20260310"]
@@ -503,6 +605,7 @@ async def test_run_backfill_collects_news_and_updates_state(tmp_path):
     assert manifest["news_range"]["last_news_id"] == "NEWS002"
     assert manifest["exists"]["news"] is True
     assert manifest["exists"]["classifications"] is True
+    assert manifest["sources"]["daily_index"] == "pykrx"
     index_payload = json.loads((cfg.collector_manifests_dir / "index.json").read_text(encoding="utf-8"))
     assert index_payload["entries"][0]["date"] == "20260310"
     assert index_payload["entries"][0]["status"] == "complete"
@@ -525,9 +628,10 @@ async def test_run_backfill_from_only_collects_finalized_through_from_date(tmp_p
     )
 
     with patch("kindshot.collector.compute_finalized_date", return_value="20260313"), \
+         patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=True)), \
          patch("kindshot.collector._collect_news_for_date_with_retry", new=AsyncMock(return_value=NewsDisclosureFetchResult(items=[]))) as mock_news, \
          patch("kindshot.collector._collect_daily_prices", new=AsyncMock(return_value=[])), \
-         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=[])):
+         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=([{"index_date": "1001:20260313"}], "pykrx"))):
         result = await run_backfill(cfg, from_date="20260312")
 
     assert result.processed_dates == ["20260313", "20260312"]
@@ -559,11 +663,29 @@ async def test_run_backfill_skips_dates_already_marked_complete(tmp_path):
             completed_at="2026-03-15T00:00:00+09:00",
         ),
     )
+    write_collection_day_manifest(
+        cfg.collector_manifests_dir,
+        dt="20260313",
+        status="complete",
+        status_reason="",
+        finalized_date="20260313",
+        items=[NewsDisclosure(news_id="NEWS001", data_dt="20260313", data_tm="101500", title="A", dorg="KIS", tickers=("005930",))],
+        tickers=["005930"],
+        news_count=2,
+        classification_count=2,
+        price_count=1,
+        index_count=1,
+        news_path=cfg.collector_news_dir / "20260313.jsonl",
+        classifications_path=cfg.collector_classifications_dir / "20260313.jsonl",
+        daily_prices_path=cfg.collector_daily_prices_dir / "20260313.jsonl",
+        daily_index_path=cfg.collector_index_dir / "20260313.jsonl",
+    )
 
     with patch("kindshot.collector.compute_finalized_date", return_value="20260313"), \
+         patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=True)), \
          patch("kindshot.collector._collect_news_for_date_with_retry", new=AsyncMock(return_value=NewsDisclosureFetchResult(items=[]))) as mock_news, \
          patch("kindshot.collector._collect_daily_prices", new=AsyncMock(return_value=[])), \
-         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=[])):
+         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=([], "pykrx"))):
         result = await run_backfill(cfg, cursor="20260313")
 
     assert result.processed_dates == []
@@ -580,6 +702,52 @@ async def test_run_backfill_skips_dates_already_marked_complete(tmp_path):
     assert state.status == "idle"
 
 
+async def test_run_backfill_reprocesses_stale_complete_without_manifest(tmp_path):
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        collector_news_dir=tmp_path / "data" / "collector" / "news",
+        collector_classifications_dir=tmp_path / "data" / "collector" / "classifications",
+        collector_daily_prices_dir=tmp_path / "data" / "collector" / "daily_prices",
+        collector_index_dir=tmp_path / "data" / "collector" / "index",
+        collector_manifests_dir=tmp_path / "data" / "collector" / "manifests",
+        collector_log_path=tmp_path / "data" / "collector" / "collection_log.jsonl",
+        collector_state_path=tmp_path / "data" / "collector_state.json",
+    )
+    save_collector_state(
+        cfg.collector_state_path,
+        CollectorState(cursor_date="20260315", last_completed_date="20260315", finalized_date="20260315", status="idle"),
+    )
+    append_collection_log(
+        cfg.collector_log_path,
+        CollectionLogRecord(
+            date="20260315",
+            status="complete",
+            news_count=40,
+            classification_count=40,
+            daily_price_count=0,
+            daily_index_count=0,
+            completed_at="2026-03-16T16:00:00+09:00",
+        ),
+    )
+
+    with patch("kindshot.collector.compute_finalized_date", return_value="20260315"), \
+         patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=False)), \
+         patch("kindshot.collector._collect_all_news_for_date", new=AsyncMock()) as mock_news:
+        result = await run_backfill(cfg, cursor="20260315")
+
+    assert result.processed_dates == []
+    assert result.completed_dates == []
+    assert result.partial_dates == []
+    assert result.skipped_dates == ["20260315"]
+    assert mock_news.await_count == 0
+    log_rows = [json.loads(line) for line in cfg.collector_log_path.read_text(encoding="utf-8").splitlines()]
+    assert log_rows[-1]["status"] == "skipped"
+    assert log_rows[-1]["skip_reason"] == "non_trading_day"
+    state = load_collector_state(cfg.collector_state_path)
+    assert state.cursor_date == "20260314"
+    assert state.last_completed_date == ""
+
+
 async def test_run_backfill_logs_partial_when_news_pagination_truncated(tmp_path):
     cfg = Config(
         data_dir=tmp_path / "data",
@@ -594,9 +762,10 @@ async def test_run_backfill_logs_partial_when_news_pagination_truncated(tmp_path
     items = [NewsDisclosure(news_id="NEWS001", data_dt="20260310", data_tm="101500", title="A", dorg="KIS", tickers=("005930",))]
 
     with patch("kindshot.collector.compute_finalized_date", return_value="20260310"), \
-         patch("kindshot.collector._collect_news_for_date_with_retry", new=AsyncMock(return_value=NewsDisclosureFetchResult(items=items, pagination_truncated=True))), \
+         patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=True)), \
+         patch("kindshot.collector._collect_all_news_for_date", new=AsyncMock(return_value=NewsDisclosureFetchResult(items=items, pagination_truncated=True))), \
          patch("kindshot.collector._collect_daily_prices", new=AsyncMock(return_value=[])), \
-         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=[])):
+         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=([], "pykrx"))):
         result = await run_backfill(cfg, cursor="20260310")
 
     assert result.processed_dates == ["20260310"]
@@ -604,7 +773,7 @@ async def test_run_backfill_logs_partial_when_news_pagination_truncated(tmp_path
     assert result.partial_dates == ["20260310"]
     manifest = json.loads((cfg.collector_manifests_dir / "20260310.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "partial"
-    assert manifest["status_reason"] == "pagination_truncated"
+    assert manifest["status_reason"] == "pagination_truncated,daily_prices_missing,daily_index_missing"
     assert manifest["has_partial_data"] is True
     assert manifest["counts"]["news"] == 1
     assert manifest["news_range"]["first_news_id"] == "NEWS001"
@@ -615,7 +784,7 @@ async def test_run_backfill_logs_partial_when_news_pagination_truncated(tmp_path
     assert index_payload["entries"][0]["has_partial_data"] is True
     log_rows = [json.loads(line) for line in cfg.collector_log_path.read_text(encoding="utf-8").splitlines()]
     assert log_rows[-1]["status"] == "partial"
-    assert log_rows[-1]["skip_reason"] == "pagination_truncated"
+    assert log_rows[-1]["skip_reason"] == "pagination_truncated,daily_prices_missing,daily_index_missing"
     state = load_collector_state(cfg.collector_state_path)
     assert state.cursor_date == "20260310"
     assert state.last_completed_date == ""
@@ -647,15 +816,137 @@ async def test_run_backfill_does_not_skip_latest_partial_date(tmp_path):
     )
 
     with patch("kindshot.collector.compute_finalized_date", return_value="20260310"), \
+         patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=True)), \
          patch("kindshot.collector._collect_news_for_date_with_retry", new=AsyncMock(return_value=NewsDisclosureFetchResult(items=[]))) as mock_news, \
-         patch("kindshot.collector._collect_daily_prices", new=AsyncMock(return_value=[])), \
-         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=[])):
+         patch("kindshot.collector._collect_daily_prices", new=AsyncMock(return_value=[{"ticker_date": "005930:20260310"}])), \
+         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=([{"index_date": "1001:20260310"}], "pykrx"))):
         result = await run_backfill(cfg, cursor="20260310")
 
     assert result.processed_dates == ["20260310"]
     assert result.completed_dates == ["20260310"]
     assert result.partial_dates == []
     assert mock_news.await_count == 1
+
+
+async def test_run_backfill_skips_non_trading_day(tmp_path):
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        collector_news_dir=tmp_path / "data" / "collector" / "news",
+        collector_classifications_dir=tmp_path / "data" / "collector" / "classifications",
+        collector_daily_prices_dir=tmp_path / "data" / "collector" / "daily_prices",
+        collector_index_dir=tmp_path / "data" / "collector" / "index",
+        collector_manifests_dir=tmp_path / "data" / "collector" / "manifests",
+        collector_log_path=tmp_path / "data" / "collector" / "collection_log.jsonl",
+        collector_state_path=tmp_path / "data" / "collector_state.json",
+    )
+
+    with patch("kindshot.collector.compute_finalized_date", return_value="20260315"), \
+         patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=False)), \
+         patch("kindshot.collector._collect_all_news_for_date", new=AsyncMock()) as mock_news:
+        result = await run_backfill(cfg, cursor="20260315")
+
+    assert result.processed_dates == []
+    assert result.completed_dates == []
+    assert result.partial_dates == []
+    assert result.skipped_dates == ["20260315"]
+    assert mock_news.await_count == 0
+    log_rows = [json.loads(line) for line in cfg.collector_log_path.read_text(encoding="utf-8").splitlines()]
+    assert log_rows[-1]["status"] == "skipped"
+    assert log_rows[-1]["skip_reason"] == "non_trading_day"
+    state = load_collector_state(cfg.collector_state_path)
+    assert state.cursor_date == "20260314"
+    assert state.last_completed_date == ""
+
+
+async def test_run_backfill_marks_partial_when_trading_day_price_and_index_missing(tmp_path):
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        collector_news_dir=tmp_path / "data" / "collector" / "news",
+        collector_classifications_dir=tmp_path / "data" / "collector" / "classifications",
+        collector_daily_prices_dir=tmp_path / "data" / "collector" / "daily_prices",
+        collector_index_dir=tmp_path / "data" / "collector" / "index",
+        collector_manifests_dir=tmp_path / "data" / "collector" / "manifests",
+        collector_log_path=tmp_path / "data" / "collector" / "collection_log.jsonl",
+        collector_state_path=tmp_path / "data" / "collector_state.json",
+    )
+    items = [NewsDisclosure(news_id="NEWS001", data_dt="20260310", data_tm="101500", title="A", dorg="KIS", tickers=("005930",))]
+
+    with patch("kindshot.collector.compute_finalized_date", return_value="20260310"), \
+         patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=True)), \
+         patch("kindshot.collector._collect_all_news_for_date", new=AsyncMock(return_value=NewsDisclosureFetchResult(items=items))), \
+         patch("kindshot.collector._collect_daily_prices", new=AsyncMock(return_value=[])), \
+         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=([], "pykrx"))):
+        result = await run_backfill(cfg, cursor="20260310")
+
+    assert result.completed_dates == []
+    assert result.partial_dates == ["20260310"]
+    manifest = json.loads((cfg.collector_manifests_dir / "20260310.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "partial"
+    assert manifest["status_reason"] == "daily_prices_missing,daily_index_missing"
+    log_rows = [json.loads(line) for line in cfg.collector_log_path.read_text(encoding="utf-8").splitlines()]
+    assert log_rows[-1]["skip_reason"] == "daily_prices_missing,daily_index_missing"
+
+
+async def test_run_backfill_allows_no_news_day_without_index_backlog(tmp_path):
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        collector_news_dir=tmp_path / "data" / "collector" / "news",
+        collector_classifications_dir=tmp_path / "data" / "collector" / "classifications",
+        collector_daily_prices_dir=tmp_path / "data" / "collector" / "daily_prices",
+        collector_index_dir=tmp_path / "data" / "collector" / "index",
+        collector_manifests_dir=tmp_path / "data" / "collector" / "manifests",
+        collector_log_path=tmp_path / "data" / "collector" / "collection_log.jsonl",
+        collector_state_path=tmp_path / "data" / "collector_state.json",
+    )
+
+    with patch("kindshot.collector.compute_finalized_date", return_value="20260310"), \
+         patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=True)), \
+         patch("kindshot.collector._collect_all_news_for_date", new=AsyncMock(return_value=NewsDisclosureFetchResult(items=[]))), \
+         patch("kindshot.collector._collect_daily_prices", new=AsyncMock(return_value=[])), \
+         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=([], "pykrx"))):
+        result = await run_backfill(cfg, cursor="20260310")
+
+    assert result.completed_dates == ["20260310"]
+    assert result.partial_dates == []
+    manifest = json.loads((cfg.collector_manifests_dir / "20260310.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "complete"
+    assert manifest["status_reason"] == ""
+    log_rows = [json.loads(line) for line in cfg.collector_log_path.read_text(encoding="utf-8").splitlines()]
+    assert log_rows[-1]["status"] == "complete"
+    assert log_rows[-1]["skip_reason"] == ""
+
+
+async def test_run_backfill_reuses_existing_price_rows_on_retry(tmp_path):
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        collector_news_dir=tmp_path / "data" / "collector" / "news",
+        collector_classifications_dir=tmp_path / "data" / "collector" / "classifications",
+        collector_daily_prices_dir=tmp_path / "data" / "collector" / "daily_prices",
+        collector_index_dir=tmp_path / "data" / "collector" / "index",
+        collector_manifests_dir=tmp_path / "data" / "collector" / "manifests",
+        collector_log_path=tmp_path / "data" / "collector" / "collection_log.jsonl",
+        collector_state_path=tmp_path / "data" / "collector_state.json",
+    )
+    items = [NewsDisclosure(news_id="NEWS001", data_dt="20260313", data_tm="101500", title="A", dorg="KIS", tickers=("005930",))]
+    existing_price_path = cfg.collector_daily_prices_dir / "20260313.jsonl"
+    existing_price_path.parent.mkdir(parents=True, exist_ok=True)
+    existing_price_path.write_text(
+        json.dumps({"ticker_date": "005930:20260313", "ticker": "005930", "date": "20260313"}) + "\n",
+        encoding="utf-8",
+    )
+
+    with patch("kindshot.collector.compute_finalized_date", return_value="20260313"), \
+         patch("kindshot.collector._is_market_business_day", new=AsyncMock(return_value=True)), \
+         patch("kindshot.collector._collect_all_news_for_date", new=AsyncMock(return_value=NewsDisclosureFetchResult(items=items))), \
+         patch("kindshot.collector._collect_daily_prices", new=AsyncMock(return_value=[{"ticker_date": "005930:20260313", "ticker": "005930", "date": "20260313"}])), \
+         patch("kindshot.collector._collect_daily_index", new=AsyncMock(return_value=([], "pykrx"))):
+        result = await run_backfill(cfg, cursor="20260313")
+
+    assert result.partial_dates == ["20260313"]
+    assert result.price_counts["20260313"] == 1
+    manifest = json.loads((cfg.collector_manifests_dir / "20260313.json").read_text(encoding="utf-8"))
+    assert manifest["counts"]["daily_prices"] == 1
+    assert manifest["status_reason"] == "daily_index_missing"
 
 
 async def test_collect_main_dispatches_backfill(tmp_path):
@@ -751,17 +1042,17 @@ def test_log_collection_status_reports_backlog_with_limit(tmp_path):
     assert summary.blocked_index_count == 4
     assert mock_info.call_count == 5
     assert "tracked=%d partial=%d error=%d oldest_partial=%s oldest_error=%s oldest_blocked=%s oldest_blocked_age_s=%d blocked_news=%d blocked_classified=%d blocked_prices=%d blocked_index=%d" in mock_info.call_args_list[0].args[0]
-    assert mock_info.call_args_list[0].args[5] == 3
-    assert mock_info.call_args_list[0].args[6] == 2
-    assert mock_info.call_args_list[0].args[7] == 1
-    assert mock_info.call_args_list[0].args[8] == "20260309"
-    assert mock_info.call_args_list[0].args[9] == "20260308"
+    assert mock_info.call_args_list[0].args[6] == 3
+    assert mock_info.call_args_list[0].args[7] == 2
+    assert mock_info.call_args_list[0].args[8] == 1
+    assert mock_info.call_args_list[0].args[9] == "20260309"
     assert mock_info.call_args_list[0].args[10] == "20260308"
-    assert mock_info.call_args_list[0].args[11] >= 0
-    assert mock_info.call_args_list[0].args[12] == 4
+    assert mock_info.call_args_list[0].args[11] == "20260308"
+    assert mock_info.call_args_list[0].args[12] >= 0
     assert mock_info.call_args_list[0].args[13] == 4
-    assert mock_info.call_args_list[0].args[14] == 2
-    assert mock_info.call_args_list[0].args[15] == 4
+    assert mock_info.call_args_list[0].args[14] == 4
+    assert mock_info.call_args_list[0].args[15] == 2
+    assert mock_info.call_args_list[0].args[16] == 4
     assert mock_info.call_args_list[1].args[1] == 1
     assert mock_info.call_args_list[1].args[2] == "20260310"
     assert mock_info.call_args_list[2].args[1] == "20260310"

@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,7 +13,7 @@ from kindshot.config import Config
 from kindshot.context_card import ContextCardData
 from kindshot.decision import LlmTimeoutError, LlmParseError, LlmCallError
 from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
-from kindshot.models import Bucket, SkipStage
+from kindshot.models import Bucket, ReviewStatus, SkipStage, UnknownReviewRecord
 
 
 async def _run_pipeline_once(
@@ -24,6 +24,7 @@ async def _run_pipeline_once(
     dry_run=False,
     paper=False,
     ctx_raw=None,
+    config_overrides=None,
 ):
     """Helper: run one iteration of the pipeline and return logged records."""
     from kindshot.event_registry import EventRegistry
@@ -31,7 +32,7 @@ async def _run_pipeline_once(
     from kindshot.market import MarketMonitor
     from kindshot.price import PriceFetcher, SnapshotScheduler
 
-    cfg = Config(log_dir=tmp_path / "logs", dry_run=dry_run, paper=paper)
+    cfg = Config(log_dir=tmp_path / "logs", dry_run=dry_run, paper=paper, **(config_overrides or {}))
     log = JsonlLogger(cfg.log_dir, run_id="test_run")
     registry = EventRegistry()
     market = MarketMonitor(cfg)
@@ -229,6 +230,249 @@ async def test_paper_mode_logs_decision_with_paper_mode(tmp_path):
     assert event_records[0]["mode"] == "paper"
     assert len(decision_records) == 1
     assert decision_records[0]["mode"] == "paper"
+
+
+async def test_unknown_shadow_review_writes_inbox_and_enqueues_request(tmp_path):
+    from kindshot.event_registry import EventRegistry
+    from kindshot.feed import RawDisclosure
+    from kindshot.logger import JsonlLogger
+    from kindshot.main import _process_registered_event
+    from kindshot.market import MarketMonitor
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+
+    cfg = Config(
+        log_dir=tmp_path / "logs",
+        unknown_shadow_review_enabled=True,
+        unknown_inbox_dir=tmp_path / "logs" / "unknown_inbox",
+        unknown_review_dir=tmp_path / "logs" / "unknown_review",
+    )
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+    registry = EventRegistry()
+    raw = RawDisclosure(
+        title="삼성전자(005930) - 임원변경",
+        link="https://example.com/unknown",
+        rss_guid="guid-unknown",
+        published="2026-03-05T09:12:04+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=datetime.now(timezone.utc),
+    )
+    processed = registry.process(raw)
+    queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+
+    await _process_registered_event(
+        raw=raw,
+        processed=processed,
+        decision_engine=MagicMock(),
+        market=market,
+        scheduler=scheduler,
+        log=log,
+        config=cfg,
+        run_id="test_run",
+        kis=None,
+        counters=None,
+        mode="paper",
+        feed_source="KIND",
+        unknown_review_queue=queue,
+    )
+
+    assert queue.qsize() == 1
+    inbox_path = cfg.unknown_inbox_dir / f"{raw.detected_at.astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d')}.jsonl"
+    assert inbox_path.exists()
+    inbox_row = json.loads(inbox_path.read_text(encoding="utf-8").splitlines()[0])
+    assert inbox_row["event_id"] == processed.event_id
+    assert inbox_row["headline"] == raw.title
+
+
+async def test_unknown_paper_promotion_logs_promoted_pos_strong_and_decision(tmp_path):
+    from kindshot.event_registry import EventRegistry
+    from kindshot.feed import RawDisclosure
+    from kindshot.guardrails import GuardrailResult
+    from kindshot.logger import JsonlLogger
+    from kindshot.main import _process_unknown_promotion
+    from kindshot.market import MarketMonitor
+    from kindshot.models import Action, ContextCard, DecisionRecord, SizeHint
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+    from kindshot.unknown_review import UnknownReviewRequest
+
+    cfg = Config(
+        log_dir=tmp_path / "logs",
+        paper=True,
+        unknown_paper_promotion_enabled=True,
+        unknown_promotion_dir=tmp_path / "logs" / "unknown_promotion",
+        runtime_context_cards_dir=tmp_path / "data" / "runtime" / "context_cards",
+        runtime_index_path=tmp_path / "data" / "runtime" / "index.json",
+    )
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+
+    decision_engine = MagicMock()
+    decision_engine.decide = AsyncMock(
+        return_value=DecisionRecord(
+            schema_version="0.1.2",
+            run_id="test_run",
+            event_id="",
+            decided_at=datetime.now(timezone.utc),
+            llm_model="test",
+            llm_latency_ms=10,
+            action=Action.BUY,
+            confidence=88,
+            size_hint=SizeHint.M,
+            reason="promoted test",
+            decision_source="LLM",
+        )
+    )
+    request = UnknownReviewRequest(
+        event_id="evt_unknown",
+        detected_at=datetime.now(timezone.utc),
+        runtime_mode="paper",
+        ticker="005930",
+        corp_name="삼성전자",
+        headline="삼성전자, 대형 공급 계약 확대",
+        rss_link="https://example.com/promoted",
+        rss_guid="guid-promoted",
+        published="2026-03-05T09:12:04+09:00",
+        source="KIND",
+    )
+    review = UnknownReviewRecord(
+        event_id=request.event_id,
+        reviewed_at=datetime.now(timezone.utc),
+        runtime_mode="paper",
+        headline_only=True,
+        review_status=ReviewStatus.OK,
+        suggested_bucket=Bucket.POS_STRONG,
+        confidence=91,
+        promote_now=True,
+        needs_article_body=False,
+    )
+
+    with patch("kindshot.main.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.main.check_guardrails") as mock_gr:
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0),
+            ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0),
+        )
+        mock_gr.return_value = GuardrailResult(passed=True)
+        await _process_unknown_promotion(
+            request=request,
+            review=review,
+            decision_engine=decision_engine,
+            market=market,
+            scheduler=scheduler,
+            log=log,
+            config=cfg,
+            run_id="test_run",
+            kis=None,
+            counters=None,
+            guardrail_state=None,
+        )
+
+    records = []
+    for f in cfg.log_dir.glob("*.jsonl"):
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if line:
+                records.append(json.loads(line))
+    event_records = [r for r in records if r.get("type") == "event"]
+    decision_records = [r for r in records if r.get("type") == "decision"]
+    assert len(event_records) == 1
+    assert len(decision_records) == 1
+    assert event_records[0]["promotion_original_event_id"] == "evt_unknown"
+    assert event_records[0]["bucket"] == "POS_STRONG"
+    assert decision_records[0]["event_id"] == event_records[0]["event_id"]
+
+    promotion_path = cfg.unknown_promotion_dir / f"{request.detected_at.astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d')}.jsonl"
+    promotion_row = json.loads(promotion_path.read_text(encoding="utf-8").splitlines()[0])
+    assert promotion_row["promotion_status"] == "PROMOTED"
+    assert promotion_row["decision_action"] == "BUY"
+    assert promotion_row["derived_event_id"] == event_records[0]["event_id"]
+
+    context_path = cfg.runtime_context_cards_dir / f"{request.detected_at.astimezone(timezone(timedelta(hours=9))).strftime('%Y%m%d')}.jsonl"
+    context_row = json.loads(context_path.read_text(encoding="utf-8").splitlines()[0])
+    assert context_row["promotion_original_event_id"] == "evt_unknown"
+    assert context_row["promotion_confidence"] == 91
+
+
+async def test_unknown_paper_promotion_logs_promoted_neg_strong_and_tracks_price(tmp_path):
+    from kindshot.logger import JsonlLogger
+    from kindshot.main import _process_unknown_promotion
+    from kindshot.market import MarketMonitor
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+    from kindshot.unknown_review import UnknownReviewRequest
+
+    cfg = Config(
+        log_dir=tmp_path / "logs",
+        paper=True,
+        unknown_paper_promotion_enabled=True,
+        unknown_promotion_dir=tmp_path / "logs" / "unknown_promotion",
+    )
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+
+    request = UnknownReviewRequest(
+        event_id="evt_unknown_neg",
+        detected_at=datetime.now(timezone.utc),
+        runtime_mode="paper",
+        ticker="005930",
+        corp_name="삼성전자",
+        headline="삼성전자, 공급 계약 해지",
+        rss_link="https://example.com/neg",
+        rss_guid="guid-neg",
+        published="2026-03-05T09:12:04+09:00",
+        source="KIND",
+    )
+    review = UnknownReviewRecord(
+        event_id=request.event_id,
+        reviewed_at=datetime.now(timezone.utc),
+        runtime_mode="paper",
+        headline_only=True,
+        review_status=ReviewStatus.OK,
+        suggested_bucket=Bucket.NEG_STRONG,
+        confidence=90,
+        promote_now=True,
+        needs_article_body=False,
+    )
+
+    await _process_unknown_promotion(
+        request=request,
+        review=review,
+        decision_engine=MagicMock(),
+        market=market,
+        scheduler=scheduler,
+        log=log,
+        config=cfg,
+        run_id="test_run",
+        kis=None,
+        counters=None,
+        guardrail_state=None,
+    )
+
+    records = []
+    for f in cfg.log_dir.glob("*.jsonl"):
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if line:
+                records.append(json.loads(line))
+    event_records = [r for r in records if r.get("type") == "event"]
+    decision_records = [r for r in records if r.get("type") == "decision"]
+    assert len(event_records) == 1
+    assert event_records[0]["bucket"] == "NEG_STRONG"
+    assert event_records[0]["skip_reason"] == "NEG_BUCKET"
+    assert decision_records == []
+    assert any(s.event_id == event_records[0]["event_id"] for s in scheduler._heap)
+
+    promotion_path = cfg.unknown_promotion_dir / f"{request.detected_at.astimezone(timezone(timedelta(hours=9))).strftime('%Y-%m-%d')}.jsonl"
+    promotion_row = json.loads(promotion_path.read_text(encoding="utf-8").splitlines()[0])
+    assert promotion_row["promotion_status"] == "PROMOTED"
+    assert promotion_row["skip_reason"] == "NEG_BUCKET"
 
 
 async def test_pipeline_passes_quote_risk_state_to_guardrails(tmp_path):

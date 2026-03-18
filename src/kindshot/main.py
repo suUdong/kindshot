@@ -40,6 +40,7 @@ from kindshot.models import (
     EventKind,
     EventRecord,
     MarketContext,
+    PromotionStatus,
     SkipStage,
     T0Basis,
 )
@@ -47,6 +48,14 @@ from kindshot.price import PriceFetcher, SnapshotScheduler
 from kindshot.quant import quant_check
 from kindshot.poll_trace import init_tracer, get_tracer
 from kindshot.sd_notify import notify_ready, notify_watchdog
+from kindshot.unknown_review import (
+    UnknownReviewEngine,
+    UnknownReviewRequest,
+    append_unknown_inbox,
+    append_unknown_promotion,
+    append_unknown_review,
+    evaluate_unknown_promotion,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -79,6 +88,14 @@ class RuntimeCounters:
     errors: Counter[str] = field(default_factory=Counter)
 
 
+@dataclass(frozen=True)
+class ProcessOutcome:
+    event_id: str
+    action: Optional[Action] = None
+    skip_stage: Optional[SkipStage] = None
+    skip_reason: Optional[str] = None
+
+
 def _mark_skip(
     counters: Optional[RuntimeCounters],
     *,
@@ -101,6 +118,27 @@ def _counter_snapshot(counters: RuntimeCounters) -> dict[str, dict[str, int]]:
         "skip_reason": dict(counters.skip_reason),
         "errors": dict(counters.errors),
     }
+
+
+def _parse_disclosure_meta(raw: RawDisclosure, detected_at: datetime) -> tuple[Optional[datetime], bool, Optional[int]]:
+    disclosed_at: Optional[datetime] = None
+    disclosed_at_missing = True
+    delay_ms: Optional[int] = None
+    if raw.published:
+        try:
+            from dateutil.parser import parse as dt_parse
+
+            disclosed_at = dt_parse(raw.published)
+            disclosed_at_missing = False
+            delay_ms = int((detected_at - disclosed_at).total_seconds() * 1000)
+        except Exception:
+            pass
+    return disclosed_at, disclosed_at_missing, delay_ms
+
+
+def _promoted_event_id(original_event_id: str, bucket: Bucket) -> str:
+    digest = hashlib.sha256(f"{original_event_id}|{bucket.value}|UNKNOWN_PROMOTION".encode()).hexdigest()[:16]
+    return f"up_{digest}"
 
 
 def _run_mode(config: Config) -> str:
@@ -158,6 +196,30 @@ def _parse_args() -> argparse.Namespace:
                    help="Optional path to write a machine-readable replay ops cycle JSON")
     p.add_argument("--replay-ops-continue-on-error", action="store_true",
                    help="Replay ops cycle: continue executing later selected dates after a replay-day failure")
+    p.add_argument("--unknown-review-summary", action="store_true",
+                   help="Summarize UNKNOWN inbox/review/promotion activity across recent dates")
+    p.add_argument("--unknown-review-limit", type=int, default=10, metavar="N",
+                   help="UNKNOWN review summary: number of latest dates to include in printed rows")
+    p.add_argument("--unknown-review-out", type=str, default=None, metavar="JSON_PATH",
+                   help="Optional path to write a machine-readable UNKNOWN review summary JSON")
+    p.add_argument("--unknown-review-rule-report", action="store_true",
+                   help="Build a rule-curation report from UNKNOWN review and promotion logs")
+    p.add_argument("--unknown-review-rule-limit", type=int, default=10, metavar="N",
+                   help="UNKNOWN review rule report: number of latest dates to include in printed rows")
+    p.add_argument("--unknown-review-rule-out", type=str, default=None, metavar="JSON_PATH",
+                   help="Optional path to write a machine-readable UNKNOWN review rule report JSON")
+    p.add_argument("--unknown-review-rule-queue", action="store_true",
+                   help="Build a filtered rule-candidate queue from UNKNOWN review reports")
+    p.add_argument("--unknown-review-rule-queue-limit", type=int, default=10, metavar="N",
+                   help="UNKNOWN review rule queue: number of selected rows to include in printed output")
+    p.add_argument("--unknown-review-rule-queue-out", type=str, default=None, metavar="JSON_PATH",
+                   help="Optional path to write a machine-readable UNKNOWN review rule queue JSON")
+    p.add_argument("--unknown-review-rule-patch", action="store_true",
+                   help="Build an editable deterministic bucket patch draft from the UNKNOWN rule queue")
+    p.add_argument("--unknown-review-rule-patch-limit", type=int, default=20, metavar="N",
+                   help="UNKNOWN review rule patch: number of draft rows to include in printed output")
+    p.add_argument("--unknown-review-rule-patch-out", type=str, default=None, metavar="JSON_PATH",
+                   help="Optional path to write a machine-readable UNKNOWN rule patch JSON")
     return p.parse_args()
 
 
@@ -190,6 +252,264 @@ async def _watchdog_loop(
         await _wait_or_stop(stop_event, config.watchdog_interval_s)
 
 
+async def _execute_bucket_path(
+    *,
+    raw: RawDisclosure,
+    processed: ProcessedEvent,
+    bucket: Bucket,
+    keyword_hits: list[str],
+    decision_engine: DecisionEngine,
+    market: MarketMonitor,
+    scheduler: SnapshotScheduler,
+    log: JsonlLogger,
+    config: Config,
+    run_id: str,
+    kis: Optional[KisClient],
+    counters: Optional[RuntimeCounters],
+    mode: str,
+    guardrail_state: Optional[GuardrailState],
+    feed_source: str,
+    analysis_tag_override: Optional[str] = None,
+    promotion_original_event_id: Optional[str] = None,
+    promotion_original_bucket: Optional[Bucket] = None,
+    promotion_confidence: Optional[int] = None,
+    promotion_policy: Optional[str] = None,
+) -> ProcessOutcome:
+    detected_at = raw.detected_at
+    disclosed_at, disclosed_at_missing, delay_ms = _parse_disclosure_meta(raw, detected_at)
+
+    raw_data = ContextCardData()
+    skip_stage: Optional[SkipStage] = None
+    skip_reason: Optional[str] = None
+    analysis_tag: Optional[str] = analysis_tag_override
+    quant_passed: Optional[bool] = None
+    quant_detail = None
+    ctx: Optional[ContextCard] = None
+    should_track_price = False
+
+    if bucket == Bucket.NEG_STRONG:
+        skip_stage = SkipStage.BUCKET
+        skip_reason = "NEG_BUCKET"
+        analysis_tag = analysis_tag or "SHORT_WATCH"
+        should_track_price = True
+    elif bucket == Bucket.POS_STRONG:
+        ctx_card, raw_data = await build_context_card(raw.ticker, kis, config=config)
+        ctx = ctx_card
+
+        qr = quant_check(
+            raw_data.adv_value_20d or 0,
+            raw_data.spread_bps,
+            raw_data.ret_today,
+            config,
+            observed_at=detected_at,
+        )
+        quant_passed = qr.passed
+        quant_detail = qr.detail
+
+        if not qr.passed:
+            skip_stage = SkipStage.QUANT
+            skip_reason = qr.skip_reason
+            should_track_price = qr.should_track_price
+            analysis_tag = analysis_tag or qr.analysis_tag
+    else:
+        skip_stage = SkipStage.BUCKET
+        skip_reason = f"{bucket.value}_BUCKET"
+
+    event_rec = EventRecord(
+        mode=mode,
+        schema_version=config.schema_version,
+        run_id=run_id,
+        event_id=processed.event_id,
+        event_id_method=processed.event_id_method,
+        event_kind=processed.event_kind,
+        parent_id=processed.parent_id,
+        event_group_id=processed.event_group_id,
+        parent_match_method=processed.parent_match_method,
+        parent_match_score=processed.parent_match_score,
+        parent_candidate_count=processed.parent_candidate_count,
+        source=feed_source,
+        rss_guid=raw.rss_guid,
+        rss_link=raw.link,
+        kind_uid=processed.kind_uid,
+        disclosed_at=disclosed_at,
+        disclosed_at_missing=disclosed_at_missing,
+        detected_at=detected_at,
+        delay_ms=delay_ms,
+        ticker=raw.ticker,
+        corp_name=raw.corp_name,
+        headline=raw.title,
+        bucket=bucket,
+        keyword_hits=keyword_hits,
+        analysis_tag=analysis_tag,
+        skip_stage=skip_stage,
+        skip_reason=skip_reason,
+        quant_check_passed=quant_passed,
+        quant_check_detail=quant_detail,
+        ctx=ctx,
+        market_ctx=market.snapshot,
+        promotion_original_event_id=promotion_original_event_id,
+        promotion_original_bucket=promotion_original_bucket,
+        promotion_confidence=promotion_confidence,
+        promotion_policy=promotion_policy,
+    )
+
+    if ctx is not None:
+        await append_runtime_context_card(
+            config,
+            run_id=run_id,
+            mode=mode,
+            event_id=processed.event_id,
+            event_kind=processed.event_kind.value,
+            ticker=raw.ticker,
+            corp_name=raw.corp_name,
+            headline=raw.title,
+            bucket=bucket.value,
+            detected_at=detected_at,
+            disclosed_at=disclosed_at,
+            delay_ms=delay_ms,
+            quant_check_passed=quant_passed,
+            skip_stage=event_rec.skip_stage.value if event_rec.skip_stage else None,
+            skip_reason=event_rec.skip_reason,
+            promotion_original_event_id=promotion_original_event_id,
+            promotion_original_bucket=promotion_original_bucket.value if promotion_original_bucket else None,
+            promotion_confidence=promotion_confidence,
+            promotion_policy=promotion_policy,
+            ctx=ctx,
+            raw=raw_data,
+            market_ctx=event_rec.market_ctx,
+        )
+
+    if should_track_price:
+        scheduler.schedule_t0(
+            event_id=processed.event_id,
+            ticker=raw.ticker,
+            t0_basis=T0Basis.DETECTED_AT,
+            t0_ts=detected_at,
+            run_id=run_id,
+            mode=mode,
+        )
+
+    if bucket != Bucket.POS_STRONG or not quant_passed:
+        await log.write(event_rec)
+        _mark_skip(
+            counters,
+            stage=event_rec.skip_stage.value if event_rec.skip_stage else None,
+            reason=event_rec.skip_reason,
+        )
+        return ProcessOutcome(
+            event_id=processed.event_id,
+            skip_stage=event_rec.skip_stage,
+            skip_reason=event_rec.skip_reason,
+        )
+
+    if market.is_halted:
+        halt_reason = "MARKET_NOT_INITIALIZED" if not market.is_initialized else "MARKET_HALTED"
+        event_rec.skip_stage = SkipStage.GUARDRAIL
+        event_rec.skip_reason = halt_reason
+        await log.write(event_rec)
+        _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason=halt_reason)
+        return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason=halt_reason)
+
+    market_snapshot = market.snapshot
+    if (
+        market_snapshot.kospi_change_pct is not None
+        and market_snapshot.kosdaq_change_pct is not None
+        and market_snapshot.kospi_breadth_ratio is not None
+        and market_snapshot.kosdaq_breadth_ratio is not None
+        and market_snapshot.kospi_change_pct < 0
+        and market_snapshot.kosdaq_change_pct < 0
+        and market_snapshot.kospi_breadth_ratio < config.min_market_breadth_ratio
+        and market_snapshot.kosdaq_breadth_ratio < config.min_market_breadth_ratio
+    ):
+        event_rec.skip_stage = SkipStage.GUARDRAIL
+        event_rec.skip_reason = "MARKET_BREADTH_RISK_OFF"
+        await log.write(event_rec)
+        _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MARKET_BREADTH_RISK_OFF")
+        return ProcessOutcome(
+            event_id=processed.event_id,
+            skip_stage=SkipStage.GUARDRAIL,
+            skip_reason="MARKET_BREADTH_RISK_OFF",
+        )
+
+    if config.dry_run:
+        await log.write(event_rec)
+        _mark_skip(counters, stage="DRY_RUN", reason="DRY_RUN")
+        return ProcessOutcome(event_id=processed.event_id, skip_reason="DRY_RUN")
+
+    decision = await decision_engine.decide(
+        ticker=raw.ticker,
+        corp_name=raw.corp_name,
+        headline=raw.title,
+        bucket=bucket,
+        ctx=ctx if ctx else ContextCard(),
+        detected_at_str=detected_at.strftime("%H:%M:%S"),
+        run_id=run_id,
+        schema_version=config.schema_version,
+    )
+    decision.event_id = processed.event_id
+    decision.mode = mode
+
+    gr = check_guardrails(
+        ticker=raw.ticker,
+        config=config,
+        spread_bps=raw_data.spread_bps if ctx else None,
+        adv_value_20d=raw_data.adv_value_20d if ctx else None,
+        ret_today=raw_data.ret_today if ctx else None,
+        state=guardrail_state,
+        headline=raw.title,
+        sector=raw_data.sector if ctx else "",
+        quote_risk_state=raw_data.quote_risk_state if ctx else None,
+        orderbook_snapshot=raw_data.orderbook_snapshot if ctx else None,
+        intraday_value_vs_adv20d=raw_data.intraday_value_vs_adv20d if ctx else None,
+        decision_action=decision.action,
+    )
+    if not gr.passed:
+        event_rec.skip_stage = SkipStage.GUARDRAIL
+        event_rec.skip_reason = gr.reason
+        await log.write(event_rec)
+        _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason=gr.reason)
+        return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason=gr.reason)
+
+    await log.write(event_rec)
+    await log.write(decision)
+    if counters is not None:
+        counters.totals["decisions_emitted"] += 1
+        counters.totals[f"decision_action_{decision.action.value}"] += 1
+        counters.totals[f"decision_source_{decision.decision_source}"] += 1
+
+    if decision.action == Action.BUY and guardrail_state is not None:
+        guardrail_state.record_buy(raw.ticker)
+
+    scheduler.schedule_t0(
+        event_id=processed.event_id,
+        ticker=raw.ticker,
+        t0_basis=T0Basis.DECIDED_AT,
+        t0_ts=decision.decided_at,
+        run_id=run_id,
+        mode=mode,
+        is_buy_decision=(decision.action == Action.BUY),
+    )
+    if mode == "paper":
+        logger.info(
+            "PAPER %s [%s] conf=%d hint=%s: %s",
+            decision.action.value,
+            raw.ticker,
+            decision.confidence,
+            decision.size_hint.value,
+            decision.reason,
+        )
+    else:
+        logger.info(
+            "%s [%s] conf=%d hint=%s: %s",
+            decision.action.value,
+            raw.ticker,
+            decision.confidence,
+            decision.size_hint.value,
+            decision.reason,
+        )
+    return ProcessOutcome(event_id=processed.event_id, action=decision.action)
+
+
 async def _process_registered_event(
     raw: RawDisclosure,
     processed: ProcessedEvent,
@@ -204,6 +524,7 @@ async def _process_registered_event(
     mode: str = "live",
     guardrail_state: Optional[GuardrailState] = None,
     feed_source: str = "KIND",
+    unknown_review_queue: Optional[asyncio.Queue] = None,
 ) -> None:
     """Process an event that already passed dedup/registry."""
     _tracer = get_tracer()
@@ -241,309 +562,277 @@ async def _process_registered_event(
 
     # 2. Bucket classification
     bucket_result = classify(raw.title)
-
-    # 3. Build event record (partial — will fill quant/ctx later)
-    disclosed_at: Optional[datetime] = None
-    disclosed_at_missing = True
-    delay_ms: Optional[int] = None
-    if raw.published:
-        try:
-            from dateutil.parser import parse as dt_parse
-            disclosed_at = dt_parse(raw.published)
-            disclosed_at_missing = False
-            delay_ms = int((detected_at - disclosed_at).total_seconds() * 1000)
-        except Exception:
-            pass
-
-    raw_data = ContextCardData()
-    skip_stage: Optional[SkipStage] = None
-    skip_reason: Optional[str] = None
-    analysis_tag: Optional[str] = None
-    quant_passed: Optional[bool] = None
-    quant_detail = None
-    ctx: Optional[ContextCard] = None
-    should_track_price = False
-
-    if bucket_result.bucket == Bucket.NEG_STRONG:
-        skip_stage = SkipStage.BUCKET
-        skip_reason = "NEG_BUCKET"
-        analysis_tag = "SHORT_WATCH"
-        should_track_price = True
-
-    elif bucket_result.bucket == Bucket.POS_STRONG:
-        # Build context card
-        _t_ctx = _tracer.context_card_start(raw.ticker) if _tracer else None
-        ctx_card, raw_data = await build_context_card(raw.ticker, kis, config=config)
-        if _tracer and _t_ctx is not None:
-            _tracer.context_card_end(_t_ctx, raw.ticker)
-        ctx = ctx_card
-
-        # Quant check
-        adv = raw_data.adv_value_20d or 0
-        spread = raw_data.spread_bps
-        ret_today = raw_data.ret_today
-
-        qr = quant_check(adv, spread, ret_today, config, observed_at=detected_at)
-        quant_passed = qr.passed
-        quant_detail = qr.detail
-
-        if not qr.passed:
-            skip_stage = SkipStage.QUANT
-            skip_reason = qr.skip_reason
-            should_track_price = qr.should_track_price
-            analysis_tag = qr.analysis_tag
-
-    else:
-        skip_stage = SkipStage.BUCKET
-        skip_reason = f"{bucket_result.bucket.value}_BUCKET"
-        # Collect UNKNOWN headlines for daily keyword review
-        if bucket_result.bucket == Bucket.UNKNOWN:
-            _append_unknown_headline(config.log_dir, raw.title, raw.ticker)
-
-    # Log event record
-    event_rec = EventRecord(
-        mode=mode,
-        schema_version=config.schema_version,
-        run_id=run_id,
-        event_id=processed.event_id,
-        event_id_method=processed.event_id_method,
-        event_kind=processed.event_kind,
-        parent_id=processed.parent_id,
-        event_group_id=processed.event_group_id,
-        parent_match_method=processed.parent_match_method,
-        parent_match_score=processed.parent_match_score,
-        parent_candidate_count=processed.parent_candidate_count,
-        source=feed_source,
-        rss_guid=raw.rss_guid,
-        rss_link=raw.link,
-        kind_uid=processed.kind_uid,
-        disclosed_at=disclosed_at,
-        disclosed_at_missing=disclosed_at_missing,
-        detected_at=detected_at,
-        delay_ms=delay_ms,
-        ticker=raw.ticker,
-        corp_name=raw.corp_name,
-        headline=raw.title,
-        bucket=bucket_result.bucket,
-        keyword_hits=bucket_result.keyword_hits,
-        analysis_tag=analysis_tag,
-        skip_stage=skip_stage,
-        skip_reason=skip_reason,
-        quant_check_passed=quant_passed,
-        quant_check_detail=quant_detail,
-        ctx=ctx,
-        market_ctx=market.snapshot,
-    )
-
-    if ctx is not None:
-        await append_runtime_context_card(
-            config,
-            run_id=run_id,
-            mode=mode,
+    if bucket_result.bucket == Bucket.UNKNOWN:
+        _append_unknown_headline(config.log_dir, raw.title, raw.ticker)
+        review_request = UnknownReviewRequest(
             event_id=processed.event_id,
-            event_kind=processed.event_kind.value,
-            ticker=raw.ticker,
-            corp_name=raw.corp_name,
-            headline=raw.title,
-            bucket=bucket_result.bucket.value,
             detected_at=detected_at,
-            disclosed_at=disclosed_at,
-            delay_ms=delay_ms,
-            quant_check_passed=quant_passed,
-            skip_stage=event_rec.skip_stage.value if event_rec.skip_stage else None,
-            skip_reason=event_rec.skip_reason,
-            ctx=ctx,
-            raw=raw_data,
-            market_ctx=event_rec.market_ctx,
-        )
-
-    # Schedule price tracking if needed
-    if should_track_price:
-        scheduler.schedule_t0(
-            event_id=processed.event_id,
-            ticker=raw.ticker,
-            t0_basis=T0Basis.DETECTED_AT,
-            t0_ts=detected_at,
-            run_id=run_id,
-            mode=mode,
-        )
-
-    # 4. Decision (POS_STRONG + quant pass only)
-    if bucket_result.bucket != Bucket.POS_STRONG or not quant_passed:
-        await log.write(event_rec)
-        _mark_skip(
-            counters,
-            stage=event_rec.skip_stage.value if event_rec.skip_stage else None,
-            reason=event_rec.skip_reason,
-        )
-        if _tracer and _t_proc is not None:
-            _tracer.process_end(_t_proc, processed.event_id, event_rec.skip_reason or "SKIP")
-        return
-
-    # Market halt check
-    if market.is_halted:
-        halt_reason = "MARKET_NOT_INITIALIZED" if not market.is_initialized else "MARKET_HALTED"
-        logger.info("SKIP (%s): %s", halt_reason, raw.title[:60])
-        event_rec.skip_stage = SkipStage.GUARDRAIL
-        event_rec.skip_reason = halt_reason
-        await log.write(event_rec)
-        _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason=halt_reason)
-        if _tracer and _t_proc is not None:
-            _tracer.process_end(_t_proc, processed.event_id, halt_reason)
-        return
-
-    market_snapshot = market.snapshot
-    if (
-        market_snapshot.kospi_change_pct is not None
-        and market_snapshot.kosdaq_change_pct is not None
-        and market_snapshot.kospi_breadth_ratio is not None
-        and market_snapshot.kosdaq_breadth_ratio is not None
-        and market_snapshot.kospi_change_pct < 0
-        and market_snapshot.kosdaq_change_pct < 0
-        and market_snapshot.kospi_breadth_ratio < config.min_market_breadth_ratio
-        and market_snapshot.kosdaq_breadth_ratio < config.min_market_breadth_ratio
-    ):
-        logger.info("SKIP (MARKET_BREADTH_RISK_OFF): %s", raw.title[:60])
-        event_rec.skip_stage = SkipStage.GUARDRAIL
-        event_rec.skip_reason = "MARKET_BREADTH_RISK_OFF"
-        await log.write(event_rec)
-        _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MARKET_BREADTH_RISK_OFF")
-        if _tracer and _t_proc is not None:
-            _tracer.process_end(_t_proc, processed.event_id, "MARKET_BREADTH_RISK_OFF")
-        return
-
-    # Dry run: skip LLM
-    if config.dry_run:
-        logger.info("DRY-RUN SKIP decision: %s", raw.title[:60])
-        await log.write(event_rec)
-        _mark_skip(counters, stage="DRY_RUN", reason="DRY_RUN")
-        if _tracer and _t_proc is not None:
-            _tracer.process_end(_t_proc, processed.event_id, "DRY_RUN")
-        return
-
-    detected_str = detected_at.strftime("%H:%M:%S")
-    _t_llm = _tracer.llm_start(raw.ticker) if _tracer else None
-    try:
-        decision = await decision_engine.decide(
+            runtime_mode=mode,
             ticker=raw.ticker,
             corp_name=raw.corp_name,
             headline=raw.title,
+            rss_link=raw.link,
+            rss_guid=raw.rss_guid,
+            published=raw.published,
+            source=feed_source,
+        )
+        try:
+            append_unknown_inbox(config, review_request)
+        except Exception:
+            logger.warning("UNKNOWN inbox write failed for %s", processed.event_id, exc_info=True)
+        if unknown_review_queue is not None:
+            try:
+                unknown_review_queue.put_nowait(review_request)
+            except asyncio.QueueFull:
+                logger.warning("UNKNOWN review queue full; dropping %s", processed.event_id)
+
+    outcome: ProcessOutcome
+    _t_llm = _tracer.llm_start(raw.ticker) if _tracer and bucket_result.bucket == Bucket.POS_STRONG else None
+    try:
+        outcome = await _execute_bucket_path(
+            raw=raw,
+            processed=processed,
             bucket=bucket_result.bucket,
-            ctx=ctx if ctx else ContextCard(),
-            detected_at_str=detected_str,
+            keyword_hits=bucket_result.keyword_hits,
+            decision_engine=decision_engine,
+            market=market,
+            scheduler=scheduler,
+            log=log,
+            config=config,
             run_id=run_id,
-            schema_version=config.schema_version,
+            kis=kis,
+            counters=counters,
+            mode=mode,
+            guardrail_state=guardrail_state,
+            feed_source=feed_source,
         )
     except LlmTimeoutError:
         if _tracer and _t_llm is not None:
             _tracer.llm_end(_t_llm, raw.ticker, error="timeout")
-        event_rec.skip_stage = SkipStage.LLM_TIMEOUT
-        event_rec.skip_reason = "LLM_TIMEOUT"
-        await log.write(event_rec)
-        _mark_skip(counters, stage=SkipStage.LLM_TIMEOUT.value, reason="LLM_TIMEOUT")
         if counters is not None:
             counters.errors["llm_timeout"] += 1
-        if _tracer and _t_proc is not None:
-            _tracer.process_end(_t_proc, processed.event_id, "LLM_TIMEOUT")
-        return
+        outcome = ProcessOutcome(processed.event_id, skip_stage=SkipStage.LLM_TIMEOUT, skip_reason="LLM_TIMEOUT")
+        event_rec = EventRecord(
+            mode=mode,
+            schema_version=config.schema_version,
+            run_id=run_id,
+            event_id=processed.event_id,
+            event_id_method=processed.event_id_method,
+            event_kind=processed.event_kind,
+            parent_id=processed.parent_id,
+            event_group_id=processed.event_group_id,
+            parent_match_method=processed.parent_match_method,
+            parent_match_score=processed.parent_match_score,
+            parent_candidate_count=processed.parent_candidate_count,
+            source=feed_source,
+            rss_guid=raw.rss_guid,
+            rss_link=raw.link,
+            kind_uid=processed.kind_uid,
+            disclosed_at=None,
+            disclosed_at_missing=True,
+            detected_at=detected_at,
+            delay_ms=None,
+            ticker=raw.ticker,
+            corp_name=raw.corp_name,
+            headline=raw.title,
+            bucket=bucket_result.bucket,
+            keyword_hits=bucket_result.keyword_hits,
+            skip_stage=SkipStage.LLM_TIMEOUT,
+            skip_reason="LLM_TIMEOUT",
+            market_ctx=market.snapshot,
+        )
+        await log.write(event_rec)
+        _mark_skip(counters, stage=SkipStage.LLM_TIMEOUT.value, reason="LLM_TIMEOUT")
     except LlmCallError:
         if _tracer and _t_llm is not None:
             _tracer.llm_end(_t_llm, raw.ticker, error="call_error")
-        event_rec.skip_stage = SkipStage.LLM_ERROR
-        event_rec.skip_reason = "LLM_ERROR"
-        await log.write(event_rec)
-        _mark_skip(counters, stage=SkipStage.LLM_ERROR.value, reason="LLM_ERROR")
         if counters is not None:
             counters.errors["llm_call_error"] += 1
-        if _tracer and _t_proc is not None:
-            _tracer.process_end(_t_proc, processed.event_id, "LLM_ERROR")
-        return
+        outcome = ProcessOutcome(processed.event_id, skip_stage=SkipStage.LLM_ERROR, skip_reason="LLM_ERROR")
+        event_rec = EventRecord(
+            mode=mode,
+            schema_version=config.schema_version,
+            run_id=run_id,
+            event_id=processed.event_id,
+            event_id_method=processed.event_id_method,
+            event_kind=processed.event_kind,
+            parent_id=processed.parent_id,
+            event_group_id=processed.event_group_id,
+            parent_match_method=processed.parent_match_method,
+            parent_match_score=processed.parent_match_score,
+            parent_candidate_count=processed.parent_candidate_count,
+            source=feed_source,
+            rss_guid=raw.rss_guid,
+            rss_link=raw.link,
+            kind_uid=processed.kind_uid,
+            disclosed_at=None,
+            disclosed_at_missing=True,
+            detected_at=detected_at,
+            delay_ms=None,
+            ticker=raw.ticker,
+            corp_name=raw.corp_name,
+            headline=raw.title,
+            bucket=bucket_result.bucket,
+            keyword_hits=bucket_result.keyword_hits,
+            skip_stage=SkipStage.LLM_ERROR,
+            skip_reason="LLM_ERROR",
+            market_ctx=market.snapshot,
+        )
+        await log.write(event_rec)
+        _mark_skip(counters, stage=SkipStage.LLM_ERROR.value, reason="LLM_ERROR")
     except LlmParseError:
         if _tracer and _t_llm is not None:
             _tracer.llm_end(_t_llm, raw.ticker, error="parse_error")
-        event_rec.skip_stage = SkipStage.LLM_PARSE
-        event_rec.skip_reason = "LLM_PARSE"
-        await log.write(event_rec)
-        _mark_skip(counters, stage=SkipStage.LLM_PARSE.value, reason="LLM_PARSE")
         if counters is not None:
             counters.errors["llm_parse_error"] += 1
-        if _tracer and _t_proc is not None:
-            _tracer.process_end(_t_proc, processed.event_id, "LLM_PARSE")
-        return
-
-    if _tracer and _t_llm is not None:
-        _tracer.llm_end(_t_llm, raw.ticker)
-    decision.event_id = processed.event_id
-    decision.mode = mode
-
-    # Guardrails check (final safety net before order)
-    # sector data not yet available in context_card; pass explicitly when added
-    gr = check_guardrails(
-        ticker=raw.ticker,
-        config=config,
-        spread_bps=raw_data.spread_bps if ctx else None,
-        adv_value_20d=raw_data.adv_value_20d if ctx else None,
-        ret_today=raw_data.ret_today if ctx else None,
-        state=guardrail_state,
-        headline=raw.title,
-        sector=raw_data.sector if ctx else "",
-        quote_risk_state=raw_data.quote_risk_state if ctx else None,
-        orderbook_snapshot=raw_data.orderbook_snapshot if ctx else None,
-        intraday_value_vs_adv20d=raw_data.intraday_value_vs_adv20d if ctx else None,
-        decision_action=decision.action,
-    )
-    if not gr.passed:
-        event_rec.skip_stage = SkipStage.GUARDRAIL
-        event_rec.skip_reason = gr.reason
-        await log.write(event_rec)
-        _mark_skip(
-            counters,
-            stage=SkipStage.GUARDRAIL.value,
-            reason=gr.reason,
+        outcome = ProcessOutcome(processed.event_id, skip_stage=SkipStage.LLM_PARSE, skip_reason="LLM_PARSE")
+        event_rec = EventRecord(
+            mode=mode,
+            schema_version=config.schema_version,
+            run_id=run_id,
+            event_id=processed.event_id,
+            event_id_method=processed.event_id_method,
+            event_kind=processed.event_kind,
+            parent_id=processed.parent_id,
+            event_group_id=processed.event_group_id,
+            parent_match_method=processed.parent_match_method,
+            parent_match_score=processed.parent_match_score,
+            parent_candidate_count=processed.parent_candidate_count,
+            source=feed_source,
+            rss_guid=raw.rss_guid,
+            rss_link=raw.link,
+            kind_uid=processed.kind_uid,
+            disclosed_at=None,
+            disclosed_at_missing=True,
+            detected_at=detected_at,
+            delay_ms=None,
+            ticker=raw.ticker,
+            corp_name=raw.corp_name,
+            headline=raw.title,
+            bucket=bucket_result.bucket,
+            keyword_hits=bucket_result.keyword_hits,
+            skip_stage=SkipStage.LLM_PARSE,
+            skip_reason="LLM_PARSE",
+            market_ctx=market.snapshot,
         )
-        if _tracer and _t_proc is not None:
-            _tracer.process_end(_t_proc, processed.event_id, gr.reason or "GUARDRAIL")
-        return
+        await log.write(event_rec)
+        _mark_skip(counters, stage=SkipStage.LLM_PARSE.value, reason="LLM_PARSE")
+    else:
+        if _tracer and _t_llm is not None:
+            _tracer.llm_end(_t_llm, raw.ticker)
 
-    # Success: write event + decision (exactly once each)
-    await log.write(event_rec)
-    await log.write(decision)
-    if counters is not None:
-        counters.totals["decisions_emitted"] += 1
-        counters.totals[f"decision_action_{decision.action.value}"] += 1
-        counters.totals[f"decision_source_{decision.decision_source}"] += 1
-
-    # Track BUY in guardrail state for portfolio-level controls
-    if decision.action == Action.BUY and guardrail_state is not None:
-        guardrail_state.record_buy(raw.ticker)
-
-    # Schedule price snapshots with DECIDED_AT basis
-    scheduler.schedule_t0(
-        event_id=processed.event_id,
-        ticker=raw.ticker,
-        t0_basis=T0Basis.DECIDED_AT,
-        t0_ts=decision.decided_at,
-        run_id=run_id,
-        mode=mode,
-        is_buy_decision=(decision.action == Action.BUY),
-    )
-
-    # Paper mode guard: no order execution
-    if mode == "paper":
-        logger.info("PAPER %s [%s] conf=%d hint=%s: %s",
-                     decision.action.value, raw.ticker, decision.confidence,
-                     decision.size_hint.value, decision.reason)
-        if _tracer and _t_proc is not None:
-            _tracer.process_end(_t_proc, processed.event_id, decision.action.value)
-        return
-
-    action_str = decision.action.value
-    logger.info(
-        "%s [%s] conf=%d hint=%s: %s",
-        action_str, raw.ticker, decision.confidence, decision.size_hint.value, decision.reason,
-    )
     if _tracer and _t_proc is not None:
-        _tracer.process_end(_t_proc, processed.event_id, action_str)
+        _tracer.process_end(_t_proc, processed.event_id, outcome.action.value if outcome.action else (outcome.skip_reason or "SKIP"))
+
+
+async def _process_unknown_promotion(
+    *,
+    request: UnknownReviewRequest,
+    review,
+    decision_engine: DecisionEngine,
+    market: MarketMonitor,
+    scheduler: SnapshotScheduler,
+    log: JsonlLogger,
+    config: Config,
+    run_id: str,
+    kis: Optional[KisClient],
+    counters: Optional[RuntimeCounters],
+    guardrail_state: Optional[GuardrailState],
+) -> None:
+    promotion = evaluate_unknown_promotion(config, request, review)
+    if promotion.promotion_status != PromotionStatus.PROMOTED:
+        append_unknown_promotion(config, request.detected_at, promotion)
+        return
+
+    derived_event_id = _promoted_event_id(request.event_id, review.suggested_bucket)
+    synthetic_raw = RawDisclosure(
+        title=request.headline,
+        link=request.rss_link,
+        rss_guid=request.rss_guid,
+        published=request.published,
+        ticker=request.ticker,
+        corp_name=request.corp_name,
+        detected_at=request.detected_at,
+    )
+    synthetic_processed = ProcessedEvent(
+        event_id=derived_event_id,
+        event_id_method=EventIdMethod.FALLBACK,
+        event_kind=EventKind.ORIGINAL,
+        parent_id=None,
+        event_group_id=derived_event_id,
+        parent_match_method=None,
+        parent_match_score=None,
+        parent_candidate_count=None,
+        kind_uid=None,
+        raw=synthetic_raw,
+    )
+
+    try:
+        outcome = await _execute_bucket_path(
+            raw=synthetic_raw,
+            processed=synthetic_processed,
+            bucket=review.suggested_bucket,
+            keyword_hits=[],
+            decision_engine=decision_engine,
+            market=market,
+            scheduler=scheduler,
+            log=log,
+            config=config,
+            run_id=run_id,
+            kis=kis,
+            counters=counters,
+            mode=request.runtime_mode,
+            guardrail_state=guardrail_state,
+            feed_source=request.source,
+            analysis_tag_override="UNKNOWN_PROMOTED",
+            promotion_original_event_id=request.event_id,
+            promotion_original_bucket=Bucket.UNKNOWN,
+            promotion_confidence=review.confidence,
+            promotion_policy=promotion.promotion_policy,
+        )
+    except LlmTimeoutError:
+        if counters is not None:
+            counters.errors["llm_timeout"] += 1
+        promotion.promotion_status = PromotionStatus.ERROR
+        promotion.derived_event_id = derived_event_id
+        promotion.gate_reasons = ["PROMOTION_EXECUTION_ERROR"]
+        promotion.skip_stage = SkipStage.LLM_TIMEOUT
+        promotion.skip_reason = "LLM_TIMEOUT"
+        append_unknown_promotion(config, request.detected_at, promotion)
+        return
+    except LlmCallError:
+        if counters is not None:
+            counters.errors["llm_call_error"] += 1
+        promotion.promotion_status = PromotionStatus.ERROR
+        promotion.derived_event_id = derived_event_id
+        promotion.gate_reasons = ["PROMOTION_EXECUTION_ERROR"]
+        promotion.skip_stage = SkipStage.LLM_ERROR
+        promotion.skip_reason = "LLM_ERROR"
+        append_unknown_promotion(config, request.detected_at, promotion)
+        return
+    except LlmParseError:
+        if counters is not None:
+            counters.errors["llm_parse_error"] += 1
+        promotion.promotion_status = PromotionStatus.ERROR
+        promotion.derived_event_id = derived_event_id
+        promotion.gate_reasons = ["PROMOTION_EXECUTION_ERROR"]
+        promotion.skip_stage = SkipStage.LLM_PARSE
+        promotion.skip_reason = "LLM_PARSE"
+        append_unknown_promotion(config, request.detected_at, promotion)
+        return
+    except Exception as exc:
+        promotion.promotion_status = PromotionStatus.ERROR
+        promotion.derived_event_id = derived_event_id
+        promotion.gate_reasons = ["PROMOTION_EXECUTION_ERROR"]
+        promotion.error = f"{type(exc).__name__}: {exc}"
+        append_unknown_promotion(config, request.detected_at, promotion)
+        return
+
+    promotion.derived_event_id = derived_event_id
+    promotion.decision_action = outcome.action
+    promotion.skip_stage = outcome.skip_stage
+    promotion.skip_reason = outcome.skip_reason or ""
+    append_unknown_promotion(config, request.detected_at, promotion)
 
 
 async def _pipeline_loop(
@@ -561,6 +850,7 @@ async def _pipeline_loop(
     stop_event: Optional[asyncio.Event] = None,
     guardrail_state: Optional[GuardrailState] = None,
     feed_source: str = "KIND",
+    unknown_review_queue: Optional[asyncio.Queue] = None,
 ) -> None:
     """Main pipeline: feed/registry + queue/worker event processing."""
     worker_count = max(1, config.pipeline_workers)
@@ -588,6 +878,7 @@ async def _pipeline_loop(
                     mode=mode,
                     guardrail_state=guardrail_state,
                     feed_source=feed_source,
+                    unknown_review_queue=unknown_review_queue,
                 )
             except LogWriteError:
                 logger.critical("Log write failed in worker %d — initiating shutdown", worker_idx)
@@ -709,6 +1000,7 @@ async def run() -> None:
             logger.info("Feed source: KIND RSS")
         registry = EventRegistry(state_dir=state_dir)
         decision_engine = DecisionEngine(config)
+        unknown_review_engine = UnknownReviewEngine(config) if config.unknown_shadow_review_enabled else None
         market = MarketMonitor(config, kis)
         fetcher = PriceFetcher(kis=kis)
         configure_context_card_cache(config.pykrx_cache_ttl_s, config.pykrx_cache_max_size)
@@ -744,6 +1036,40 @@ async def run() -> None:
             stop_event=stop_event,
             pnl_callback=_on_close_pnl,
         )
+        unknown_review_queue: Optional[asyncio.Queue] = None
+        if config.unknown_shadow_review_enabled:
+            unknown_review_queue = asyncio.Queue(maxsize=max(1, config.unknown_review_queue_maxsize))
+
+        async def _unknown_review_loop() -> None:
+            if unknown_review_engine is None or unknown_review_queue is None:
+                return
+            while True:
+                item = await unknown_review_queue.get()
+                try:
+                    if item is None:
+                        return
+                    reviews = await unknown_review_engine.review_with_optional_article(item)
+                    for review in reviews:
+                        append_unknown_review(config, item.detected_at, review)
+                    latest_review = reviews[-1]
+                    if config.unknown_paper_promotion_enabled:
+                        await _process_unknown_promotion(
+                            request=item,
+                            review=latest_review,
+                            decision_engine=decision_engine,
+                            market=market,
+                            scheduler=scheduler,
+                            log=log,
+                            config=config,
+                            run_id=run_id,
+                            kis=kis,
+                            counters=counters,
+                            guardrail_state=guardrail_state,
+                        )
+                except Exception:
+                    logger.warning("UNKNOWN review worker failed", exc_info=True)
+                finally:
+                    unknown_review_queue.task_done()
 
         # Market monitor task (update every 60s)
         async def _market_loop() -> None:
@@ -764,11 +1090,14 @@ async def run() -> None:
                 stop_event=stop_event,
                 guardrail_state=guardrail_state,
                 feed_source=feed_source,
+                unknown_review_queue=unknown_review_queue,
             ), name="pipeline"),
             asyncio.create_task(scheduler.run(), name="snapshots"),
             asyncio.create_task(_market_loop(), name="market"),
             asyncio.create_task(_watchdog_loop(feed, counters, config, stop_event), name="watchdog"),
         ]
+        if unknown_review_queue is not None:
+            tasks.append(asyncio.create_task(_unknown_review_loop(), name="unknown-review"))
 
         try:
             await asyncio.gather(*tasks)
@@ -783,6 +1112,9 @@ async def run() -> None:
                 flushed_close = await scheduler.flush_close_on_shutdown()
             except LogWriteError:
                 logger.critical("Close snapshot shutdown flush failed — stopping runtime")
+            if unknown_review_queue is not None:
+                await unknown_review_queue.join()
+                await unknown_review_queue.put(None)
             scheduler.stop()
             for t in tasks:
                 t.cancel()

@@ -88,6 +88,42 @@ def main() -> None:
                 output_path=args.replay_ops_cycle_out or "",
             )
         )
+    elif args.unknown_review_summary:
+        from kindshot.unknown_review import unknown_review_ops_summary
+
+        config = load_config()
+        unknown_review_ops_summary(
+            config,
+            limit=max(1, int(args.unknown_review_limit or 10)),
+            output_path=args.unknown_review_out or "",
+        )
+    elif args.unknown_review_rule_report:
+        from kindshot.unknown_review import unknown_review_rule_report
+
+        config = load_config()
+        unknown_review_rule_report(
+            config,
+            limit=max(1, int(args.unknown_review_rule_limit or 10)),
+            output_path=args.unknown_review_rule_out or "",
+        )
+    elif args.unknown_review_rule_queue:
+        from kindshot.unknown_review import unknown_review_rule_queue
+
+        config = load_config()
+        unknown_review_rule_queue(
+            config,
+            limit=max(1, int(args.unknown_review_rule_queue_limit or 10)),
+            output_path=args.unknown_review_rule_queue_out or "",
+        )
+    elif args.unknown_review_rule_patch:
+        from kindshot.unknown_review import unknown_review_rule_patch
+
+        config = load_config()
+        unknown_review_rule_patch(
+            config,
+            limit=max(1, int(args.unknown_review_rule_patch_limit or 20)),
+            output_path=args.unknown_review_rule_patch_out or "",
+        )
     else:
         asyncio.run(run())
 

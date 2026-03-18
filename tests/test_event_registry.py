@@ -1,6 +1,6 @@
 """Tests for event registry: dedup, event_id, correction linking."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -33,7 +33,16 @@ def test_dedup_same_uid():
 def test_different_uid():
     reg = EventRegistry()
     r1 = _raw(link="https://kind.krx.co.kr/?rcpNo=20260305000001")
-    r2 = _raw(link="https://kind.krx.co.kr/?rcpNo=20260305000002", guid="guid2")
+    later = datetime.now(timezone.utc) + timedelta(minutes=11)
+    r2 = RawDisclosure(
+        title="삼성전자(005930) - 공급계약 체결",
+        link="https://kind.krx.co.kr/?rcpNo=20260305000002",
+        rss_guid="guid2",
+        published="2026-03-05T09:23:04+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=later,
+    )
     assert reg.process(r1) is not None
     assert reg.process(r2) is not None
 
@@ -148,6 +157,7 @@ def test_ttl_prune_on_new_day():
 def test_fallback_includes_link_for_collision_resistance():
     """Two disclosures with same published+ticker+title but different links get different IDs."""
     reg = EventRegistry()
+    base_detected_at = datetime.now(timezone.utc)
     r1 = RawDisclosure(
         title="삼성전자(005930) - 임원변경",
         link="https://example.com/page-a",
@@ -155,7 +165,7 @@ def test_fallback_includes_link_for_collision_resistance():
         published="2026-03-05T09:00:00+09:00",
         ticker="005930",
         corp_name="삼성전자",
-        detected_at=datetime.now(timezone.utc),
+        detected_at=base_detected_at,
     )
     r2 = RawDisclosure(
         title="삼성전자(005930) - 임원변경",
@@ -164,7 +174,7 @@ def test_fallback_includes_link_for_collision_resistance():
         published="2026-03-05T09:00:00+09:00",
         ticker="005930",
         corp_name="삼성전자",
-        detected_at=datetime.now(timezone.utc),
+        detected_at=base_detected_at + timedelta(minutes=11),
     )
     res1 = reg.process(r1)
     res2 = reg.process(r2)

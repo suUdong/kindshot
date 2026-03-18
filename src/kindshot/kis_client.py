@@ -72,6 +72,19 @@ class IndexInfo:
 
 
 @dataclass(frozen=True)
+class IndexDailyInfo:
+    iscd: str
+    date: str
+    close: float
+    open_px: float
+    high: float
+    low: float
+    volume: Optional[float]
+    value: Optional[float]
+    fetch_latency_ms: int
+
+
+@dataclass(frozen=True)
 class NewsDisclosure:
     news_id: str
     data_dt: str
@@ -424,6 +437,77 @@ class KisClient:
             up_issue_count=up_issue_count,
             down_issue_count=down_issue_count,
             flat_issue_count=flat_issue_count,
+        )
+
+    async def get_index_daily_info(self, iscd: str, date: str) -> Optional[IndexDailyInfo]:
+        """Get historical daily index OHLCV for an exact business date via KIS."""
+        token = await self._ensure_token()
+        if not token:
+            return None
+
+        t0 = time.monotonic()
+        spec = KisGetSpec(
+            path="/uapi/domestic-stock/v1/quotations/inquire-index-daily-price",
+            tr_id="FHPUP02120000",
+            output_key="output2",
+        )
+        params = {
+            "FID_PERIOD_DIV_CODE": "D",
+            "FID_COND_MRKT_DIV_CODE": "U",
+            "FID_INPUT_ISCD": iscd,
+            "FID_INPUT_DATE_1": date,
+        }
+        response = await self._get_json(token, spec, params)
+        if response is None:
+            return None
+
+        rows = self._output_list(response.data, spec, context=f"index daily output for {iscd}:{date}")
+        if not rows:
+            return None
+
+        exact_row = next(
+            (row for row in rows if str(row.get("stck_bsop_date", "")).strip() == date),
+            None,
+        )
+        if exact_row is None:
+            logger.debug(
+                "KIS index daily exact date not found (iscd=%s date=%s rows=%d msg_cd=%s)",
+                iscd,
+                date,
+                len(rows),
+                response.data.get("msg_cd", ""),
+            )
+            return None
+
+        try:
+            close = float(exact_row["bstp_nmix_prpr"])
+            open_px = float(exact_row["bstp_nmix_oprc"])
+            high = float(exact_row["bstp_nmix_hgpr"])
+            low = float(exact_row["bstp_nmix_lwpr"])
+            volume = (
+                float(exact_row["acml_vol"])
+                if exact_row.get("acml_vol") not in ("", None)
+                else None
+            )
+            value = (
+                float(exact_row["acml_tr_pbmn"])
+                if exact_row.get("acml_tr_pbmn") not in ("", None)
+                else None
+            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning("KIS invalid index daily fields (iscd=%s date=%s)", iscd, date)
+            return None
+
+        return IndexDailyInfo(
+            iscd=iscd,
+            date=date,
+            close=close,
+            open_px=open_px,
+            high=high,
+            low=low,
+            volume=volume,
+            value=value,
+            fetch_latency_ms=int((time.monotonic() - t0) * 1000),
         )
 
     async def get_news_disclosures(

@@ -228,8 +228,19 @@ def _runtime_context_card_path(config: Config, ts: datetime) -> Path:
 def _json_safe_value(value: object) -> object:
     if value is None:
         return None
+    if isinstance(value, dict):
+        return {str(key): _json_safe_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_value(item) for item in value]
     if is_dataclass(value):
-        return asdict(value)
+        return _json_safe_value(asdict(value))
+    if hasattr(value, "model_dump"):
+        return _json_safe_value(value.model_dump(mode="json"))
+    if hasattr(value, "item") and callable(value.item):
+        try:
+            return _json_safe_value(value.item())
+        except (TypeError, ValueError):
+            pass
     return value
 
 
@@ -250,6 +261,10 @@ async def append_runtime_context_card(
     quant_check_passed: Optional[bool],
     skip_stage: Optional[str],
     skip_reason: Optional[str],
+    promotion_original_event_id: Optional[str],
+    promotion_original_bucket: Optional[str],
+    promotion_confidence: Optional[int],
+    promotion_policy: Optional[str],
     ctx: ContextCard,
     raw: ContextCardData,
     market_ctx: object,
@@ -270,7 +285,11 @@ async def append_runtime_context_card(
         "quant_check_passed": quant_check_passed,
         "skip_stage": skip_stage,
         "skip_reason": skip_reason,
-        "ctx": ctx.model_dump(mode="json"),
+        "promotion_original_event_id": promotion_original_event_id,
+        "promotion_original_bucket": promotion_original_bucket,
+        "promotion_confidence": promotion_confidence,
+        "promotion_policy": promotion_policy,
+        "ctx": _json_safe_value(ctx),
         "raw": {
             "adv_value_20d": raw.adv_value_20d,
             "spread_bps": raw.spread_bps,
@@ -286,17 +305,17 @@ async def append_runtime_context_card(
             "orderbook_snapshot": _json_safe_value(raw.orderbook_snapshot),
             "sector": raw.sector,
         },
-        "market_ctx": market_ctx.model_dump(mode="json") if hasattr(market_ctx, "model_dump") else market_ctx,
+        "market_ctx": _json_safe_value(market_ctx),
     }
     path = _runtime_context_card_path(config, detected_at)
-    line = json.dumps(record, ensure_ascii=False)
+    line = json.dumps(_json_safe_value(record), ensure_ascii=False)
 
     def _write() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
 
-    await asyncio.to_thread(_write)
+    _write()
     await update_runtime_artifact_index(
         config,
         date=detected_at.astimezone(_KST).strftime("%Y%m%d"),

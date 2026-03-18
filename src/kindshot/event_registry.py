@@ -102,7 +102,7 @@ class EventRegistry:
         state_dir: Optional[Path] = None,
         *,
         related_title_window_s: int = 600,
-        related_title_min_token_overlap: float = 0.6,
+        related_title_min_token_overlap: float = 0.55,
         related_title_min_shared_tokens: int = 2,
     ) -> None:
         self._seen_ids: dict[str, datetime] = {}  # event_id -> detected_at

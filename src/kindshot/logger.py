@@ -37,6 +37,6 @@ class JsonlLogger:
         line = record.model_dump_json(exclude_none=False)
         try:
             async with self._lock:
-                await asyncio.to_thread(self._write_sync, line)
+                self._write_sync(line)
         except OSError as e:
             raise LogWriteError(f"Log write failed: {e}") from e

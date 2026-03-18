@@ -37,6 +37,25 @@ class SizeHint(str, Enum):
     L = "L"
 
 
+class ReviewStatus(str, Enum):
+    OK = "OK"
+    ERROR = "ERROR"
+    SKIPPED = "SKIPPED"
+
+
+class ReviewPolarity(str, Enum):
+    POSITIVE = "POSITIVE"
+    NEGATIVE = "NEGATIVE"
+    NEUTRAL = "NEUTRAL"
+    UNCLEAR = "UNCLEAR"
+
+
+class PromotionStatus(str, Enum):
+    REJECTED = "REJECTED"
+    PROMOTED = "PROMOTED"
+    ERROR = "ERROR"
+
+
 class SkipStage(str, Enum):
     DUPLICATE = "DUPLICATE"
     BUCKET = "BUCKET"
@@ -129,6 +148,10 @@ class EventRecord(BaseModel):
     quant_check_detail: Optional[QuantCheckDetail] = None
     ctx: Optional[ContextCard] = None
     market_ctx: Optional[MarketContext] = None
+    promotion_original_event_id: Optional[str] = None
+    promotion_original_bucket: Optional[Bucket] = None
+    promotion_confidence: Optional[int] = None
+    promotion_policy: Optional[str] = None
 
 
 class DecisionRecord(BaseModel):
@@ -165,3 +188,60 @@ class PriceSnapshot(BaseModel):
     spread_bps: Optional[float] = None
     price_source: Optional[str] = None
     snapshot_fetch_latency_ms: Optional[int] = None
+
+
+class UnknownInboxRecord(BaseModel):
+    type: str = "unknown_inbox"
+    event_id: str
+    detected_at: datetime
+    runtime_mode: str
+    ticker: str
+    corp_name: str
+    headline: str
+    rss_link: str
+    source: str
+    original_bucket: Bucket = Bucket.UNKNOWN
+
+
+class UnknownReviewRecord(BaseModel):
+    type: str = "unknown_review"
+    event_id: str
+    reviewed_at: datetime
+    runtime_mode: str
+    headline_only: bool
+    review_iteration: str = "headline_initial"
+    review_status: ReviewStatus
+    suggested_bucket: Bucket = Bucket.UNKNOWN
+    polarity: ReviewPolarity = ReviewPolarity.UNCLEAR
+    confidence: int = Field(default=0, ge=0, le=100)
+    promote_now: bool = False
+    needs_article_body: bool = False
+    body_fetch_status: str = "not_requested"
+    body_source: str = ""
+    body_text_chars: int = Field(default=0, ge=0)
+    re_reviewed: bool = False
+    canonical_headline: str = ""
+    reason: str = ""
+    reason_codes: list[str] = Field(default_factory=list)
+    keyword_candidates: list[str] = Field(default_factory=list)
+    risk_flags: list[str] = Field(default_factory=list)
+    error: str = ""
+
+
+class UnknownPromotionRecord(BaseModel):
+    type: str = "unknown_promotion"
+    event_id: str
+    derived_event_id: str = ""
+    promoted_at: datetime
+    runtime_mode: str
+    review_status: ReviewStatus
+    original_bucket: Bucket = Bucket.UNKNOWN
+    suggested_bucket: Bucket = Bucket.UNKNOWN
+    confidence: int = Field(default=0, ge=0, le=100)
+    promotion_status: PromotionStatus
+    promotion_policy: str = ""
+    gate_reasons: list[str] = Field(default_factory=list)
+    decision_action: Optional[Action] = None
+    skip_stage: Optional[SkipStage] = None
+    skip_reason: str = ""
+    error: str = ""

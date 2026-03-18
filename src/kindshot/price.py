@@ -101,7 +101,7 @@ class SnapshotScheduler:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
 
-        await asyncio.to_thread(_write)
+        _write()
         await update_runtime_artifact_index(
             self._config,
             date=kst_date,
