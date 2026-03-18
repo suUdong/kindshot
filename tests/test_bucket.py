@@ -448,3 +448,74 @@ def test_ignore_override_etf_ap_change():
     """ETF AP 지정참가회사 변경은 IGNORE."""
     result = classify("한화 PLUS ETF지정참가회사(AP)추가ㆍ해지ㆍ변경안내")
     assert result.bucket == Bucket.IGNORE
+
+
+# ── v3 키워드 추가 테스트 ──────────────────
+
+def test_ignore_provisional_earnings_disclosure():
+    """잠정실적 공정공시는 IGNORE."""
+    result = classify("(주)오리온 연결재무제표기준영업(잠정)실적(공정공시)")
+    assert result.bucket == Bucket.IGNORE
+
+def test_ignore_consolidated_earnings_prefix():
+    """연결재무제표기준 실적은 IGNORE."""
+    result = classify("한국가스공사(주) 연결재무제표기준영업(잠정)실적(공정공시)")
+    assert result.bucket == Bucket.IGNORE
+
+def test_neg_strong_delisting():
+    """상장폐지는 NEG_STRONG."""
+    result = classify("대동전자(주) 상장폐지")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "상장폐지" in result.keyword_hits
+
+def test_neg_strong_delisting_does_not_override_existing():
+    """상장폐지 심사도 여전히 NEG_STRONG."""
+    result = classify("A사, 상장폐지 심사 개시")
+    assert result.bucket == Bucket.NEG_STRONG
+
+def test_neg_weak_restructuring():
+    """구조조정은 NEG_WEAK."""
+    result = classify("토박스코리아, 지난해 매출 397억...고강도 구조조정 추진")
+    assert result.bucket == Bucket.NEG_WEAK
+    assert "구조조정" in result.keyword_hits
+
+def test_pos_weak_new_facility_investment():
+    """신규시설투자는 POS_WEAK."""
+    result = classify("팬오션(주) 신규시설투자등(자율공시)")
+    assert result.bucket == Bucket.POS_WEAK
+    assert "신규시설투자" in result.keyword_hits
+
+def test_pos_weak_subsidiary_stock_acquisition():
+    """타법인주식및출자증권취득은 POS_WEAK."""
+    result = classify("JW홀딩스(주) 타법인주식및출자증권취득결정")
+    assert result.bucket == Bucket.POS_WEAK
+    assert "타법인주식및출자증권취득" in result.keyword_hits
+
+def test_pos_weak_clinical_start():
+    """임상 착수는 POS_WEAK."""
+    result = classify("케어젠, 펩타이드 기반 모공 개선 마스크팩 임상 착수")
+    assert result.bucket == Bucket.POS_WEAK
+    assert "임상 착수" in result.keyword_hits
+
+def test_pos_weak_shareholder_return_standalone():
+    """주주환원 단독 사용도 POS_WEAK."""
+    result = classify("주주환원 나서는 영원무역홀딩스… 주당 배당금 23% 증가")
+    assert result.bucket == Bucket.POS_WEAK
+    assert "주주환원" in result.keyword_hits
+
+def test_pos_strong_shareholder_return_expansion_still_strong():
+    """주주환원 확대는 여전히 POS_STRONG (POS_STRONG 우선)."""
+    result = classify("삼성전자, 주주환원 확대 발표")
+    assert result.bucket == Bucket.POS_STRONG
+
+def test_pos_weak_profitability_achieved():
+    """흑자 달성은 POS_WEAK."""
+    result = classify("매출 39% 성장·흑자 달성 알로이스")
+    assert result.bucket == Bucket.POS_WEAK
+    assert "흑자 달성" in result.keyword_hits
+
+def test_pos_weak_new_product_launch():
+    """신제품 출시는 POS_WEAK."""
+    result = classify("A사, 차세대 반도체 공정 신제품 출시")
+    assert result.bucket == Bucket.POS_WEAK
+    assert "신제품 출시" in result.keyword_hits

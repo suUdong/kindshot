@@ -1,7 +1,7 @@
 """Tests for guardrails including portfolio-level controls."""
 
 from kindshot.config import Config
-from kindshot.guardrails import check_guardrails, GuardrailResult, GuardrailState
+from kindshot.guardrails import check_guardrails, GuardrailResult, GuardrailState, get_dynamic_stop_loss_pct
 from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
 from kindshot.models import Action
 
@@ -415,5 +415,88 @@ def test_high_confidence_passes():
         ret_today=2.0,
         decision_action=Action.BUY,
         decision_confidence=75,
+    )
+    assert r.passed is True
+
+
+# ── v3 guardrails 테스트 ──────────────────
+
+def test_consecutive_stop_loss_blocks_buy():
+    """3연속 손절 시 BUY 차단."""
+    cfg = _cfg(no_buy_after_kst_hour=23)
+    state = GuardrailState(cfg)
+    state.record_stop_loss()
+    state.record_stop_loss()
+    state.record_stop_loss()
+    assert state.consecutive_stop_losses == 3
+    r = check_guardrails(
+        "005930", cfg, state=state, decision_action=Action.BUY, **_base_args()
+    )
+    assert r.passed is False
+    assert r.reason == "CONSECUTIVE_STOP_LOSS"
+
+
+def test_consecutive_stop_loss_allows_under_threshold():
+    """2연속 손절은 BUY 허용."""
+    cfg = _cfg(no_buy_after_kst_hour=23)
+    state = GuardrailState(cfg)
+    state.record_stop_loss()
+    state.record_stop_loss()
+    assert state.consecutive_stop_losses == 2
+    r = check_guardrails(
+        "005930", cfg, state=state, decision_action=Action.BUY, **_base_args()
+    )
+    assert r.passed is True
+
+
+def test_consecutive_stop_loss_resets_on_profit():
+    """수익 청산 시 연속 손절 카운터 리셋."""
+    cfg = _cfg(no_buy_after_kst_hour=23)
+    state = GuardrailState(cfg)
+    state.record_stop_loss()
+    state.record_stop_loss()
+    state.record_stop_loss()
+    state.record_profitable_exit()
+    assert state.consecutive_stop_losses == 0
+    r = check_guardrails(
+        "005930", cfg, state=state, decision_action=Action.BUY, **_base_args()
+    )
+    assert r.passed is True
+
+
+def test_consecutive_stop_loss_resets_daily():
+    """일일 리셋 시 연속 손절 카운터도 리셋."""
+    cfg = _cfg()
+    state = GuardrailState(cfg)
+    state.record_stop_loss()
+    state.record_stop_loss()
+    state.record_stop_loss()
+    state.reset_daily()
+    assert state.consecutive_stop_losses == 0
+
+
+def test_dynamic_stop_loss_high_confidence():
+    """confidence>=85 시 SL -2.0% (완화)."""
+    cfg = _cfg(paper_stop_loss_pct=-1.5)
+    sl = get_dynamic_stop_loss_pct(cfg, confidence=90)
+    assert sl == -2.0
+
+
+def test_dynamic_stop_loss_normal_confidence():
+    """confidence<85 시 기본 SL."""
+    cfg = _cfg(paper_stop_loss_pct=-1.5)
+    sl = get_dynamic_stop_loss_pct(cfg, confidence=75)
+    assert sl == -1.5
+
+
+def test_consecutive_stop_loss_does_not_block_skip():
+    """SKIP 결정은 연속 손절 체크 안 함."""
+    cfg = _cfg()
+    state = GuardrailState(cfg)
+    state.record_stop_loss()
+    state.record_stop_loss()
+    state.record_stop_loss()
+    r = check_guardrails(
+        "005930", cfg, state=state, decision_action=Action.SKIP, **_base_args()
     )
     assert r.passed is True

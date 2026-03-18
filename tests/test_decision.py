@@ -287,3 +287,75 @@ async def test_llm_invalid_json_raises():
     ctx = ContextCard()
     with pytest.raises(LlmParseError):
         await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
+
+
+# ── v3 프롬프트 & 파서 테스트 ──────────────────
+
+def test_prompt_contains_market_adjustment():
+    """프롬프트에 market_adjustment 섹션 존재."""
+    ctx = ContextCard()
+    prompt = _build_prompt(Bucket.POS_STRONG, "테스트", "005930", "삼성전자", "09:00:00", ctx)
+    assert "market_adjustment" in prompt
+    assert "KOSPI<-2%" in prompt
+    assert "confidence -5" in prompt
+
+
+def test_prompt_contains_concrete_examples():
+    """프롬프트에 구체적 confidence 예시 존재."""
+    ctx = ContextCard()
+    prompt = _build_prompt(Bucket.POS_STRONG, "테스트", "005930", "삼성전자", "09:00:00", ctx)
+    assert "concrete_examples" in prompt
+    assert "BUY(85,L)" in prompt
+    assert "BUY(92,L)" in prompt
+    assert "BUY(72,S)" in prompt
+    assert "SKIP(55)" in prompt
+
+
+def test_prompt_market_context_included():
+    """시장 컨텍스트가 프롬프트에 포함."""
+    from kindshot.models import MarketContext
+    ctx = ContextCard()
+    mctx = MarketContext(kospi_change_pct=-2.5, kosdaq_change_pct=-1.8, kospi_breadth_ratio=0.25)
+    prompt = _build_prompt(Bucket.POS_STRONG, "테스트", "005930", "삼성전자", "09:00:00", ctx, mctx)
+    assert "KOSPI=-2.5%" in prompt
+    assert "breadth_ratio=0.25" in prompt
+
+
+def test_parse_confidence_boundary_zero():
+    """confidence=0 허용."""
+    raw = '{"action": "SKIP", "confidence": 0, "size_hint": "S", "reason": "no catalyst"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["confidence"] == 0
+
+
+def test_parse_confidence_boundary_hundred():
+    """confidence=100 허용."""
+    raw = '{"action": "BUY", "confidence": 100, "size_hint": "L", "reason": "FDA approved"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["confidence"] == 100
+
+
+def test_parse_empty_reason_allowed():
+    """빈 reason도 허용."""
+    raw = '{"action": "SKIP", "confidence": 30, "size_hint": "S", "reason": ""}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["reason"] == ""
+
+
+def test_parse_missing_reason_defaults_empty():
+    """reason 누락 시 빈 문자열."""
+    raw = '{"action": "BUY", "confidence": 80, "size_hint": "L"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["reason"] == ""
+
+
+def test_parse_float_confidence_accepted():
+    """confidence가 float여도 허용."""
+    raw = '{"action": "BUY", "confidence": 82.5, "size_hint": "M", "reason": "good"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["confidence"] == 82.5

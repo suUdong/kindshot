@@ -84,7 +84,11 @@ strategy_guide:
 - 이미 당일 5%+ 상승(ret_today>5) → SKIP, 추격 매수 위험
 - spread_bps>30 → size_hint 한 단계 낮춤 (L→M, M→S)
 - 같은 종목 반복 뉴스(중복 보도) → 처음만 BUY, 후속은 SKIP
-- 시장 하락장(KOSPI<-2%) → confidence -5, size_hint 한 단계 낮춤
+
+market_adjustment (반드시 적용):
+- KOSPI<-2%: confidence -5, size_hint 한 단계 낮춤 (L→M, M→S, S→SKIP)
+- KOSPI<-1% and breadth_ratio<0.35: confidence -3
+- KOSPI>+1% and breadth_ratio>0.6: confidence +3 (상한 95)
 
 confidence & size_hint 매핑 (반드시 준수):
 - 90-100: 확실한 촉매(FDA승인, 대형수주, 사상최대실적) → size_hint=L
@@ -92,6 +96,14 @@ confidence & size_hint 매핑 (반드시 준수):
 - 75-79: 보통 촉매(M&A, 자사주, 중형계약) → size_hint=M
 - 70-74: 약한 촉매(소규모 계약, 모멘텀 의존) → size_hint=S
 - <70: 촉매 불충분 → SKIP
+
+concrete_examples (confidence 차별화 참고):
+- "삼성전자, 300억 규모 반도체 장비 공급계약" → BUY(85,L) 대형+명확
+- "A사, 바이오시밀러 FDA 승인" → BUY(92,L) 확실한 촉매
+- "B사, 50억원 규모 용역계약 체결" → BUY(72,S) 소규모
+- "C사, 자사주 30억원 매입 결정" → BUY(76,M) 주주환원
+- "D사, MOU 체결…구체적 계약 미정" → SKIP(55) 실행 불확실
+- "E사, 목표가 상향" → SKIP(45) 리포트일 뿐
 
 task: decide BUY or SKIP. respond with ONLY a JSON object (no markdown, no code fences).
 example: {{"action":"BUY","confidence":85,"size_hint":"L","reason":"FDA 허가 획득, 바이오 강한 촉매"}}

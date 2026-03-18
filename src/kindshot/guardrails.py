@@ -36,6 +36,7 @@ class GuardrailState:
         self._bought_tickers: set[str] = set()  # tickers bought today
         self._sector_positions: dict[str, int] = {}  # sector -> count of open positions
         self._position_count: int = 0
+        self._consecutive_stop_losses: int = 0  # 연속 손절 카운터
         self._last_kst_date: Optional[str] = None  # YYYY-MM-DD
         self._state_dir = state_dir
         if state_dir:
@@ -54,12 +55,23 @@ class GuardrailState:
         self._daily_pnl += pnl
         self._persist_state()
 
+    def record_stop_loss(self) -> None:
+        """Record a stop-loss exit. Increments consecutive counter."""
+        self._consecutive_stop_losses += 1
+        self._persist_state()
+
+    def record_profitable_exit(self) -> None:
+        """Record a profitable exit. Resets consecutive stop-loss counter."""
+        self._consecutive_stop_losses = 0
+        self._persist_state()
+
     def reset_daily(self) -> None:
         """Reset at start of new trading day."""
         self._daily_pnl = 0.0
         self._bought_tickers.clear()
         self._sector_positions.clear()
         self._position_count = 0
+        self._consecutive_stop_losses = 0
 
     def check_daily_reset(self) -> None:
         """Auto-reset if KST date changed since last check."""
@@ -96,6 +108,7 @@ class GuardrailState:
             self._bought_tickers = set(data.get("bought_tickers", []))
             self._position_count = data.get("position_count", 0)
             self._sector_positions = data.get("sector_positions", {})
+            self._consecutive_stop_losses = data.get("consecutive_stop_losses", 0)
             self._last_kst_date = today
             logger.info("Loaded guardrail state: pnl=%.0f, positions=%d, bought=%d",
                         self._daily_pnl, self._position_count, len(self._bought_tickers))
@@ -114,6 +127,7 @@ class GuardrailState:
                 "bought_tickers": sorted(self._bought_tickers),
                 "position_count": self._position_count,
                 "sector_positions": self._sector_positions,
+                "consecutive_stop_losses": self._consecutive_stop_losses,
             }
             path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except Exception:
@@ -134,6 +148,10 @@ class GuardrailState:
     @property
     def position_count(self) -> int:
         return self._position_count
+
+    @property
+    def consecutive_stop_losses(self) -> int:
+        return self._consecutive_stop_losses
 
 
 # Well-known restricted stock markers from KRX
@@ -248,9 +266,20 @@ def check_guardrails(
         if state.position_count >= config.max_positions:
             return GuardrailResult(passed=False, reason="MAX_POSITIONS")
 
+        # 12a. Consecutive stop-loss circuit breaker (3연속 손절 시 BUY 차단)
+        if decision_action == Action.BUY and state.consecutive_stop_losses >= 3:
+            return GuardrailResult(passed=False, reason="CONSECUTIVE_STOP_LOSS")
+
     # 12. Restricted stock (관리종목/투자경고/투자위험)
     for marker in _RESTRICTED_MARKERS:
         if marker in headline:
             return GuardrailResult(passed=False, reason="RESTRICTED_STOCK")
 
     return GuardrailResult(passed=True)
+
+
+def get_dynamic_stop_loss_pct(config: Config, confidence: int) -> float:
+    """confidence 기반 동적 손절 비율. 고확신 포지션은 SL 완화."""
+    if confidence >= 85:
+        return min(config.paper_stop_loss_pct * 1.33, -2.0)  # -1.5% → -2.0%
+    return config.paper_stop_loss_pct
