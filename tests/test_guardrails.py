@@ -336,3 +336,43 @@ def test_persistence_resets_on_new_day(tmp_path):
 
     s2 = GuardrailState(cfg, state_dir=state_dir)
     assert s2.position_count == 0  # not loaded from stale date
+
+
+def test_chase_buy_blocked():
+    """당일 5%+ 상승 종목 BUY → CHASE_BUY_BLOCKED."""
+    r = check_guardrails(
+        ticker="005930",
+        config=_cfg(spread_check_enabled=True),
+        spread_bps=10.0,
+        adv_value_20d=10e9,
+        ret_today=6.0,
+        decision_action=Action.BUY,
+    )
+    assert r.passed is False
+    assert r.reason == "CHASE_BUY_BLOCKED"
+
+
+def test_chase_buy_not_blocked_on_skip():
+    """SKIP 결정은 추격 매수 체크 안 함."""
+    r = check_guardrails(
+        ticker="005930",
+        config=_cfg(spread_check_enabled=True),
+        spread_bps=10.0,
+        adv_value_20d=10e9,
+        ret_today=6.0,
+        decision_action=Action.SKIP,
+    )
+    assert r.passed is True
+
+
+def test_chase_buy_passes_under_threshold():
+    """당일 4% 상승은 통과."""
+    r = check_guardrails(
+        ticker="005930",
+        config=_cfg(spread_check_enabled=True),
+        spread_bps=10.0,
+        adv_value_20d=10e9,
+        ret_today=4.0,
+        decision_action=Action.BUY,
+    )
+    assert r.passed is True

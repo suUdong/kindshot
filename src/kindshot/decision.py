@@ -65,9 +65,16 @@ ctx_micro: {ctx_micro}
 
 constraints: max_pos=10% no_overnight=true daily_loss_remaining=85%
 
-task: decide BUY or SKIP based on the news event and quant context. no speculation. no narrative.
-respond with ONLY a JSON object, no other text.
-example: {{"action":"BUY","confidence":78,"size_hint":"M","reason":"대형 공급계약 체결, 유동성 충분"}}
+strategy_guide:
+- 바이오/제약 특허·허가·임상 → high confidence (80+), 단기 급등 확률 높음
+- 대형 공급계약(100억+) → BUY, 소형(<30억) → SKIP or low confidence
+- 대형주(시총 10조+) 인수·합작 → 보수적 판단, 주가 하락 경향
+- 이미 당일 5%+ 상승(ret_today>5) → SKIP, 추격 매수 위험
+- spread_bps>20 → size_hint=S, 슬리피지 주의
+- confidence는 실제 수익 확률 반영: 90+=매우 확신, 70-80=보통, <60=SKIP 권장
+
+task: decide BUY or SKIP. respond with ONLY a JSON object.
+example: {{"action":"BUY","confidence":85,"size_hint":"L","reason":"FDA 허가 획득, 바이오 강한 촉매"}}
 fields: action="BUY" or "SKIP", confidence=0-100, size_hint="S" or "M" or "L", reason=max 100 chars"""
 
 
