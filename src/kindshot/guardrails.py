@@ -165,8 +165,9 @@ def check_guardrails(
     # 1. Spread check
     if config.spread_check_enabled:
         if spread_bps is None:
-            return GuardrailResult(passed=False, reason="SPREAD_DATA_MISSING")
-        if spread_bps > config.spread_bps_limit:
+            if config.spread_missing_policy != "pass":
+                return GuardrailResult(passed=False, reason="SPREAD_DATA_MISSING")
+        elif spread_bps > config.spread_bps_limit:
             return GuardrailResult(passed=False, reason="SPREAD_TOO_WIDE")
 
     # 2. ADV check

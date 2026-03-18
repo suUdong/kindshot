@@ -66,12 +66,16 @@ ctx_micro: {ctx_micro}
 constraints: max_pos=10% no_overnight=true daily_loss_remaining=85%
 
 strategy_guide:
-- 바이오/제약 특허·허가·임상 → high confidence (80+), 단기 급등 확률 높음
-- 대형 공급계약(100억+) → BUY, 소형(<30억) → SKIP or low confidence
-- 대형주(시총 10조+) 인수·합작 → 보수적 판단, 주가 하락 경향
+- 수주·공급계약: 매출 대비 10%+ → BUY(80+), 5-10% → BUY(70), <5% → SKIP
+- 바이오/제약 FDA허가·임상3상 성공 → BUY(85+), 임상1-2상 결과 → BUY(70)
+- 유증·CB발행 → SKIP (희석 리스크)
+- 자사주 소각·취득 → BUY(70-75), 주주환원 호재
+- 대형 M&A·합작법인 → BUY(70), 뉴스 초기 반응 후 차익실현 주의
+- 목표가 상향 리포트 → BUY(65-70), 이미 시장 반영 가능
 - 이미 당일 5%+ 상승(ret_today>5) → SKIP, 추격 매수 위험
-- spread_bps>20 → size_hint=S, 슬리피지 주의
-- confidence는 실제 수익 확률 반영: 90+=매우 확신, 70-80=보통, <60=SKIP 권장
+- spread_bps>30 → size_hint=S, 슬리피지 주의
+- confidence는 실제 수익 확률 반영: 85+=매우 확신, 70-80=보통, <65=SKIP 권장
+- 같은 종목 반복 뉴스(중복 보도) → 처음만 BUY, 후속은 SKIP
 
 task: decide BUY or SKIP. respond with ONLY a JSON object.
 example: {{"action":"BUY","confidence":85,"size_hint":"L","reason":"FDA 허가 획득, 바이오 강한 촉매"}}

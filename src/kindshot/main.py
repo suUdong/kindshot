@@ -432,9 +432,11 @@ async def _execute_bucket_path(
         )
 
     if config.dry_run:
+        event_rec.skip_stage = SkipStage.GUARDRAIL
+        event_rec.skip_reason = "DRY_RUN"
         await log.write(event_rec)
         _mark_skip(counters, stage="DRY_RUN", reason="DRY_RUN")
-        return ProcessOutcome(event_id=processed.event_id, skip_reason="DRY_RUN")
+        return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason="DRY_RUN")
 
     # Pre-LLM guardrail checks (LLM 비용 절감)
     if guardrail_state is not None:
@@ -464,6 +466,12 @@ async def _execute_bucket_path(
     decision.event_id = processed.event_id
     decision.mode = mode
 
+    # Inline decision into event_rec (유실 방지)
+    event_rec.decision_action = decision.action.value
+    event_rec.decision_confidence = decision.confidence
+    event_rec.decision_size_hint = decision.size_hint.value
+    event_rec.decision_reason = decision.reason
+
     gr = check_guardrails(
         ticker=raw.ticker,
         config=config,
@@ -482,6 +490,7 @@ async def _execute_bucket_path(
     if not gr.passed:
         event_rec.skip_stage = SkipStage.GUARDRAIL
         event_rec.skip_reason = gr.reason
+        event_rec.guardrail_result = gr.reason
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason=gr.reason)
         return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason=gr.reason)

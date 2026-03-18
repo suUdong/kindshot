@@ -27,7 +27,7 @@ def test_spread_too_wide():
     r = check_guardrails(
         ticker="005930",
         config=_cfg(spread_check_enabled=True),
-        spread_bps=30.0,
+        spread_bps=55.0,
         adv_value_20d=10e9,
         ret_today=5.0,
     )
@@ -35,10 +35,22 @@ def test_spread_too_wide():
     assert r.reason == "SPREAD_TOO_WIDE"
 
 
-def test_spread_missing_fails_close():
+def test_spread_missing_pass_default():
+    """Default spread_missing_policy='pass' allows None spread."""
     r = check_guardrails(
         ticker="005930",
         config=_cfg(spread_check_enabled=True),
+        spread_bps=None,
+        adv_value_20d=10e9,
+        ret_today=5.0,
+    )
+    assert r.passed is True
+
+
+def test_spread_missing_fails_close_when_policy_fail():
+    r = check_guardrails(
+        ticker="005930",
+        config=_cfg(spread_check_enabled=True, spread_missing_policy="fail"),
         spread_bps=None,
         adv_value_20d=10e9,
         ret_today=5.0,
@@ -63,7 +75,7 @@ def test_adv_too_low():
         ticker="005930",
         config=_cfg(),
         spread_bps=10.0,
-        adv_value_20d=1e9,
+        adv_value_20d=0.5e9,
         ret_today=5.0,
     )
     assert r.passed is False
@@ -178,7 +190,7 @@ def test_liquidation_trade_blocks_trade():
 
 
 def test_orderbook_top_level_liquidity_blocks_buy():
-    cfg = _cfg(order_size=5_000_000)
+    cfg = _cfg(order_size=5_000_000, no_buy_after_kst_hour=23)
     r = check_guardrails(
         "005930",
         cfg,
@@ -219,7 +231,7 @@ def test_orderbook_top_level_liquidity_does_not_block_skip():
 
 
 def test_intraday_value_ratio_blocks_buy():
-    cfg = _cfg(min_intraday_value_vs_adv20d=0.01)
+    cfg = _cfg(min_intraday_value_vs_adv20d=0.01, no_buy_after_kst_hour=23)
     r = check_guardrails(
         "005930",
         cfg,
@@ -256,7 +268,7 @@ def test_normalized_quote_temp_stop_blocks_without_raw_dataclass():
 
 
 def test_normalized_top_ask_notional_blocks_buy_without_raw_dataclass():
-    cfg = _cfg(order_size=5_000_000)
+    cfg = _cfg(order_size=5_000_000, no_buy_after_kst_hour=23)
     r = check_guardrails(
         "005930",
         cfg,
@@ -342,7 +354,7 @@ def test_chase_buy_blocked():
     """당일 5%+ 상승 종목 BUY → CHASE_BUY_BLOCKED."""
     r = check_guardrails(
         ticker="005930",
-        config=_cfg(spread_check_enabled=True),
+        config=_cfg(spread_check_enabled=True, no_buy_after_kst_hour=23),
         spread_bps=10.0,
         adv_value_20d=10e9,
         ret_today=6.0,
@@ -369,7 +381,7 @@ def test_chase_buy_passes_under_threshold():
     """당일 4% 상승은 통과."""
     r = check_guardrails(
         ticker="005930",
-        config=_cfg(spread_check_enabled=True),
+        config=_cfg(spread_check_enabled=True, no_buy_after_kst_hour=23),
         spread_bps=10.0,
         adv_value_20d=10e9,
         ret_today=4.0,
@@ -382,7 +394,7 @@ def test_low_confidence_blocked():
     """confidence < 70 → LOW_CONFIDENCE."""
     r = check_guardrails(
         ticker="005930",
-        config=_cfg(spread_check_enabled=True, min_buy_confidence=70),
+        config=_cfg(spread_check_enabled=True, min_buy_confidence=70, no_buy_after_kst_hour=23),
         spread_bps=10.0,
         adv_value_20d=10e9,
         ret_today=2.0,
@@ -397,7 +409,7 @@ def test_high_confidence_passes():
     """confidence >= 70 → 통과."""
     r = check_guardrails(
         ticker="005930",
-        config=_cfg(spread_check_enabled=True, min_buy_confidence=70),
+        config=_cfg(spread_check_enabled=True, min_buy_confidence=70, no_buy_after_kst_hour=23),
         spread_bps=10.0,
         adv_value_20d=10e9,
         ret_today=2.0,

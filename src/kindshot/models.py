@@ -152,6 +152,12 @@ class EventRecord(BaseModel):
     promotion_original_bucket: Optional[Bucket] = None
     promotion_confidence: Optional[int] = None
     promotion_policy: Optional[str] = None
+    # Inline decision (유실 방지: event record에도 decision 결과 포함)
+    decision_action: Optional[str] = None
+    decision_confidence: Optional[int] = None
+    decision_size_hint: Optional[str] = None
+    decision_reason: Optional[str] = None
+    guardrail_result: Optional[str] = None
 
 
 class DecisionRecord(BaseModel):

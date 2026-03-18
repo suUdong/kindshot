@@ -50,7 +50,8 @@ def quant_check(
 
     if config.spread_check_enabled:
         if spread_bps is None:
-            spread_ok = False  # fail-close: data unavailable means don't trade
+            # spread_missing_policy: "pass" = fail-open (통과), "fail" = fail-close (차단)
+            spread_ok = config.spread_missing_policy == "pass"
         else:
             spread_ok = spread_bps <= config.spread_bps_limit
     else:
