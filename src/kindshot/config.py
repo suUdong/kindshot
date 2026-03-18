@@ -78,7 +78,9 @@ class Config:
     daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 3_000_000))  # won
     max_positions: int = field(default_factory=lambda: _env_int("MAX_POSITIONS", 5))
     max_sector_positions: int = field(default_factory=lambda: _env_int("MAX_SECTOR_POSITIONS", 2))
-    order_size: float = field(default_factory=lambda: _env_float("ORDER_SIZE", 5_000_000))  # won per trade
+    order_size: float = field(default_factory=lambda: _env_float("ORDER_SIZE", 5_000_000))  # won per trade (기본, M size)
+    order_size_l: float = field(default_factory=lambda: _env_float("ORDER_SIZE_L", 7_000_000))  # L size (high confidence)
+    order_size_s: float = field(default_factory=lambda: _env_float("ORDER_SIZE_S", 3_000_000))  # S size (low confidence/wide spread)
 
     # --- Market ---
     kospi_halt_pct: float = field(default_factory=lambda: _env_float("KOSPI_HALT_PCT", -8.0))
@@ -147,6 +149,14 @@ class Config:
     @property
     def kis_enabled(self) -> bool:
         return bool(self.kis_app_key and self.kis_app_secret)
+
+    def order_size_for_hint(self, size_hint: str) -> float:
+        """size_hint(L/M/S)에 따라 주문 크기 반환."""
+        if size_hint == "L":
+            return self.order_size_l
+        if size_hint == "S":
+            return self.order_size_s
+        return self.order_size
 
 
 def load_config(**overrides: object) -> Config:
