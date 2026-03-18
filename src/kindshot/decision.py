@@ -18,6 +18,7 @@ from kindshot.models import (
     Bucket,
     ContextCard,
     DecisionRecord,
+    MarketContext,
     SizeHint,
 )
 
@@ -43,6 +44,7 @@ def _build_prompt(
     corp_name: str,
     detected_at: str,
     ctx: ContextCard,
+    market_ctx: Optional[MarketContext] = None,
 ) -> str:
     ctx_price = (
         f"ret_today={ctx.ret_today} ret_1d={ctx.ret_1d} ret_3d={ctx.ret_3d} "
@@ -56,12 +58,20 @@ def _build_prompt(
         f"temp_stop={ctx.quote_temp_stop} liquidation_trade={ctx.quote_liquidation_trade}"
     )
 
+    # 시장 환경 요약
+    market_line = ""
+    if market_ctx:
+        kospi = f"{market_ctx.kospi_change_pct:+.1f}%" if market_ctx.kospi_change_pct is not None else "N/A"
+        kosdaq = f"{market_ctx.kosdaq_change_pct:+.1f}%" if market_ctx.kosdaq_change_pct is not None else "N/A"
+        breadth = f"{market_ctx.kospi_breadth_ratio:.2f}" if market_ctx.kospi_breadth_ratio is not None else "N/A"
+        market_line = f"\nctx_market: KOSPI={kospi} KOSDAQ={kosdaq} breadth_ratio={breadth}"
+
     return f"""event: [{bucket.value}] {corp_name}, {headline}
 corp: {corp_name}({ticker})
 detected_at: {detected_at} KST
 
 ctx_price: {ctx_price}
-ctx_micro: {ctx_micro}
+ctx_micro: {ctx_micro}{market_line}
 
 constraints: max_pos=10% no_overnight=true daily_loss_remaining=85%
 
@@ -76,6 +86,7 @@ strategy_guide:
 - spread_bps>30 → size_hint=S, 슬리피지 주의
 - confidence는 실제 수익 확률 반영: 85+=매우 확신, 70-80=보통, <65=SKIP 권장
 - 같은 종목 반복 뉴스(중복 보도) → 처음만 BUY, 후속은 SKIP
+- 시장 하락장(KOSPI<-2%) → confidence -5, size_hint 한 단계 낮춤 (L→M, M→S)
 
 task: decide BUY or SKIP. respond with ONLY a JSON object.
 example: {{"action":"BUY","confidence":85,"size_hint":"L","reason":"FDA 허가 획득, 바이오 강한 촉매"}}
@@ -242,6 +253,7 @@ class DecisionEngine:
         *,
         run_id: str = "",
         schema_version: str = "0.1.2",
+        market_ctx: Optional[MarketContext] = None,
     ) -> DecisionRecord:
         """Call LLM for BUY/SKIP decision.
 
@@ -269,7 +281,7 @@ class DecisionEngine:
             return self._as_cache_result(shared, run_id)
 
         async def _invoke_uncached() -> DecisionRecord:
-            prompt = _build_prompt(bucket, headline, ticker, corp_name, detected_at_str, ctx)
+            prompt = _build_prompt(bucket, headline, ticker, corp_name, detected_at_str, ctx, market_ctx)
             client = self._get_client()
 
             last_err: Exception | None = None

@@ -462,6 +462,7 @@ async def _execute_bucket_path(
         detected_at_str=detected_at.strftime("%H:%M:%S"),
         run_id=run_id,
         schema_version=config.schema_version,
+        market_ctx=market.snapshot,
     )
     decision.event_id = processed.event_id
     decision.mode = mode
