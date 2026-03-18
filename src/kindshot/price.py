@@ -86,6 +86,8 @@ class SnapshotScheduler:
         self._t0_prices: dict[str, tuple[Optional[float], Optional[float]]] = {}
         # Track ticker per event_id for pnl callback
         self._event_tickers: dict[str, str] = {}
+        # 가상 익절/손절 추적 (event_id → exit horizon)
+        self._virtual_exits: dict[str, str] = {}
 
     def _runtime_snapshot_path(self, ts: datetime) -> Path:
         dt = ts.astimezone(_KST).strftime("%Y%m%d")
@@ -247,6 +249,31 @@ class SnapshotScheduler:
 
         await self._logger.write(record)
         await self._append_runtime_price_snapshot(record)
+
+        # 가상 익절/손절 판정 (BUY, t0 이후, 아직 exit 안 한 경우)
+        if (
+            snap.is_buy_decision
+            and snap.horizon != "t0"
+            and ret_long is not None
+            and snap.event_id not in self._virtual_exits
+        ):
+            ret_pct = ret_long * 100
+            tp_active = self._config.paper_take_profit_pct > 0
+            sl_active = self._config.paper_stop_loss_pct < 0
+            if tp_active and ret_pct >= self._config.paper_take_profit_pct:
+                self._virtual_exits[snap.event_id] = snap.horizon
+                logger.info(
+                    "PAPER TP hit [%s] %s: +%.2f%% at %s (target %.1f%%)",
+                    snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
+                    self._config.paper_take_profit_pct,
+                )
+            elif sl_active and ret_pct <= self._config.paper_stop_loss_pct:
+                self._virtual_exits[snap.event_id] = snap.horizon
+                logger.info(
+                    "PAPER SL hit [%s] %s: %.2f%% at %s (stop %.1f%%)",
+                    snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
+                    self._config.paper_stop_loss_pct,
+                )
 
     async def flush_close_on_shutdown(self) -> int:
         """Fire pending close snapshots if shutdown happens after close fetch time."""

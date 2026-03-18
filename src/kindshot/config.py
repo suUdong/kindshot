@@ -70,6 +70,9 @@ class Config:
     min_buy_confidence: int = field(default_factory=lambda: _env_int("MIN_BUY_CONFIDENCE", 70))  # BUY 최소 confidence
     no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_HOUR", 15))  # 15시 이후 BUY 차단
     no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_MINUTE", 0))  # 15:00 이후 차단
+    # 가상 익절/손절 (paper mode 추적용)
+    paper_take_profit_pct: float = field(default_factory=lambda: _env_float("PAPER_TAKE_PROFIT_PCT", 0.0))  # 0=비활성 (뉴스 트레이딩은 상승 제한 안 함)
+    paper_stop_loss_pct: float = field(default_factory=lambda: _env_float("PAPER_STOP_LOSS_PCT", -0.5))  # -0.5% 손절 (빠른 컷)
     quant_fail_sample_rate: float = 0.10
     daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 3_000_000))  # won
     max_positions: int = field(default_factory=lambda: _env_int("MAX_POSITIONS", 5))
