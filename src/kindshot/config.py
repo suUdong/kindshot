@@ -34,8 +34,8 @@ class Config:
     # --- Anthropic ---
     anthropic_api_key: str = field(default_factory=lambda: _env("ANTHROPIC_API_KEY"))
     llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "claude-haiku-4-5-20251001"))
-    llm_sdk_timeout_s: float = 10.0
-    llm_wait_for_s: float = 12.0
+    llm_sdk_timeout_s: float = 15.0  # SDK backup timeout (> wait_for)
+    llm_wait_for_s: float = 12.0    # asyncio.wait_for fires first
     llm_cache_ttl_s: float = 60.0
     llm_cache_sweep_s: float = 300.0
     llm_max_concurrency: int = field(default_factory=lambda: _env_int("LLM_MAX_CONCURRENCY", 2))
@@ -61,7 +61,7 @@ class Config:
     watchdog_stale_threshold_s: float = 120.0
 
     # --- Quant thresholds ---
-    adv_threshold: float = field(default_factory=lambda: _env_float("ADV_THRESHOLD", 5_000_000_000))
+    adv_threshold: float = field(default_factory=lambda: _env_float("ADV_THRESHOLD", 3_000_000_000))
     spread_bps_limit: float = 25.0
     extreme_move_pct: float = 20.0
     spread_check_enabled: bool = field(default_factory=lambda: _env_bool("SPREAD_CHECK_ENABLED", True))
@@ -103,6 +103,22 @@ class Config:
     replay_ops_queue_ready_path: Path = field(default_factory=lambda: Path(_env("REPLAY_OPS_QUEUE_READY_PATH", "data/replay/ops/queue_ready_latest.json")))
     replay_ops_run_ready_path: Path = field(default_factory=lambda: Path(_env("REPLAY_OPS_RUN_READY_PATH", "data/replay/ops/run_ready_latest.json")))
     replay_ops_cycle_ready_path: Path = field(default_factory=lambda: Path(_env("REPLAY_OPS_CYCLE_READY_PATH", "data/replay/ops/cycle_ready_latest.json")))
+    unknown_shadow_review_enabled: bool = field(default_factory=lambda: _env_bool("UNKNOWN_SHADOW_REVIEW_ENABLED", False))
+    unknown_paper_promotion_enabled: bool = field(default_factory=lambda: _env_bool("UNKNOWN_PAPER_PROMOTION_ENABLED", False))
+    unknown_promotion_min_confidence: int = field(default_factory=lambda: _env_int("UNKNOWN_PROMOTION_MIN_CONFIDENCE", 85))
+    unknown_review_queue_maxsize: int = field(default_factory=lambda: _env_int("UNKNOWN_REVIEW_QUEUE_MAXSIZE", 256))
+    unknown_review_article_enrichment_enabled: bool = field(default_factory=lambda: _env_bool("UNKNOWN_REVIEW_ARTICLE_ENRICHMENT_ENABLED", False))
+    unknown_review_article_timeout_s: float = field(default_factory=lambda: _env_float("UNKNOWN_REVIEW_ARTICLE_TIMEOUT_S", 5.0))
+    unknown_review_article_max_chars: int = field(default_factory=lambda: _env_int("UNKNOWN_REVIEW_ARTICLE_MAX_CHARS", 4000))
+    unknown_inbox_dir: Path = field(default_factory=lambda: Path(_env("UNKNOWN_INBOX_DIR", "logs/unknown_inbox")))
+    unknown_review_dir: Path = field(default_factory=lambda: Path(_env("UNKNOWN_REVIEW_DIR", "logs/unknown_review")))
+    unknown_promotion_dir: Path = field(default_factory=lambda: Path(_env("UNKNOWN_PROMOTION_DIR", "logs/unknown_promotion")))
+    unknown_review_ops_summary_path: Path = field(default_factory=lambda: Path(_env("UNKNOWN_REVIEW_OPS_SUMMARY_PATH", "data/unknown_review/ops/latest.json")))
+    unknown_review_rule_report_path: Path = field(default_factory=lambda: Path(_env("UNKNOWN_REVIEW_RULE_REPORT_PATH", "data/unknown_review/rule_report/latest.json")))
+    unknown_review_rule_queue_path: Path = field(default_factory=lambda: Path(_env("UNKNOWN_REVIEW_RULE_QUEUE_PATH", "data/unknown_review/rule_queue/latest.json")))
+    unknown_review_rule_patch_path: Path = field(default_factory=lambda: Path(_env("UNKNOWN_REVIEW_RULE_PATCH_PATH", "data/unknown_review/rule_patch/latest.json")))
+    unknown_rule_queue_min_reviews: int = field(default_factory=lambda: _env_int("UNKNOWN_RULE_QUEUE_MIN_REVIEWS", 2))
+    unknown_rule_queue_min_promoted: int = field(default_factory=lambda: _env_int("UNKNOWN_RULE_QUEUE_MIN_PROMOTED", 1))
     finalize_cutoff_hour_kst: int = field(default_factory=lambda: _env_int("FINALIZE_CUTOFF_HOUR_KST", 2))
     finalize_cutoff_minute_kst: int = field(default_factory=lambda: _env_int("FINALIZE_CUTOFF_MINUTE_KST", 30))
     collector_news_max_attempts: int = field(default_factory=lambda: _env_int("COLLECTOR_NEWS_MAX_ATTEMPTS", 3))

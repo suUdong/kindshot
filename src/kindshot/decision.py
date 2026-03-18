@@ -65,8 +65,10 @@ ctx_micro: {ctx_micro}
 
 constraints: max_pos=10% no_overnight=true daily_loss_remaining=85%
 
-task: decide BUY or SKIP. no speculation on cause. no narrative.
-output: {{"action":"BUY|SKIP","confidence":0-100,"size_hint":"S|M|L","reason":"≤100 chars"}}"""
+task: decide BUY or SKIP based on the news event and quant context. no speculation. no narrative.
+respond with ONLY a JSON object, no other text.
+example: {{"action":"BUY","confidence":78,"size_hint":"M","reason":"대형 공급계약 체결, 유동성 충분"}}
+fields: action="BUY" or "SKIP", confidence=0-100, size_hint="S" or "M" or "L", reason=max 100 chars"""
 
 
 def _parse_llm_response(raw: str) -> Optional[dict]:
@@ -130,7 +132,16 @@ def _parse_llm_response(raw: str) -> Optional[dict]:
 
     size_hint = data.get("size_hint")
     if size_hint not in ("S", "M", "L"):
-        return None
+        # size_hint 누락/잘못된 경우 confidence 기반 기본값 적용 (파싱 실패 방지)
+        if isinstance(confidence, (int, float)):
+            if confidence >= 80:
+                data["size_hint"] = "L"
+            elif confidence >= 50:
+                data["size_hint"] = "M"
+            else:
+                data["size_hint"] = "S"
+        else:
+            return None
 
     reason = data.get("reason", "")
     if not isinstance(reason, str):
@@ -180,11 +191,18 @@ class DecisionEngine:
 
     def _sweep_cache(self) -> None:
         now = time.monotonic()
-        if now - self._last_sweep < self._config.llm_cache_sweep_s:
+        # 크기 제한: 1024 엔트리 초과 시 강제 sweep
+        force = len(self._cache) > 1024
+        if not force and now - self._last_sweep < self._config.llm_cache_sweep_s:
             return
         expired = [k for k, v in self._cache.items() if v.expires_at < now]
         for k in expired:
             del self._cache[k]
+        # 여전히 초과 시 가장 오래된 절반 제거
+        if len(self._cache) > 1024:
+            sorted_keys = sorted(self._cache, key=lambda k: self._cache[k].expires_at)
+            for k in sorted_keys[: len(sorted_keys) // 2]:
+                del self._cache[k]
         self._last_sweep = now
 
     def _as_cache_result(self, source: DecisionRecord, run_id: str) -> DecisionRecord:

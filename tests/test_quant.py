@@ -27,7 +27,7 @@ def test_all_pass():
 
 def test_adv_too_low():
     r = quant_check(
-        adv_value_20d=3_000_000_000,
+        adv_value_20d=2_000_000_000,
         spread_bps=10.0,
         ret_today=5.0,
         config=_cfg(),
@@ -124,7 +124,7 @@ def test_should_track_price_sampling(monkeypatch):
     monkeypatch.setattr(qmod.random, "random", lambda: 0.05)  # < 0.10
 
     r = quant_check(
-        adv_value_20d=3_000_000_000,
+        adv_value_20d=2_000_000_000,
         spread_bps=10.0,
         ret_today=5.0,
         config=_cfg(),
@@ -138,7 +138,7 @@ def test_no_tracking_when_not_sampled(monkeypatch):
     monkeypatch.setattr(qmod.random, "random", lambda: 0.50)  # > 0.10
 
     r = quant_check(
-        adv_value_20d=3_000_000_000,
+        adv_value_20d=2_000_000_000,
         spread_bps=10.0,
         ret_today=5.0,
         config=_cfg(),

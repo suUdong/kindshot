@@ -211,3 +211,240 @@ def test_neg_strong_going_concern():
     result = classify("A사, 계속기업 불확실성 감사보고서 제출")
     assert result.bucket == Bucket.NEG_STRONG
     assert "계속기업 불확실성" in result.keyword_hits
+
+
+def test_neg_strong_unfaithful_disclosure_designation_no_space():
+    result = classify("디와이피(주) 불성실공시법인지정")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "불성실공시법인지정" in result.keyword_hits
+
+
+def test_neg_strong_unfaithful_disclosure_designation_with_space():
+    result = classify("DYP, 공시불이행으로 불성실공시법인 지정")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "불성실공시법인 지정" in result.keyword_hits
+
+
+def test_neg_weak_major_shareholder_change_no_space():
+    result = classify("주식회사 셀레믹스 최대주주변경")
+    assert result.bucket == Bucket.NEG_WEAK
+    assert "최대주주변경" in result.keyword_hits
+
+
+def test_existing_unknown_major_shareholder_news_phrase_stays_unknown():
+    result = classify("셀레믹스, 최대주주가 박종갑 외 1인으로 변경")
+    assert result.bucket == Bucket.UNKNOWN
+
+
+def test_ignore_etf_disparity_notice():
+    result = classify("삼성 KODEX 경기소비재증권상장지수투자신탁[주식형] ETF 괴리율 초과 발생")
+    assert result.bucket == Bucket.IGNORE
+    assert "괴리율 초과 발생" in result.keyword_hits
+
+
+def test_ignore_etn_investor_notice():
+    result = classify("미래에셋증권(주) 상장지수증권 투자유의 안내(미래에셋 인버스 2X 코스피200 선물 ETN)")
+    assert result.bucket == Bucket.IGNORE
+    assert "투자유의 안내" in result.keyword_hits
+
+
+def test_ignore_account_concentration_notice():
+    result = classify("(주)코아스 [투자주의]소수계좌 거래집중 종목")
+    assert result.bucket == Bucket.IGNORE
+    assert "소수계좌 거래집중 종목" in result.keyword_hits
+
+
+def test_ignore_overheated_issue_notice():
+    result = classify("코오롱글로벌(주) 단기과열종목(가격괴리율, 3거래일 단일가매매) 지정 연장(코오롱글로벌우)")
+    assert result.bucket == Bucket.IGNORE
+    assert "단기과열종목" in result.keyword_hits
+
+
+def test_ignore_short_sale_overheat_notice():
+    result = classify("서울식품공업(주) 공매도 과열종목 지정(공매도 거래 금지 적용)")
+    assert result.bucket == Bucket.IGNORE
+    assert "공매도 과열종목 지정" in result.keyword_hits
+
+
+def test_existing_positive_supply_contract_still_pos_strong():
+    result = classify("파두, 226억원 규모 SSD 컨트롤러 공급 계약 체결")
+    assert result.bucket == Bucket.POS_STRONG
+
+
+def test_ignore_post_close_summary_headline():
+    result = classify("전일 장마감 후 주요 종목 공시")
+    assert result.bucket == Bucket.IGNORE
+    assert "전일 장마감 후 주요 종목 공시" in result.keyword_hits
+
+
+def test_ignore_today_key_disclosures_summary():
+    result = classify("[오늘의 주요공시] 인포바인·강원랜드 등")
+    assert result.bucket == Bucket.IGNORE
+    assert "[오늘의 주요공시]" in result.keyword_hits
+
+
+def test_ignore_previous_trading_day_summary_format():
+    result = classify("[코스피코스닥 전 거래일(12일) 주요공시]")
+    assert result.bucket == Bucket.IGNORE
+    assert "전 거래일(" in result.keyword_hits
+
+
+def test_generic_major_disclosure_phrase_stays_unknown():
+    result = classify("인포바인 주요공시 관련 해설")
+    assert result.bucket == Bucket.UNKNOWN
+
+
+def test_ignore_intraday_report_list_title():
+    result = classify("장중 주요 종목 공시")
+    assert result.bucket == Bucket.IGNORE
+    assert "장중 주요 종목 공시" in result.keyword_hits
+
+
+def test_generic_major_stock_disclosure_phrase_stays_unknown():
+    result = classify("오늘 주요 종목 공시 해설")
+    assert result.bucket == Bucket.UNKNOWN
+
+
+def test_ignore_previous_day_ownership_change_summary_title():
+    result = classify("전일자 주요 지분 변동 공시")
+    assert result.bucket == Bucket.IGNORE
+    assert "전일자 주요 지분 변동 공시" in result.keyword_hits
+
+
+def test_generic_ownership_change_summary_phrase_stays_unknown():
+    result = classify("오늘 지분 변동 공시 해설")
+    assert result.bucket == Bucket.UNKNOWN
+
+
+def test_ignore_good_morning_market_wrap_prefix():
+    result = classify('[굿모닝증시]"중동 포화 속 파월의 입·마이크론 실적…코스피 안개속 장세"')
+    assert result.bucket == Bucket.IGNORE
+    assert "[굿모닝증시]" in result.keyword_hits
+
+
+def test_generic_market_wrap_near_match_stays_unknown():
+    result = classify("굿모닝 증시 체크 포인트")
+    assert result.bucket == Bucket.UNKNOWN
+
+
+# ── False positive prevention (수익성 보호) ──────────────────
+
+def test_neg_patent_expiry_not_pos():
+    """특허 만료는 POS_STRONG '특허'가 아닌 NEG_STRONG으로."""
+    result = classify("삼성전자, 바이오시밀러 특허 만료 앞두고 대비책 마련")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "특허 만료" in result.keyword_hits
+
+
+def test_neg_merger_failure_not_pos():
+    """인수 합병 무산은 NEG_STRONG."""
+    result = classify("현대차, 인수 합병 무산 공식 발표")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "합병 무산" in result.keyword_hits
+
+
+def test_neg_investment_failure_not_pos():
+    """투자유치 실패는 NEG_STRONG."""
+    result = classify("A사, 투자유치 실패로 자금난")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "투자유치 실패" in result.keyword_hits
+
+
+def test_neg_turnaround_failure_not_pos():
+    """흑자전환 실패는 NEG_STRONG."""
+    result = classify("B사, 흑자전환 실패…적자 지속")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "흑자전환 실패" in result.keyword_hits
+
+
+def test_neg_fda_rejection_not_pos():
+    """FDA 승인 거부는 NEG_STRONG."""
+    result = classify("한미약품, FDA 승인 거부 통보")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "FDA 승인 거부" in result.keyword_hits or "승인 거부" in result.keyword_hits
+
+
+def test_neg_mou_cancellation_not_pos():
+    """MOU 파기는 NEG_STRONG."""
+    result = classify("C사, 전략적 MOU 파기 결정")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "MOU 파기" in result.keyword_hits
+
+
+def test_neg_patent_infringement_not_pos():
+    """특허 침해 소송은 NEG_STRONG."""
+    result = classify("D사, 특허 침해 소송 제기당해")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "특허 침해 소송" in result.keyword_hits or "특허 침해" in result.keyword_hits
+
+
+def test_neg_scale_reduction_not_pos():
+    """규모 축소는 NEG_STRONG."""
+    result = classify("E사, 공급계약 규모 축소 통보")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "규모 축소" in result.keyword_hits
+
+
+def test_neg_weak_treasury_disposal():
+    """자사주 처분은 NEG_WEAK."""
+    result = classify("F사, 자사주 처분 결정")
+    assert result.bucket == Bucket.NEG_WEAK
+    assert "자사주 처분" in result.keyword_hits
+
+
+def test_pos_strong_still_works_with_neg_guards():
+    """부정 가드 추가 후 정상 POS_STRONG 작동 확인."""
+    assert classify("삼성전자, 신규 특허 10건 등록").bucket == Bucket.POS_STRONG
+    assert classify("현대차, 대형 수주 계약 체결").bucket == Bucket.POS_STRONG
+    assert classify("카카오, 투자유치 성공 발표").bucket == Bucket.POS_STRONG
+    assert classify("한미약품, FDA 승인 획득").bucket == Bucket.POS_STRONG
+    assert classify("A사, 흑자전환 달성").bucket == Bucket.POS_STRONG
+    assert classify("B사, 합작 법인 설립").bucket == Bucket.POS_STRONG
+
+
+# ── IGNORE 확장 테스트 ──────────────────
+
+def test_ignore_mandatory_disclosure():
+    """의무공시 (30% 변동)는 IGNORE."""
+    result = classify("비나텍주식회사 매출액 또는 손익구조 30% 이상 변동")
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_ir_event():
+    """기업설명회(IR)은 IGNORE."""
+    result = classify("한국자산신탁 기업설명회(IR) 개최")
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_dry_earnings():
+    """건조한 실적 숫자는 IGNORE."""
+    result = classify("비나텍, 25년 연결 영업이익 18.05억원")
+    assert result.bucket == Bucket.IGNORE
+
+
+# ── POS_STRONG 확장 테스트 ──────────────────
+
+def test_pos_strong_record_high():
+    """'사상 최대'는 POS_STRONG."""
+    result = classify("LS, 매출 45조원 '사상 최대'")
+    assert result.bucket == Bucket.POS_STRONG
+    assert "사상 최대" in result.keyword_hits
+
+
+def test_pos_strong_shareholder_return():
+    """주주환원 확대는 POS_STRONG."""
+    result = classify("삼성전자, 주주환원 확대 발표")
+    assert result.bucket == Bucket.POS_STRONG
+    assert "주주환원 확대" in result.keyword_hits
+
+
+def test_ignore_override_etf_lp_contract():
+    """ETF LP 유동성공급계약은 IGNORE (POS '공급계약' 오매칭 방지)."""
+    result = classify("삼성 KODEX ETF유동성공급자(LP)와유동성공급계약의체결")
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_override_etf_ap_change():
+    """ETF AP 지정참가회사 변경은 IGNORE."""
+    result = classify("한화 PLUS ETF지정참가회사(AP)추가ㆍ해지ㆍ변경안내")
+    assert result.bucket == Bucket.IGNORE

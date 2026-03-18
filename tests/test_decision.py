@@ -83,6 +83,35 @@ def test_parse_reason_non_string():
     assert result["reason"] == "42"
 
 
+def test_parse_missing_size_hint_defaults_by_confidence():
+    """size_hint 누락 시 confidence 기반 기본값."""
+    # High confidence → L
+    raw = '{"action": "BUY", "confidence": 85, "reason": "strong signal"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["size_hint"] == "L"
+
+    # Medium confidence → M
+    raw = '{"action": "BUY", "confidence": 60, "reason": "moderate"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["size_hint"] == "M"
+
+    # Low confidence → S
+    raw = '{"action": "SKIP", "confidence": 30, "reason": "weak"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["size_hint"] == "S"
+
+
+def test_parse_invalid_size_hint_defaults():
+    """잘못된 size_hint도 confidence 기반 기본값으로 복구."""
+    raw = '{"action": "BUY", "confidence": 75, "size_hint": "XL", "reason": "test"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["size_hint"] == "M"
+
+
 def test_build_prompt():
     ctx = ContextCard(
         ret_today=6.1,
