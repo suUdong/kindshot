@@ -91,11 +91,17 @@ def test_parse_missing_size_hint_defaults_by_confidence():
     assert result is not None
     assert result["size_hint"] == "L"
 
-    # Medium confidence → M
-    raw = '{"action": "BUY", "confidence": 60, "reason": "moderate"}'
+    # Medium confidence (75+) → M
+    raw = '{"action": "BUY", "confidence": 76, "reason": "moderate"}'
     result = _parse_llm_response(raw)
     assert result is not None
     assert result["size_hint"] == "M"
+
+    # Low-medium confidence (65-74) → S
+    raw = '{"action": "BUY", "confidence": 67, "reason": "weak signal"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["size_hint"] == "S"
 
     # Low confidence → S
     raw = '{"action": "SKIP", "confidence": 30, "reason": "weak"}'
@@ -376,4 +382,4 @@ def test_prompt_pos_weak_bias_conservative():
     ctx = ContextCard()
     prompt = _build_prompt(Bucket.POS_WEAK, "목표가 상향", "005930", "삼성전자", "09:00:00", ctx)
     assert "POS_WEAK" in prompt
-    assert "기존 기준 유지" in prompt
+    assert "보수적" in prompt

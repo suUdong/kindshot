@@ -68,11 +68,11 @@ class Config:
     spread_missing_policy: str = field(default_factory=lambda: _env("SPREAD_MISSING_POLICY", "pass"))  # "pass" = fail-open, "fail" = fail-close
     min_intraday_value_vs_adv20d: float = field(default_factory=lambda: _env_float("MIN_INTRADAY_VALUE_VS_ADV20D", 0.01))
     chase_buy_pct: float = field(default_factory=lambda: _env_float("CHASE_BUY_PCT", 5.0))  # 당일 5%+ 상승 시 BUY 차단
-    min_buy_confidence: int = field(default_factory=lambda: _env_int("MIN_BUY_CONFIDENCE", 70))  # BUY 최소 confidence
+    min_buy_confidence: int = field(default_factory=lambda: _env_int("MIN_BUY_CONFIDENCE", 65))  # BUY 최소 confidence
     no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_HOUR", 15))  # 15시 이후 BUY 차단
     no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_MINUTE", 0))  # 15:00 이후 차단
     # 가상 익절/손절 (paper mode 추적용)
-    paper_take_profit_pct: float = field(default_factory=lambda: _env_float("PAPER_TAKE_PROFIT_PCT", 0.0))  # 0=비활성 (뉴스 트레이딩은 상승 제한 안 함)
+    paper_take_profit_pct: float = field(default_factory=lambda: _env_float("PAPER_TAKE_PROFIT_PCT", 3.0))  # 3%=기본 익절 (뉴스 트레이딩)
     paper_stop_loss_pct: float = field(default_factory=lambda: _env_float("PAPER_STOP_LOSS_PCT", -1.5))  # -1.5% 손절 (뉴스 변동성 감안)
     quant_fail_sample_rate: float = 0.10
     daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 3_000_000))  # won
@@ -87,12 +87,12 @@ class Config:
     min_market_breadth_ratio: float = field(default_factory=lambda: _env_float("MIN_MARKET_BREADTH_RATIO", 0.3))
 
     # --- Price snapshots ---
-    snapshot_horizons: tuple[str, ...] = ("t0", "t+1m", "t+5m", "t+30m", "close")
+    snapshot_horizons: tuple[str, ...] = ("t0", "t+30s", "t+1m", "t+2m", "t+5m", "t+30m", "close")
     close_snapshot_delay_s: float = 300.0  # 15:31~15:35
 
     # --- Logging ---
     log_dir: Path = field(default_factory=lambda: Path(_env("LOG_DIR", "logs")))
-    schema_version: str = "0.1.2"
+    schema_version: str = "0.1.3"
 
     # --- Collector ---
     data_dir: Path = field(default_factory=lambda: Path(_env("DATA_DIR", "data")))

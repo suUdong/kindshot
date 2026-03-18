@@ -182,7 +182,7 @@ class PriceSnapshot(BaseModel):
     schema_version: str
     run_id: str
     event_id: str
-    horizon: Literal["t0", "t+1m", "t+5m", "t+30m", "close"]
+    horizon: Literal["t0", "t+30s", "t+1m", "t+2m", "t+5m", "t+30m", "close"]
     ts: datetime
     t0_basis: T0Basis
     t0_ts: datetime

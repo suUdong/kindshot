@@ -90,6 +90,35 @@ def _ret_pct(snaps: dict, horizon: str, key: str = "ret_long_vs_t0") -> Optional
     return None
 
 
+def _detect_tp_sl(snaps: dict, tp_pct: float = 3.0, sl_pct: float = -1.5) -> Optional[str]:
+    """snapshot 수익률에서 TP/SL hit를 결정론적으로 도출. 첫 hit 반환."""
+    for h in ["t+30s", "t+1m", "t+2m", "t+5m", "t+30m", "close"]:
+        r = _ret_pct(snaps, h)
+        if r is None:
+            continue
+        if r >= tp_pct:
+            return f"TP@{h}"
+        if r <= sl_pct:
+            return f"SL@{h}"
+    return None
+
+
+def _tp_sl_stats(buy_eids: list[str], snapshots: dict, tp_pct: float = 3.0, sl_pct: float = -1.5) -> dict:
+    """BUY 이벤트들의 TP/SL 통계."""
+    tp_count = 0
+    sl_count = 0
+    neither = 0
+    for eid in buy_eids:
+        result = _detect_tp_sl(snapshots.get(eid, {}), tp_pct, sl_pct)
+        if result and result.startswith("TP"):
+            tp_count += 1
+        elif result and result.startswith("SL"):
+            sl_count += 1
+        else:
+            neither += 1
+    return {"tp": tp_count, "sl": sl_count, "neither": neither, "total": len(buy_eids)}
+
+
 # ── TXT 포맷 (파일/터미널용) ──
 
 def format_txt(log_path: Path, data: dict) -> str:
@@ -278,13 +307,46 @@ def format_telegram(log_path: Path, data: dict) -> str:
             if close_r is not None:
                 close_rets.append(close_r)
 
+            exit_tag = _detect_tp_sl(snaps) or ""
+            if exit_tag:
+                exit_tag = f" [{exit_tag}]"
+
             w(f"{emoji}<b>{ticker}</b> {headline}")
-            w(f"  c={conf}/{size} | {_compact_rets(snaps)}")
+            w(f"  c={conf}/{size} | {_compact_rets(snaps)}{exit_tag}")
 
         if close_rets:
             wins = [r for r in close_rets if r > 0]
             avg = sum(close_rets) / len(close_rets)
             w(f"\n📈 승률 {len(wins)}/{len(close_rets)} ({len(wins)/len(close_rets)*100:.0f}%) 평균 {avg:+.2f}%")
+
+        # TP/SL 통계
+        tpsl = _tp_sl_stats(list(buy_decisions.keys()), snapshots)
+        if tpsl["total"] > 0:
+            w(f"🎯 TP:{tpsl['tp']} SL:{tpsl['sl']} 미도달:{tpsl['neither']}")
+
+        # confidence 구간별 승률
+        conf_buckets: dict[str, list[float]] = {"90+": [], "80-89": [], "70-79": [], "65-69": []}
+        for eid, dec in buy_decisions.items():
+            c = dec.get("confidence", 0)
+            cr = _ret_pct(snapshots.get(eid, {}), "close")
+            if cr is None:
+                continue
+            if c >= 90:
+                conf_buckets["90+"].append(cr)
+            elif c >= 80:
+                conf_buckets["80-89"].append(cr)
+            elif c >= 70:
+                conf_buckets["70-79"].append(cr)
+            elif c >= 65:
+                conf_buckets["65-69"].append(cr)
+        active_buckets = {k: v for k, v in conf_buckets.items() if v}
+        if active_buckets:
+            w("")
+            w("📊 <b>구간별 성과</b>")
+            for label, rets in active_buckets.items():
+                wins = sum(1 for r in rets if r > 0)
+                avg = sum(rets) / len(rets)
+                w(f"  c={label}: {wins}/{len(rets)}승 ({wins/len(rets)*100:.0f}%) avg={avg:+.1f}%")
 
     # SKIP 요약 (reason별 집계)
     skip_decisions = {eid: d for eid, d in decisions.items() if d.get("action") == "SKIP"}

@@ -23,7 +23,9 @@ _KST = timezone(timedelta(hours=9))
 
 # Horizon offsets in seconds from t0
 HORIZON_OFFSETS: dict[str, float] = {
+    "t+30s": 30,
     "t+1m": 60,
+    "t+2m": 120,
     "t+5m": 300,
     "t+30m": 1800,
 }

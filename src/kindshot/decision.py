@@ -95,7 +95,8 @@ confidence & size_hint 매핑 (반드시 준수):
 - 80-89: 강한 촉매(임상성공, 공급계약, 기술수출) → size_hint=L
 - 75-79: 보통 촉매(M&A, 자사주, 중형계약) → size_hint=M
 - 70-74: 약한 촉매(소규모 계약, 모멘텀 의존) → size_hint=S
-- <70: 촉매 불충분 → SKIP
+- 65-69: 매우 약한 촉매(소형 용역, 단순 보도) → size_hint=S
+- <65: 촉매 불충분 → SKIP
 
 concrete_examples (confidence 차별화 참고):
 - "삼성전자, 300억 규모 반도체 장비 공급계약" → BUY(85,L) 대형+명확
@@ -107,7 +108,7 @@ concrete_examples (confidence 차별화 참고):
 
 decision_bias:
 - POS_STRONG 이벤트: 뉴스 자체가 이미 긍정 필터를 통과함. 명확한 SKIP 근거(추격매수, 희석, 실행불확실)가 없으면 BUY 권장.
-- POS_WEAK 이벤트: 신호가 약하므로 기존 기준 유지. confidence<70이면 SKIP.
+- POS_WEAK 이벤트: 신호가 약하므로 보수적. confidence<65이면 SKIP.
 - SKIP 선택 시 reason에 구체적 근거 필수 (예: "ret_today=7% 추격매수 위험", "MOU만으로 실행 불확실")
 - "불확실하다", "판단 어렵다" 같은 모호한 이유는 금지. 구체적 데이터/사실 기반으로 판단.
 
@@ -185,7 +186,7 @@ def _parse_llm_response(raw: str) -> Optional[dict]:
         if isinstance(confidence, (int, float)):
             if confidence >= 80:
                 data["size_hint"] = "L"
-            elif confidence >= 50:
+            elif confidence >= 75:
                 data["size_hint"] = "M"
             else:
                 data["size_hint"] = "S"
