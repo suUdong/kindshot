@@ -38,7 +38,31 @@ Skipping skills during implementation leads to subtle bugs (null data, wrong def
 cache key omissions) that cost more tokens to find and fix later.
 
 ## Deploy
-Push to main -> SSH to Lightsail -> `cd /opt/kindshot && bash deploy/deploy.sh`
+
+### 서버 접속
+- SSH alias: `ks` (= `ssh kindshot-server`)
+- 서버 경로: `/opt/kindshot`
+- systemd: `kindshot.service` (paper mode)
+
+### 배포 방법
+**방법 1 — rsync (GitHub 인증 불필요, 권장):**
+```bash
+rsync -avz --exclude='.venv' --exclude='data/' --exclude='logs/' --exclude='.env' --exclude='__pycache__' --exclude='.git' src/ kindshot-server:/opt/kindshot/src/
+rsync -avz --exclude='__pycache__' tests/ kindshot-server:/opt/kindshot/tests/
+ks "cd /opt/kindshot && source .venv/bin/activate && pip install -e . --quiet && sudo systemctl restart kindshot"
+```
+
+**방법 2 — git pull (GitHub 인증 필요):**
+```bash
+# Push to main -> SSH to Lightsail
+ks "cd /opt/kindshot && bash deploy/deploy.sh"
+```
+
+### 배포 확인
+```bash
+ks "sudo systemctl status kindshot --no-pager"
+ks "journalctl -u kindshot -n 20 --no-pager"
+```
 
 ## KIS API Reference
 - 공식 예제 레포: https://github.com/koreainvestment/open-trading-api
