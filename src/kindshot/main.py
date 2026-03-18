@@ -743,6 +743,47 @@ async def _process_registered_event(
         )
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.LLM_PARSE.value, reason="LLM_PARSE")
+    except Exception:
+        # 예상치 못한 예외 — 이벤트 유실 방지
+        logger.exception("Unexpected error processing %s [%s]", processed.event_id, raw.ticker)
+        if _tracer and _t_llm is not None:
+            _tracer.llm_end(_t_llm, raw.ticker, error="unexpected")
+        if counters is not None:
+            counters.errors["unexpected_error"] = counters.errors.get("unexpected_error", 0) + 1
+        outcome = ProcessOutcome(processed.event_id, skip_stage=SkipStage.LLM_ERROR, skip_reason="UNEXPECTED_ERROR")
+        try:
+            event_rec = EventRecord(
+                mode=mode,
+                schema_version=config.schema_version,
+                run_id=run_id,
+                event_id=processed.event_id,
+                event_id_method=processed.event_id_method,
+                event_kind=processed.event_kind,
+                parent_id=processed.parent_id,
+                event_group_id=processed.event_group_id,
+                parent_match_method=processed.parent_match_method,
+                parent_match_score=processed.parent_match_score,
+                parent_candidate_count=processed.parent_candidate_count,
+                source=feed_source,
+                rss_guid=raw.rss_guid,
+                rss_link=raw.link,
+                kind_uid=processed.kind_uid,
+                disclosed_at=None,
+                disclosed_at_missing=True,
+                detected_at=detected_at,
+                delay_ms=None,
+                ticker=raw.ticker,
+                corp_name=raw.corp_name,
+                headline=raw.title,
+                bucket=bucket_result.bucket,
+                keyword_hits=bucket_result.keyword_hits,
+                skip_stage=SkipStage.LLM_ERROR,
+                skip_reason="UNEXPECTED_ERROR",
+                market_ctx=market.snapshot,
+            )
+            await log.write(event_rec)
+        except Exception:
+            logger.exception("Failed to log UNEXPECTED_ERROR event for %s", processed.event_id)
     else:
         if _tracer and _t_llm is not None:
             _tracer.llm_end(_t_llm, raw.ticker)
