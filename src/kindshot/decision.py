@@ -272,25 +272,41 @@ class DecisionEngine:
             prompt = _build_prompt(bucket, headline, ticker, corp_name, detected_at_str, ctx)
             client = self._get_client()
 
+            last_err: Exception | None = None
+            resp = None
             t0 = time.monotonic()
-            try:
-                async with self._llm_semaphore:
-                    resp = await asyncio.wait_for(
-                        client.messages.create(
-                            model=self._config.llm_model,
-                            max_tokens=200,
-                            temperature=0,
-                            messages=[{"role": "user", "content": prompt}],
-                        ),
-                        timeout=self._config.llm_wait_for_s,
-                    )
-                latency_ms = int((time.monotonic() - t0) * 1000)
-            except asyncio.TimeoutError as e:
-                logger.warning("LLM timeout: %s", e)
-                raise LlmTimeoutError(str(e)) from e
-            except Exception as e:
-                logger.warning("LLM call error: %s", e)
-                raise LlmCallError(str(e)) from e
+            for attempt in range(2):  # 1회 재시도
+                try:
+                    async with self._llm_semaphore:
+                        resp = await asyncio.wait_for(
+                            client.messages.create(
+                                model=self._config.llm_model,
+                                max_tokens=200,
+                                temperature=0,
+                                messages=[{"role": "user", "content": prompt}],
+                            ),
+                            timeout=self._config.llm_wait_for_s,
+                        )
+                    break
+                except asyncio.TimeoutError as e:
+                    last_err = e
+                    if attempt == 0:
+                        logger.info("LLM timeout (retry 1): %s", e)
+                        await asyncio.sleep(1.0)
+                        continue
+                    logger.warning("LLM timeout (final): %s", e)
+                    raise LlmTimeoutError(str(e)) from e
+                except Exception as e:
+                    last_err = e
+                    if attempt == 0:
+                        logger.info("LLM call error (retry 1): %s", e)
+                        await asyncio.sleep(1.0)
+                        continue
+                    logger.warning("LLM call error (final): %s", e)
+                    raise LlmCallError(str(e)) from e
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            if resp is None:
+                raise LlmCallError(f"LLM failed after retries: {last_err}")
 
             try:
                 raw_text = resp.content[0].text
