@@ -202,6 +202,37 @@ def format_txt(log_path: Path, data: dict) -> str:
 
 # ── 텔레그램 포맷 (HTML) ──
 
+def _bucket_short(name: str) -> str:
+    """버킷명 축약."""
+    return {
+        "POS_STRONG": "P+", "POS_WEAK": "Pw",
+        "NEG_STRONG": "N-", "NEG_WEAK": "Nw",
+        "IGNORE": "IGN", "UNKNOWN": "UNK",
+    }.get(name, name)
+
+
+def _ret_emoji(r: Optional[float]) -> str:
+    if r is None:
+        return ""
+    if r >= 2.0:
+        return "🟢"
+    if r >= 0:
+        return "🔵"
+    if r >= -1.0:
+        return "🟡"
+    return "🔴"
+
+
+def _compact_rets(snaps: dict, key: str = "ret_long_vs_t0") -> str:
+    """수익률을 한 줄로 압축. N/A만 있으면 빈 문자열."""
+    parts = []
+    for h in ["t+5m", "t+30m", "close"]:
+        r = _ret_pct(snaps, h, key=key)
+        if r is not None:
+            parts.append(f"{h.replace('t+', '')}:{r:+.1f}%")
+    return " ".join(parts) if parts else "수익률 N/A"
+
+
 def format_telegram(log_path: Path, data: dict) -> str:
     events = data["events"]
     decisions = data["decisions"]
@@ -213,85 +244,96 @@ def format_telegram(log_path: Path, data: dict) -> str:
     w = lines.append
 
     date_label = log_path.stem.replace("kindshot_", "")
-    w(f"<b>Daily Report: {date_label}</b>")
-    w("")
-    w(f"총 이벤트: {len(events)}건")
 
-    parts = []
-    for b in ["POS_STRONG", "POS_WEAK", "NEG_STRONG", "NEG_WEAK", "IGNORE", "UNKNOWN"]:
-        if bucket_counts[b]:
-            parts.append(f"{b}={bucket_counts[b]}")
-    w(" | ".join(parts))
-
+    # 헤더
     n_buy = sum(1 for d in decisions.values() if d.get("action") == "BUY")
     n_skip = sum(1 for d in decisions.values() if d.get("action") == "SKIP")
-    w(f"LLM 판단: {len(decisions)}건 (BUY={n_buy}, SKIP={n_skip})")
+    w(f"📊 <b>{date_label} Daily</b>")
+    w(f"이벤트 {len(events)} | LLM {len(decisions)} (BUY {n_buy} / SKIP {n_skip})")
+
+    # 버킷 요약 (한 줄)
+    bparts = []
+    for b in ["POS_STRONG", "POS_WEAK", "NEG_STRONG", "NEG_WEAK", "IGNORE", "UNKNOWN"]:
+        if bucket_counts[b]:
+            bparts.append(f"{_bucket_short(b)}:{bucket_counts[b]}")
+    w(" ".join(bparts))
 
     # BUY 성과
     buy_decisions = {eid: d for eid, d in decisions.items() if d.get("action") == "BUY"}
     if buy_decisions:
         w("")
-        w("<b>-- BUY 성과 --</b>")
+        w("💰 <b>BUY 성과</b>")
 
         close_rets = []
         for eid, dec in sorted(buy_decisions.items(), key=lambda x: x[1].get("decided_at", "")):
             ev = events.get(eid, {})
             ticker = ev.get("ticker", "?")
-            headline = ev.get("headline", "")[:30]
+            headline = ev.get("headline", "")[:24]
             conf = dec.get("confidence", "?")
+            size = dec.get("size_hint", "?")
             snaps = snapshots.get(eid, {})
-            t0_px = snaps.get("t0", {}).get("px")
 
-            w(f"<b>{ticker}</b> {headline}")
-            entry_str = f"{t0_px:,.0f}" if t0_px else "N/A"
-            w(f"  conf={conf} | entry={entry_str}")
+            close_r = _ret_pct(snaps, "close")
+            emoji = _ret_emoji(close_r)
+            if close_r is not None:
+                close_rets.append(close_r)
 
-            ret_parts = []
-            for h in ["t+1m", "t+5m", "t+30m", "close"]:
-                r = _ret_pct(snaps, h)
-                if r is not None:
-                    ret_parts.append(f"{h}: {r:+.2f}%")
-                    if h == "close":
-                        close_rets.append(r)
-                else:
-                    ret_parts.append(f"{h}: N/A")
-            w(f"  {' / '.join(ret_parts)}")
+            w(f"{emoji}<b>{ticker}</b> {headline}")
+            w(f"  c={conf}/{size} | {_compact_rets(snaps)}")
 
         if close_rets:
-            w("")
             wins = [r for r in close_rets if r > 0]
             avg = sum(close_rets) / len(close_rets)
-            w(f"승률: {len(wins)}/{len(close_rets)} ({len(wins)/len(close_rets)*100:.0f}%) | 평균: {avg:+.2f}%")
+            w(f"\n📈 승률 {len(wins)}/{len(close_rets)} ({len(wins)/len(close_rets)*100:.0f}%) 평균 {avg:+.2f}%")
 
-    # NEG_STRONG
+    # SKIP 요약 (reason별 집계)
+    skip_decisions = {eid: d for eid, d in decisions.items() if d.get("action") == "SKIP"}
+    if skip_decisions:
+        w("")
+        w(f"⏭ <b>SKIP {len(skip_decisions)}건</b>")
+        # 상위 5건만 표시
+        for eid, dec in sorted(skip_decisions.items(), key=lambda x: -x[1].get("confidence", 0))[:5]:
+            ev = events.get(eid, {})
+            ticker = ev.get("ticker", "?")
+            headline = ev.get("headline", "")[:20]
+            conf = dec.get("confidence", "?")
+            reason = dec.get("reason", "")[:30]
+            w(f"  {ticker} c={conf} {headline}")
+            if reason:
+                w(f"    → {reason}")
+
+    # NEG_STRONG (티커별 dedupe, 상위 10건)
     neg_tracked = {
         eid: ev for eid, ev in events.items()
         if ev.get("bucket") == "NEG_STRONG" and eid in snapshots
     }
     if neg_tracked:
         w("")
-        w("<b>-- NEG_STRONG 추적 --</b>")
+        w(f"🔻 <b>NEG 추적</b> ({len(neg_tracked)}건)")
+        seen_tickers: set[str] = set()
+        shown = 0
         for eid, ev in sorted(neg_tracked.items(), key=lambda x: x[1].get("detected_at", "")):
             ticker = ev.get("ticker", "?")
-            headline = ev.get("headline", "")[:30]
+            if ticker in seen_tickers:
+                continue
+            seen_tickers.add(ticker)
+            headline = ev.get("headline", "")[:24]
             snaps = snapshots.get(eid, {})
+            rets = _compact_rets(snaps, key="ret_short_vs_t0")
+            w(f"  <b>{ticker}</b> {headline}")
+            w(f"    {rets}")
+            shown += 1
+            if shown >= 10:
+                remaining = len(set(ev.get("ticker", "") for ev in neg_tracked.values())) - shown
+                if remaining > 0:
+                    w(f"  ...외 {remaining}종목")
+                break
 
-            w(f"<b>{ticker}</b> {headline}")
-            ret_parts = []
-            for h in ["t+1m", "t+5m", "t+30m", "close"]:
-                r = _ret_pct(snaps, h, key="ret_short_vs_t0")
-                if r is not None:
-                    ret_parts.append(f"{h}: {r:+.2f}%")
-                else:
-                    ret_parts.append(f"{h}: N/A")
-            w(f"  {' / '.join(ret_parts)}")
-
-    # 시간대별 (상위 5개만)
+    # 피크 시간 (1줄)
     if hour_dist:
-        w("")
-        w("<b>-- 시간대 분포 (상위) --</b>")
-        for h, cnt in sorted(hour_dist.items(), key=lambda x: -x[1])[:5]:
-            w(f"  {h:02d}시: {cnt}건")
+        top3 = sorted(hour_dist.items(), key=lambda x: -x[1])[:3]
+        peak = " ".join(f"{h:02d}시({c})" for h, c in top3)
+        w(f"\n⏰ 피크: {peak}")
 
     return "\n".join(lines)
 
