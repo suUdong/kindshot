@@ -436,6 +436,21 @@ async def _execute_bucket_path(
         _mark_skip(counters, stage="DRY_RUN", reason="DRY_RUN")
         return ProcessOutcome(event_id=processed.event_id, skip_reason="DRY_RUN")
 
+    # Pre-LLM guardrail checks (LLM 비용 절감)
+    if guardrail_state is not None:
+        if raw.ticker in guardrail_state.bought_tickers:
+            event_rec.skip_stage = SkipStage.GUARDRAIL
+            event_rec.skip_reason = "SAME_STOCK_REBUY"
+            await log.write(event_rec)
+            _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="SAME_STOCK_REBUY")
+            return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason="SAME_STOCK_REBUY")
+        if guardrail_state.position_count >= config.max_positions:
+            event_rec.skip_stage = SkipStage.GUARDRAIL
+            event_rec.skip_reason = "MAX_POSITIONS"
+            await log.write(event_rec)
+            _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MAX_POSITIONS")
+            return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason="MAX_POSITIONS")
+
     decision = await decision_engine.decide(
         ticker=raw.ticker,
         corp_name=raw.corp_name,
