@@ -292,7 +292,7 @@ async def _execute_bucket_path(
         skip_reason = "NEG_BUCKET"
         analysis_tag = analysis_tag or "SHORT_WATCH"
         should_track_price = True
-    elif bucket == Bucket.POS_STRONG:
+    elif bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
         ctx_card, raw_data = await build_context_card(raw.ticker, kis, config=config)
         ctx = ctx_card
 
@@ -389,7 +389,7 @@ async def _execute_bucket_path(
             mode=mode,
         )
 
-    if bucket != Bucket.POS_STRONG or not quant_passed:
+    if bucket not in (Bucket.POS_STRONG, Bucket.POS_WEAK) or not quant_passed:
         await log.write(event_rec)
         _mark_skip(
             counters,

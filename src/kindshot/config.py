@@ -61,7 +61,7 @@ class Config:
     watchdog_stale_threshold_s: float = 120.0
 
     # --- Quant thresholds ---
-    adv_threshold: float = field(default_factory=lambda: _env_float("ADV_THRESHOLD", 1_000_000_000))
+    adv_threshold: float = field(default_factory=lambda: _env_float("ADV_THRESHOLD", 500_000_000))
     spread_bps_limit: float = 50.0
     extreme_move_pct: float = 20.0
     spread_check_enabled: bool = field(default_factory=lambda: _env_bool("SPREAD_CHECK_ENABLED", True))

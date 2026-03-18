@@ -75,7 +75,7 @@ def test_adv_too_low():
         ticker="005930",
         config=_cfg(),
         spread_bps=10.0,
-        adv_value_20d=0.5e9,
+        adv_value_20d=0.3e9,
         ret_today=5.0,
     )
     assert r.passed is False

@@ -105,6 +105,12 @@ concrete_examples (confidence 차별화 참고):
 - "D사, MOU 체결…구체적 계약 미정" → SKIP(55) 실행 불확실
 - "E사, 목표가 상향" → SKIP(45) 리포트일 뿐
 
+decision_bias:
+- POS_STRONG 이벤트: 뉴스 자체가 이미 긍정 필터를 통과함. 명확한 SKIP 근거(추격매수, 희석, 실행불확실)가 없으면 BUY 권장.
+- POS_WEAK 이벤트: 신호가 약하므로 기존 기준 유지. confidence<70이면 SKIP.
+- SKIP 선택 시 reason에 구체적 근거 필수 (예: "ret_today=7% 추격매수 위험", "MOU만으로 실행 불확실")
+- "불확실하다", "판단 어렵다" 같은 모호한 이유는 금지. 구체적 데이터/사실 기반으로 판단.
+
 task: decide BUY or SKIP. respond with ONLY a JSON object (no markdown, no code fences).
 example: {{"action":"BUY","confidence":85,"size_hint":"L","reason":"FDA 허가 획득, 바이오 강한 촉매"}}
 fields: action="BUY" or "SKIP", confidence=0-100, size_hint="S" or "M" or "L", reason=max 100 chars"""

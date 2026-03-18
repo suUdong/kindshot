@@ -359,3 +359,21 @@ def test_parse_float_confidence_accepted():
     result = _parse_llm_response(raw)
     assert result is not None
     assert result["confidence"] == 82.5
+
+
+def test_prompt_contains_decision_bias():
+    """프롬프트에 decision_bias 섹션 존재."""
+    ctx = ContextCard()
+    prompt = _build_prompt(Bucket.POS_STRONG, "테스트", "005930", "삼성전자", "09:00:00", ctx)
+    assert "decision_bias" in prompt
+    assert "POS_STRONG" in prompt
+    assert "명확한 SKIP 근거" in prompt
+    assert "BUY 권장" in prompt
+
+
+def test_prompt_pos_weak_bias_conservative():
+    """POS_WEAK 프롬프트에 보수적 바이어스 존재."""
+    ctx = ContextCard()
+    prompt = _build_prompt(Bucket.POS_WEAK, "목표가 상향", "005930", "삼성전자", "09:00:00", ctx)
+    assert "POS_WEAK" in prompt
+    assert "기존 기준 유지" in prompt
