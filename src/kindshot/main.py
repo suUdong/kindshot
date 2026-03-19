@@ -309,7 +309,7 @@ async def _execute_bucket_path(
         if not qr.passed:
             skip_stage = SkipStage.QUANT
             skip_reason = qr.skip_reason
-            should_track_price = qr.should_track_price
+            should_track_price = True  # 반사실 데이터: quant 실패해도 가격 추적
             analysis_tag = analysis_tag or qr.analysis_tag
     else:
         skip_stage = SkipStage.BUCKET

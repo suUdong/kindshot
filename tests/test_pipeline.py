@@ -875,3 +875,62 @@ async def test_wait_or_stop_interrupts_timeout():
     t0 = time.monotonic()
     await _wait_or_stop(stop_event, 60)
     assert time.monotonic() - t0 < 0.1
+
+
+async def test_quant_fail_still_tracks_price(tmp_path):
+    """POS_STRONG quant 실패 시에도 반사실 데이터 수집을 위해 가격 추적해야 함.
+
+    기존: qr.should_track_price (10% 샘플링) → 대부분 추적 안 함
+    변경: should_track_price = True 고정 → 항상 추적
+    """
+    from kindshot.event_registry import EventRegistry
+    from kindshot.feed import KindFeed
+    from kindshot.logger import JsonlLogger
+    from kindshot.main import _pipeline_loop
+    from kindshot.market import MarketMonitor
+    from kindshot.models import ContextCard
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+
+    cfg = Config(
+        log_dir=tmp_path / "logs",
+        paper=True,
+        # adv_threshold 크게 설정해 quant 실패 유도 (컨텍스트 카드 adv=10e9 < threshold)
+        adv_threshold=9_999_999_999_999,
+    )
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    fetcher = PriceFetcher(kis=None)
+    scheduler = SnapshotScheduler(cfg, fetcher, log)
+
+    mock_engine = MagicMock()
+    mock_engine.decide = AsyncMock(return_value=None)
+
+    raw = _make_raw()
+    mock_feed = AsyncMock(spec=KindFeed)
+
+    async def _one_batch():
+        yield [raw]
+    mock_feed.stream = _one_batch
+
+    # random.random()을 1.0으로 고정해 샘플링이 절대 발동 안 되도록 함
+    with patch("kindshot.main.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.quant.random") as mock_random:
+        mock_random.random.return_value = 1.0  # quant_fail_sample_rate < 1.0 이므로 샘플링 미발동
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0),
+            ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=2.0),
+        )
+
+        try:
+            await asyncio.wait_for(
+                _pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
+                timeout=1.0,
+            )
+        except (asyncio.TimeoutError, StopAsyncIteration):
+            pass
+
+    # quant 실패해도 가격 추적 스케줄러에 반드시 등록되어야 함
+    assert len(scheduler._heap) >= 1, "quant 실패 종목도 가격 추적 스케줄링 되어야 함"
