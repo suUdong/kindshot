@@ -111,7 +111,7 @@ def replay_from_logs(log_dir: Path, snapshot_dir: Path, date_filter: str = "") -
                 rets[h] = r * 100
 
         # TP/SL 판정
-        tp_pct, sl_pct = 3.0, -1.5
+        tp_pct, sl_pct = 2.5, -1.2
         exit_type = None
         exit_horizon = None
         for h in ["t+30s", "t+1m", "t+2m", "t+5m", "t+30m", "close"]:

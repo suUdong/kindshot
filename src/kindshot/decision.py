@@ -76,12 +76,15 @@ ctx_micro: {ctx_micro}{market_line}
 constraints: max_pos=10% no_overnight=true daily_loss_remaining=85%
 
 strategy_guide:
-- 수주·공급계약: 매출 대비 10%+ → BUY(85+,L), 5-10% → BUY(75,M), <5% → SKIP
-- 바이오/제약 FDA허가·임상3상 성공 → BUY(90,L), 임상1-2상 결과 → BUY(75,M)
+- 수주·공급계약: 매출 대비 10%+ 대형수주 → BUY(88,L), 5-10% 중형 → BUY(78,M), <5% 소규모 → SKIP(60)
+- 수주·공급계약 공시인데 ret_today>2%: 이미 시장 반영 → SKIP(55), 추격 위험
+- 수주·공급계약 금액 불명 또는 수백억 미만 소규모: confidence 상한 70 → 사실상 SKIP 유도
+- 바이오/제약 FDA허가·임상3상 성공 → BUY(92,L), 임상2상 완료 → BUY(80,M), 임상1상 결과 → BUY(68,S)
 - 유증·CB발행 → SKIP (희석 리스크)
-- 자사주 소각·취득 → BUY(75,M), 주주환원 호재
-- 대형 M&A·합작법인 → BUY(78,M), 뉴스 초기 반응 후 차익실현 주의
-- 이미 당일 5%+ 상승(ret_today>5) → SKIP, 추격 매수 위험
+- 자사주 소각·취득 → BUY(78,M), 주주환원 호재
+- 대형 M&A·합작법인 → BUY(80,M), 뉴스 초기 반응 후 차익실현 주의
+- 이미 당일 3%+ 상승(ret_today>3) and POS_WEAK → SKIP, 추격 매수 위험
+- 이미 당일 5%+ 상승(ret_today>5) → SKIP, POS_STRONG도 추격 금지
 - spread_bps>30 → size_hint 한 단계 낮춤 (L→M, M→S)
 - 같은 종목 반복 뉴스(중복 보도) → 처음만 BUY, 후속은 SKIP
 
@@ -91,24 +94,27 @@ market_adjustment (반드시 적용):
 - KOSPI>+1% and breadth_ratio>0.6: confidence +3 (상한 95)
 
 confidence & size_hint 매핑 (반드시 준수):
-- 90-100: 확실한 촉매(FDA승인, 대형수주, 사상최대실적) → size_hint=L
-- 80-89: 강한 촉매(임상성공, 공급계약, 기술수출) → size_hint=L
-- 75-79: 보통 촉매(M&A, 자사주, 중형계약) → size_hint=M
-- 70-74: 약한 촉매(소규모 계약, 모멘텀 의존) → size_hint=S
-- 65-69: 매우 약한 촉매(소형 용역, 단순 보도) → size_hint=S
-- <65: 촉매 불충분 → SKIP
+- 90-95: 확실한 촉매(FDA승인, 대형수주 매출10%+, 사상최대실적) → size_hint=L
+- 82-89: 강한 촉매(임상2상성공, 대형공급계약, 기술수출) → size_hint=L
+- 75-81: 보통 촉매(M&A, 자사주소각, 중형계약) → size_hint=M
+- 68-74: 약한 촉매(소규모 계약, 단순 모멘텀) → size_hint=S
+- <68: 촉매 불충분 → SKIP
 
-concrete_examples (confidence 차별화 참고):
-- "삼성전자, 300억 규모 반도체 장비 공급계약" → BUY(85,L) 대형+명확
-- "A사, 바이오시밀러 FDA 승인" → BUY(92,L) 확실한 촉매
-- "B사, 50억원 규모 용역계약 체결" → BUY(72,S) 소규모
-- "C사, 자사주 30억원 매입 결정" → BUY(76,M) 주주환원
-- "D사, MOU 체결…구체적 계약 미정" → SKIP(55) 실행 불확실
-- "E사, 목표가 상향" → SKIP(45) 리포트일 뿐
+CRITICAL: confidence는 촉매 강도에 따라 68-95 범위에서 적극 차별화할 것. 매번 비슷한 값(예: 70-75 반복)은 금지. 각 이벤트의 고유한 촉매 강도를 정확히 반영하라.
+
+concrete_examples (confidence 차별화 필수 — 각 예시의 차이에 주목):
+- "A사, 5000억 규모 LNG선 수주" → BUY(88,L) 대형수주+매출비중 높음
+- "B사, 바이오시밀러 FDA 승인" → BUY(93,L) 확실한 규제 촉매
+- "C사, 자사주 500억원 소각 결정" → BUY(80,M) 대규모 주주환원
+- "D사, 임상2상 유효성 확인" → BUY(82,L) 바이오 중기 촉매
+- "E사, 300억 설비투자 결정" → BUY(70,S) 장기 투자, 단기 촉매 약함
+- "F사, MOU 체결…구체적 계약 미정" → SKIP(55) 실행 불확실
+- "G사, 목표가 상향 리포트" → SKIP(40) 리포트일 뿐, 촉매 아님
+- "H사, 200억원 규모 용역계약" → SKIP(62) 소규모+단기 임팩트 미미
 
 decision_bias:
-- POS_STRONG 이벤트: 뉴스 자체가 이미 긍정 필터를 통과함. 명확한 SKIP 근거(추격매수, 희석, 실행불확실)가 없으면 BUY 권장.
-- POS_WEAK 이벤트: 신호가 약하므로 보수적. confidence<65이면 SKIP.
+- POS_STRONG 이벤트: 뉴스 자체가 이미 긍정 필터를 통과함. 명확한 SKIP 근거(추격매수, 희석, 실행불확실, 소규모)가 없으면 BUY 권장.
+- POS_WEAK 이벤트: 신호가 약하므로 보수적. confidence<70이면 SKIP. ret_today>3%이면 SKIP.
 - SKIP 선택 시 reason에 구체적 근거 필수 (예: "ret_today=7% 추격매수 위험", "MOU만으로 실행 불확실")
 - "불확실하다", "판단 어렵다" 같은 모호한 이유는 금지. 구체적 데이터/사실 기반으로 판단.
 

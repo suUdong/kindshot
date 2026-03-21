@@ -311,9 +311,9 @@ def test_prompt_contains_concrete_examples():
     ctx = ContextCard()
     prompt = _build_prompt(Bucket.POS_STRONG, "테스트", "005930", "삼성전자", "09:00:00", ctx)
     assert "concrete_examples" in prompt
-    assert "BUY(85,L)" in prompt
-    assert "BUY(92,L)" in prompt
-    assert "BUY(72,S)" in prompt
+    assert "BUY(88,L)" in prompt
+    assert "BUY(93,L)" in prompt
+    assert "BUY(80,M)" in prompt
     assert "SKIP(55)" in prompt
 
 
