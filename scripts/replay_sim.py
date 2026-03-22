@@ -110,22 +110,43 @@ def replay_from_logs(log_dir: Path, snapshot_dir: Path, date_filter: str = "") -
             if r is not None:
                 rets[h] = r * 100
 
-        # TP/SL 판정
+        # TP/SL/Trailing Stop/30분 룰 판정
         tp_pct, sl_pct = 1.5, -1.0
+        trail_pct = 0.8          # peak 대비 0.8% 하락 시 청산
+        trail_activation = 0.8   # 0.8% 이상 수익 시 trailing 활성화
+        max_hold_horizon = "t+30m"  # 30분 룰
         exit_type = None
         exit_horizon = None
+        exit_ret = None
+        peak = 0.0
         for h in ["t+30s", "t+1m", "t+2m", "t+5m", "t+30m", "close"]:
             r = rets.get(h)
             if r is None:
                 continue
-            if r >= tp_pct and exit_type is None:
+            peak = max(peak, r)
+            if exit_type is not None:
+                continue
+            if r >= tp_pct:
                 exit_type = "TP"
                 exit_horizon = h
-            elif r <= sl_pct and exit_type is None:
+                exit_ret = tp_pct
+            elif r <= sl_pct:
                 exit_type = "SL"
                 exit_horizon = h
+                exit_ret = sl_pct
+            elif peak >= trail_activation and r <= peak - trail_pct:
+                exit_type = "TRAIL"
+                exit_horizon = h
+                exit_ret = r
+            elif h == max_hold_horizon:
+                exit_type = "MAX_HOLD"
+                exit_horizon = h
+                exit_ret = r
 
         close_ret = rets.get("close")
+        # exit_ret이 없으면 close_ret 사용
+        if exit_ret is None and close_ret is not None:
+            exit_ret = close_ret
 
         buy_results.append({
             "event_id": eid,
@@ -136,6 +157,7 @@ def replay_from_logs(log_dir: Path, snapshot_dir: Path, date_filter: str = "") -
             "size_hint": size,
             "rets": rets,
             "close_ret": close_ret,
+            "exit_ret": exit_ret,
             "exit_type": exit_type,
             "exit_horizon": exit_horizon,
         })
@@ -252,9 +274,9 @@ def print_replay_report(data: dict) -> None:
         print(f"  {'티커':<8} {'conf':>4} {'size':>4} {'t+1m':>7} {'t+5m':>7} {'t+30m':>7} {'close':>7} {'exit':>8} 헤드라인")
         print(f"  {'-' * 70}")
 
-        close_rets = []
+        exit_rets = []
         conf_buckets: dict[str, list[float]] = {"90+": [], "80-89": [], "70-79": [], "65-69": [], "<65": []}
-        tp_count = sl_count = neither = 0
+        exit_type_counts: dict[str, int] = {}
 
         for b in buys:
             t1m = b["rets"].get("t+1m")
@@ -269,34 +291,36 @@ def print_replay_report(data: dict) -> None:
             exit_str = f"{b['exit_type']}@{b['exit_horizon']}" if b["exit_type"] else "-"
             print(f"  {b['ticker']:<8} {b['confidence']:>4} {b['size_hint']:>4} {' '.join(cols)} {exit_str:>8} {b['headline'][:30]}")
 
-            if close is not None:
-                close_rets.append(close)
+            er = b.get("exit_ret")
+            if er is not None:
+                exit_rets.append(er)
                 c = b["confidence"]
                 if c >= 90:
-                    conf_buckets["90+"].append(close)
+                    conf_buckets["90+"].append(er)
                 elif c >= 80:
-                    conf_buckets["80-89"].append(close)
+                    conf_buckets["80-89"].append(er)
                 elif c >= 70:
-                    conf_buckets["70-79"].append(close)
+                    conf_buckets["70-79"].append(er)
                 elif c >= 65:
-                    conf_buckets["65-69"].append(close)
+                    conf_buckets["65-69"].append(er)
                 else:
-                    conf_buckets["<65"].append(close)
+                    conf_buckets["<65"].append(er)
 
-            if b["exit_type"] == "TP":
-                tp_count += 1
-            elif b["exit_type"] == "SL":
-                sl_count += 1
-            else:
-                neither += 1
+            et = b.get("exit_type") or "NONE"
+            exit_type_counts[et] = exit_type_counts.get(et, 0) + 1
 
         print()
-        if close_rets:
-            wins = [r for r in close_rets if r > 0]
-            avg = sum(close_rets) / len(close_rets)
-            print(f"  승률: {len(wins)}/{len(close_rets)} ({len(wins)/len(close_rets)*100:.0f}%)")
-            print(f"  평균: {avg:+.2f}%  최고: {max(close_rets):+.2f}%  최저: {min(close_rets):+.2f}%")
-            print(f"  TP: {tp_count}  SL: {sl_count}  미도달: {neither}")
+        if exit_rets:
+            wins = [r for r in exit_rets if r > 0]
+            avg = sum(exit_rets) / len(exit_rets)
+            gross_win = sum(r for r in exit_rets if r > 0)
+            gross_loss = abs(sum(r for r in exit_rets if r < 0))
+            pf = gross_win / gross_loss if gross_loss > 0 else float("inf")
+            print(f"  승률: {len(wins)}/{len(exit_rets)} ({len(wins)/len(exit_rets)*100:.0f}%)")
+            print(f"  평균: {avg:+.2f}%  최고: {max(exit_rets):+.2f}%  최저: {min(exit_rets):+.2f}%")
+            print(f"  PF: {pf:.2f}")
+            for et, cnt in sorted(exit_type_counts.items()):
+                print(f"  {et}: {cnt}건")
 
         print()
         print("  [Confidence 구간별 성과]")

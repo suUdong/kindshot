@@ -90,6 +90,8 @@ class SnapshotScheduler:
         self._event_tickers: dict[str, str] = {}
         # 가상 익절/손절 추적 (event_id → exit horizon)
         self._virtual_exits: dict[str, str] = {}
+        # Trailing stop peak 추적 (event_id → peak return %)
+        self._peak_returns: dict[str, float] = {}
 
     def _runtime_snapshot_path(self, ts: datetime) -> Path:
         dt = ts.astimezone(_KST).strftime("%Y%m%d")
@@ -252,7 +254,7 @@ class SnapshotScheduler:
         await self._logger.write(record)
         await self._append_runtime_price_snapshot(record)
 
-        # 가상 익절/손절 판정 (BUY, t0 이후, 아직 exit 안 한 경우)
+        # 가상 익절/손절/trailing stop 판정 (BUY, t0 이후, 아직 exit 안 한 경우)
         if (
             snap.is_buy_decision
             and snap.horizon != "t0"
@@ -262,6 +264,13 @@ class SnapshotScheduler:
             ret_pct = ret_long * 100
             tp_active = self._config.paper_take_profit_pct > 0
             sl_active = self._config.paper_stop_loss_pct < 0
+
+            # Track peak for trailing stop
+            if self._config.trailing_stop_enabled:
+                prev_peak = self._peak_returns.get(snap.event_id, 0.0)
+                self._peak_returns[snap.event_id] = max(prev_peak, ret_pct)
+                peak = self._peak_returns[snap.event_id]
+
             if tp_active and ret_pct >= self._config.paper_take_profit_pct:
                 self._virtual_exits[snap.event_id] = snap.horizon
                 logger.info(
@@ -275,6 +284,27 @@ class SnapshotScheduler:
                     "PAPER SL hit [%s] %s: %.2f%% at %s (stop %.1f%%)",
                     snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
                     self._config.paper_stop_loss_pct,
+                )
+            elif (
+                self._config.trailing_stop_enabled
+                and peak >= self._config.trailing_stop_activation_pct
+                and ret_pct <= peak - self._config.trailing_stop_pct
+            ):
+                self._virtual_exits[snap.event_id] = snap.horizon
+                logger.info(
+                    "PAPER TRAILING STOP [%s] %s: %.2f%% at %s (peak %.2f%%, trail -%.1f%%)",
+                    snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
+                    peak, self._config.trailing_stop_pct,
+                )
+            elif (
+                self._config.max_hold_minutes > 0
+                and snap.horizon == f"t+{self._config.max_hold_minutes}m"
+            ):
+                self._virtual_exits[snap.event_id] = snap.horizon
+                logger.info(
+                    "PAPER MAX HOLD [%s] %s: %.2f%% at %s (%dm limit)",
+                    snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
+                    self._config.max_hold_minutes,
                 )
 
     async def flush_close_on_shutdown(self) -> int:
