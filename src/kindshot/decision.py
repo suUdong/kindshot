@@ -46,9 +46,11 @@ def _build_prompt(
     ctx: ContextCard,
     market_ctx: Optional[MarketContext] = None,
 ) -> str:
+    rsi_str = f" rsi_14={ctx.rsi_14}" if ctx.rsi_14 is not None else ""
+    macd_str = f" macd_hist={ctx.macd_hist}" if ctx.macd_hist is not None else ""
     ctx_price = (
         f"ret_today={ctx.ret_today} ret_1d={ctx.ret_1d} ret_3d={ctx.ret_3d} "
-        f"pos_20d={ctx.pos_20d} gap={ctx.gap}"
+        f"pos_20d={ctx.pos_20d} gap={ctx.gap}{rsi_str}{macd_str}"
     )
     adv_display = f"{ctx.adv_value_20d/1e8:.0f}억" if ctx.adv_value_20d else "N/A"
     ctx_micro = (
@@ -102,6 +104,12 @@ trend_filter (반드시 적용):
 - ret_3d < -5%: 하락 추세 종목. confidence -10. 대형 공시라도 반등 실패 확률 높음.
 - ret_3d < -3% and adv_20d > 1000억: 대형주 하락 추세. confidence -5. "sell the news" 위험.
 - pos_20d < 20: 20일 중 대부분 하락. confidence -5. 추세 역행 진입 위험.
+
+technical_indicators (참고 — 있을 때만 적용):
+- rsi_14 > 75: 과매수 구간. confidence -5. 단기 조정 가능성.
+- rsi_14 < 30: 과매도 구간. 뉴스 촉매와 결합 시 반등 가능성 → confidence +3.
+- macd_hist > 0: 상승 모멘텀. 촉매와 방향 일치 → 긍정 신호.
+- macd_hist < 0: 하락 모멘텀. 촉매가 추세 역행 → confidence -3.
 
 market_adjustment (반드시 적용):
 - KOSPI<-2%: confidence -5, size_hint 한 단계 낮춤 (L→M, M→S, S→SKIP)

@@ -118,6 +118,31 @@ async def _pykrx_features(ticker: str) -> dict:
                 cur_vol = volume.iloc[-1]
                 vol_pct = (vol_20 < cur_vol).sum() / len(vol_20) * 100 if len(vol_20) > 0 else None
 
+            # RSI-14
+            rsi_14 = None
+            if len(close) >= 15:
+                delta = close.diff()
+                gain = delta.clip(lower=0)
+                loss = (-delta.clip(upper=0))
+                avg_gain = gain.rolling(14, min_periods=14).mean()
+                avg_loss = loss.rolling(14, min_periods=14).mean()
+                last_avg_gain = avg_gain.iloc[-1]
+                last_avg_loss = avg_loss.iloc[-1]
+                if last_avg_loss > 0:
+                    rs = last_avg_gain / last_avg_loss
+                    rsi_14 = round(100 - (100 / (1 + rs)), 1)
+                elif last_avg_gain > 0:
+                    rsi_14 = 100.0
+
+            # MACD histogram (12/26/9)
+            macd_hist = None
+            if len(close) >= 26:
+                ema12 = close.ewm(span=12, adjust=False).mean()
+                ema26 = close.ewm(span=26, adjust=False).mean()
+                macd_line = ema12 - ema26
+                signal = macd_line.ewm(span=9, adjust=False).mean()
+                macd_hist = round(float(macd_line.iloc[-1] - signal.iloc[-1]), 2)
+
             return {
                 "ret_1d": round(ret_1d, 2) if ret_1d is not None else None,
                 "ret_3d": round(ret_3d, 2) if ret_3d is not None else None,
@@ -125,6 +150,8 @@ async def _pykrx_features(ticker: str) -> dict:
                 "adv_value_20d": round(adv_20d) if adv_20d is not None else None,
                 "vol_pct_20d": round(vol_pct, 1) if vol_pct is not None else None,
                 "prev_close": prev_close,
+                "rsi_14": rsi_14,
+                "macd_hist": macd_hist,
             }
         except Exception:
             logger.exception("pykrx fetch failed for %s", ticker)
@@ -201,6 +228,8 @@ async def build_context_card(
         top_ask_notional=top_ask_notional,
         quote_temp_stop=quote_temp_stop,
         quote_liquidation_trade=quote_liquidation_trade,
+        rsi_14=hist.get("rsi_14"),
+        macd_hist=hist.get("macd_hist"),
     )
 
     raw = ContextCardData(

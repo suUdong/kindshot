@@ -111,6 +111,8 @@ class ContextCard(BaseModel):
     top_ask_notional: Optional[float] = None
     quote_temp_stop: Optional[bool] = None
     quote_liquidation_trade: Optional[bool] = None
+    rsi_14: Optional[float] = None
+    macd_hist: Optional[float] = None
 
 
 # ── Log Records ────────────────────────────────────────
