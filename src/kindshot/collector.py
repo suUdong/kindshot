@@ -179,6 +179,7 @@ def _load_manifest(path: Path) -> Optional[CollectionDayManifest]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
+        logger.warning("Corrupt manifest JSON: %s", path)
         return None
     dt = str(payload.get("date", "")).strip()
     status = str(payload.get("status", "")).strip()
@@ -207,6 +208,7 @@ def update_collection_manifest_index(base_dir: Path, manifest: CollectionDayMani
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
+            logger.warning("Corrupt index JSON, resetting: %s", path)
             payload = {}
         for row in payload.get("entries", []):
             dt = str(row.get("date", "")).strip()
@@ -317,6 +319,7 @@ def load_collection_log_summary(path: Path) -> CollectionLogSummary:
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
+                logger.debug("Skipping malformed JSONL line in collection log")
                 continue
             dt = str(row.get("date", "")).strip()
             status = str(row.get("status", "")).strip()
@@ -388,6 +391,7 @@ def _parse_iso_datetime(value: str) -> Optional[datetime]:
     try:
         return datetime.fromisoformat(value)
     except ValueError:
+        logger.debug("Unparseable ISO datetime: %s", value)
         return None
 
 
@@ -622,6 +626,7 @@ def _load_existing_news_ids(path: Path) -> set[str]:
         try:
             row = json.loads(line)
         except json.JSONDecodeError:
+            logger.debug("Skipping malformed news JSONL line")
             continue
         news_id = str(row.get("news_id", "")).strip()
         if news_id:
@@ -701,6 +706,7 @@ def _append_records(base_dir: Path, dt: str, records: list[dict[str, Any]], *, k
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
+                logger.debug("Skipping malformed JSONL line in %s", path)
                 continue
             key = str(row.get(key_field, "")).strip()
             if key:

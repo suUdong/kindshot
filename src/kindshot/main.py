@@ -132,7 +132,7 @@ def _parse_disclosure_meta(raw: RawDisclosure, detected_at: datetime) -> tuple[O
             disclosed_at_missing = False
             delay_ms = int((detected_at - disclosed_at).total_seconds() * 1000)
         except Exception:
-            pass
+            logger.debug("Failed to parse disclosed_at from published=%s", raw.published)
     return disclosed_at, disclosed_at_missing, delay_ms
 
 

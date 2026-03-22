@@ -286,6 +286,7 @@ class KisFeed:
         try:
             base = datetime.strptime(self._last_time, "%H%M%S")
         except ValueError:
+            logger.debug("Unparseable last_time for overlap: %s", self._last_time)
             return self._last_time
 
         overlapped = base - timedelta(seconds=self._config.feed_overlap_s)

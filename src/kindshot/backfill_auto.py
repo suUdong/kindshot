@@ -94,4 +94,4 @@ def backfill_lock(lock_path: Path) -> Iterator[None]:
         try:
             lock_path.unlink()
         except FileNotFoundError:
-            pass
+            pass  # Lock already removed — expected race

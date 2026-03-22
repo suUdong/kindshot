@@ -879,7 +879,7 @@ async def _run_replay(
                                     "price_source": "pykrx_ohlcv",
                                 })
                     except (ValueError, TypeError):
-                        pass
+                        logger.debug("Failed to compute pykrx return for %s", ticker)
         else:
             stats["skip"] += 1
 
