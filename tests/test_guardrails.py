@@ -119,7 +119,7 @@ def test_ret_today_missing():
 
 
 def _base_args():
-    return dict(adv_value_20d=10e9, ret_today=5.0, spread_bps=10.0)
+    return dict(adv_value_20d=10e9, ret_today=2.0, spread_bps=10.0)
 
 
 def test_daily_loss_limit():
@@ -351,13 +351,13 @@ def test_persistence_resets_on_new_day(tmp_path):
 
 
 def test_chase_buy_blocked():
-    """당일 5%+ 상승 종목 BUY → CHASE_BUY_BLOCKED."""
+    """당일 3%+ 상승 종목 BUY → CHASE_BUY_BLOCKED."""
     r = check_guardrails(
         ticker="005930",
         config=_cfg(spread_check_enabled=True, no_buy_after_kst_hour=23),
         spread_bps=10.0,
         adv_value_20d=10e9,
-        ret_today=6.0,
+        ret_today=3.5,
         decision_action=Action.BUY,
     )
     assert r.passed is False
@@ -378,13 +378,13 @@ def test_chase_buy_not_blocked_on_skip():
 
 
 def test_chase_buy_passes_under_threshold():
-    """당일 4% 상승은 통과."""
+    """당일 2% 상승은 통과."""
     r = check_guardrails(
         ticker="005930",
         config=_cfg(spread_check_enabled=True, no_buy_after_kst_hour=23),
         spread_bps=10.0,
         adv_value_20d=10e9,
-        ret_today=4.0,
+        ret_today=2.5,
         decision_action=Action.BUY,
     )
     assert r.passed is True

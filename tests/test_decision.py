@@ -373,8 +373,8 @@ def test_prompt_contains_decision_bias():
     prompt = _build_prompt(Bucket.POS_STRONG, "테스트", "005930", "삼성전자", "09:00:00", ctx)
     assert "decision_bias" in prompt
     assert "POS_STRONG" in prompt
-    assert "명확한 SKIP 근거" in prompt
-    assert "BUY 권장" in prompt
+    assert "SKIP" in prompt
+    assert "확정된 대형 공시" in prompt
 
 
 def test_prompt_pos_weak_bias_conservative():
@@ -382,4 +382,4 @@ def test_prompt_pos_weak_bias_conservative():
     ctx = ContextCard()
     prompt = _build_prompt(Bucket.POS_WEAK, "목표가 상향", "005930", "삼성전자", "09:00:00", ctx)
     assert "POS_WEAK" in prompt
-    assert "보수적" in prompt
+    assert "SKIP" in prompt
