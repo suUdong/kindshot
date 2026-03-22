@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from kindshot.config import Config
+from kindshot.llm_client import LlmClient, LlmCallError, LlmTimeoutError
 from kindshot.models import (
     Action,
     Bucket,
@@ -25,14 +26,8 @@ from kindshot.models import (
 logger = logging.getLogger(__name__)
 
 
-class LlmTimeoutError(Exception):
-    """LLM call timed out or failed."""
-
-
-class LlmCallError(Exception):
-    """LLM call failed (non-timeout, e.g. auth, rate limit, network)."""
-
-
+# Re-export from llm_client for backward compatibility
+# LlmTimeoutError and LlmCallError are imported above
 class LlmParseError(Exception):
     """LLM response could not be parsed."""
 
@@ -264,19 +259,9 @@ class DecisionEngine:
         self._config = config
         self._cache: dict[str, _CacheEntry] = {}
         self._last_sweep: float = time.monotonic()
-        self._client: Optional[object] = None
+        self._llm = LlmClient(config)
         # In-flight dedup: same key requests await a single upstream LLM call.
         self._inflight: dict[str, asyncio.Task[DecisionRecord]] = {}
-        self._llm_semaphore = asyncio.Semaphore(max(1, config.llm_max_concurrency))
-
-    def _get_client(self):
-        if self._client is None:
-            from anthropic import AsyncAnthropic
-            self._client = AsyncAnthropic(
-                api_key=self._config.anthropic_api_key,
-                timeout=self._config.llm_sdk_timeout_s,
-            )
-        return self._client
 
     def _cache_key(self, ticker: str, headline: str, bucket: Bucket, ctx: ContextCard) -> str:
         # Include context card data so market changes invalidate cache
@@ -359,56 +344,8 @@ class DecisionEngine:
 
         async def _invoke_uncached() -> DecisionRecord:
             prompt = _build_prompt(bucket, headline, ticker, corp_name, detected_at_str, ctx, market_ctx)
-            client = self._get_client()
 
-            last_err: Exception | None = None
-            resp = None
-            max_retries = 3
-            t0 = time.monotonic()
-            for attempt in range(max_retries):
-                try:
-                    async with self._llm_semaphore:
-                        resp = await asyncio.wait_for(
-                            client.messages.create(
-                                model=self._config.llm_model,
-                                max_tokens=200,
-                                temperature=0,
-                                messages=[{"role": "user", "content": prompt}],
-                            ),
-                            timeout=self._config.llm_wait_for_s,
-                        )
-                    break
-                except asyncio.TimeoutError as e:
-                    last_err = e
-                    if attempt < max_retries - 1:
-                        delay = min(2 ** attempt, 8)  # 1s, 2s, 4s
-                        logger.info("LLM timeout (attempt %d/%d), retry in %ds", attempt + 1, max_retries, delay)
-                        await asyncio.sleep(delay)
-                        continue
-                    logger.warning("LLM timeout (final after %d attempts)", max_retries)
-                    raise LlmTimeoutError(str(e)) from e
-                except Exception as e:
-                    last_err = e
-                    # Rate limit detection: check for 429 or rate_limit in error
-                    is_rate_limit = "rate" in str(e).lower() or "429" in str(e)
-                    if attempt < max_retries - 1:
-                        delay = min(2 ** (attempt + 1), 16) if is_rate_limit else min(2 ** attempt, 8)
-                        logger.info("LLM %s (attempt %d/%d), retry in %ds",
-                                    "rate limited" if is_rate_limit else "call error",
-                                    attempt + 1, max_retries, delay)
-                        await asyncio.sleep(delay)
-                        continue
-                    logger.warning("LLM call error (final after %d attempts): %s", max_retries, e)
-                    raise LlmCallError(str(e)) from e
-            latency_ms = int((time.monotonic() - t0) * 1000)
-            if resp is None:
-                raise LlmCallError(f"LLM failed after {max_retries} retries: {last_err}")
-
-            try:
-                raw_text = resp.content[0].text
-            except (IndexError, AttributeError) as e:
-                logger.warning("LLM response structure unexpected: %s", e)
-                raise LlmParseError(f"unexpected response structure: {e}") from e
+            raw_text, latency_ms = await self._llm.call(prompt, max_tokens=200)
 
             parsed = _parse_llm_response(raw_text)
             if parsed is None:

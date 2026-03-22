@@ -24,6 +24,7 @@ from kindshot.bucket import (
     POS_WEAK_KEYWORDS,
 )
 from kindshot.config import Config
+from kindshot.llm_client import LlmClient
 from kindshot.models import (
     Bucket,
     PromotionStatus,
@@ -953,19 +954,8 @@ class UnknownReviewEngine:
 
     def __init__(self, config: Config) -> None:
         self._config = config
-        self._client: Optional[object] = None
-        self._semaphore = asyncio.Semaphore(max(1, config.llm_max_concurrency))
+        self._llm = LlmClient(config)
         self._article_enricher = UnknownArticleEnricher(config)
-
-    def _get_client(self):
-        if self._client is None:
-            from anthropic import AsyncAnthropic
-
-            self._client = AsyncAnthropic(
-                api_key=self._config.anthropic_api_key,
-                timeout=self._config.llm_sdk_timeout_s,
-            )
-        return self._client
 
     async def review(self, request: UnknownReviewRequest) -> UnknownReviewRecord:
         headline_only = not bool(request.article_text.strip())
@@ -990,21 +980,8 @@ class UnknownReviewEngine:
             )
 
         prompt = _build_unknown_review_prompt(request)
-        client = self._get_client()
         try:
-            async with self._semaphore:
-                response = await asyncio.wait_for(
-                    client.messages.create(
-                        model=self._config.llm_model,
-                        max_tokens=500,
-                        temperature=0,
-                        messages=[{"role": "user", "content": prompt}],
-                    ),
-                    timeout=self._config.llm_wait_for_s,
-                )
-            raw_text = "".join(
-                block.text for block in getattr(response, "content", []) if getattr(block, "type", "") == "text"
-            )
+            raw_text, _ = await self._llm.call(prompt, max_tokens=500)
             parsed = _parse_unknown_review_response(raw_text)
             if parsed is None:
                 return UnknownReviewRecord(
@@ -1042,22 +1019,11 @@ class UnknownReviewEngine:
                 keyword_candidates=parsed["keyword_candidates"],
                 risk_flags=parsed["risk_flags"],
             )
-        except asyncio.TimeoutError:
-            return UnknownReviewRecord(
-                event_id=request.event_id,
-                reviewed_at=datetime.now(timezone.utc),
-                runtime_mode=request.runtime_mode,
-                headline_only=headline_only,
-                review_iteration=review_iteration,
-                review_status=ReviewStatus.ERROR,
-                body_fetch_status=body_fetch_status,
-                body_source=body_source,
-                body_text_chars=body_text_chars,
-                re_reviewed=re_reviewed,
-                error="UNKNOWN_REVIEW_TIMEOUT",
-            )
         except Exception as exc:
-            logger.warning("UNKNOWN shadow review failed for %s", request.event_id, exc_info=True)
+            from kindshot.llm_client import LlmTimeoutError as _LlmTimeout
+            error_str = "UNKNOWN_REVIEW_TIMEOUT" if isinstance(exc, _LlmTimeout) else f"{type(exc).__name__}: {exc}"
+            if not isinstance(exc, _LlmTimeout):
+                logger.warning("UNKNOWN shadow review failed for %s", request.event_id, exc_info=True)
             return UnknownReviewRecord(
                 event_id=request.event_id,
                 reviewed_at=datetime.now(timezone.utc),
@@ -1069,7 +1035,7 @@ class UnknownReviewEngine:
                 body_source=body_source,
                 body_text_chars=body_text_chars,
                 re_reviewed=re_reviewed,
-                error=f"{type(exc).__name__}: {exc}",
+                error=error_str,
             )
 
     async def review_with_optional_article(self, request: UnknownReviewRequest) -> list[UnknownReviewRecord]:

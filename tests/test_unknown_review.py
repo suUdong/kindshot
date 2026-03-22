@@ -147,7 +147,7 @@ async def test_unknown_review_engine_parses_structured_response(tmp_path):
         )
     )
 
-    with patch.object(engine, "_get_client", return_value=mock_client):
+    with patch.object(engine._llm, "_get_client", return_value=mock_client):
         record = await engine.review(_request())
 
     assert record.review_status == ReviewStatus.OK
@@ -213,7 +213,7 @@ async def test_unknown_review_engine_rereviews_with_article_enrichment(tmp_path)
         )
     )
 
-    with patch.object(engine, "_get_client", return_value=mock_client), patch.object(
+    with patch.object(engine._llm, "_get_client", return_value=mock_client), patch.object(
         engine._article_enricher,
         "fetch",
         AsyncMock(
@@ -272,7 +272,7 @@ async def test_unknown_review_engine_records_fetch_failure_without_blocking(tmp_
         )
     )
 
-    with patch.object(engine, "_get_client", return_value=mock_client), patch.object(
+    with patch.object(engine._llm, "_get_client", return_value=mock_client), patch.object(
         engine._article_enricher,
         "fetch",
         AsyncMock(return_value=ArticleEnrichmentResult(status="fetch_error")),
