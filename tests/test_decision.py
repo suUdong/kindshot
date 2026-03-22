@@ -236,7 +236,7 @@ async def test_inflight_dedup_error_propagates_to_all_callers():
             await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
 
     await asyncio.gather(_call(), _call())
-    assert call_count["n"] == 2  # 1 original + 1 retry (both fail)
+    assert call_count["n"] == 3  # 3 attempts with exponential backoff (all fail)
 
 
 async def test_llm_timeout_raises():

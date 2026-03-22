@@ -349,8 +349,9 @@ class DecisionEngine:
 
             last_err: Exception | None = None
             resp = None
+            max_retries = 3
             t0 = time.monotonic()
-            for attempt in range(2):  # 1회 재시도
+            for attempt in range(max_retries):
                 try:
                     async with self._llm_semaphore:
                         resp = await asyncio.wait_for(
@@ -365,23 +366,29 @@ class DecisionEngine:
                     break
                 except asyncio.TimeoutError as e:
                     last_err = e
-                    if attempt == 0:
-                        logger.info("LLM timeout (retry 1): %s", e)
-                        await asyncio.sleep(1.0)
+                    if attempt < max_retries - 1:
+                        delay = min(2 ** attempt, 8)  # 1s, 2s, 4s
+                        logger.info("LLM timeout (attempt %d/%d), retry in %ds", attempt + 1, max_retries, delay)
+                        await asyncio.sleep(delay)
                         continue
-                    logger.warning("LLM timeout (final): %s", e)
+                    logger.warning("LLM timeout (final after %d attempts)", max_retries)
                     raise LlmTimeoutError(str(e)) from e
                 except Exception as e:
                     last_err = e
-                    if attempt == 0:
-                        logger.info("LLM call error (retry 1): %s", e)
-                        await asyncio.sleep(1.0)
+                    # Rate limit detection: check for 429 or rate_limit in error
+                    is_rate_limit = "rate" in str(e).lower() or "429" in str(e)
+                    if attempt < max_retries - 1:
+                        delay = min(2 ** (attempt + 1), 16) if is_rate_limit else min(2 ** attempt, 8)
+                        logger.info("LLM %s (attempt %d/%d), retry in %ds",
+                                    "rate limited" if is_rate_limit else "call error",
+                                    attempt + 1, max_retries, delay)
+                        await asyncio.sleep(delay)
                         continue
-                    logger.warning("LLM call error (final): %s", e)
+                    logger.warning("LLM call error (final after %d attempts): %s", max_retries, e)
                     raise LlmCallError(str(e)) from e
             latency_ms = int((time.monotonic() - t0) * 1000)
             if resp is None:
-                raise LlmCallError(f"LLM failed after retries: {last_err}")
+                raise LlmCallError(f"LLM failed after {max_retries} retries: {last_err}")
 
             try:
                 raw_text = resp.content[0].text
