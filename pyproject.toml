@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kindshot"
-version = "0.1.2"
+version = "0.1.3"
 description = "KRX news-driven day trading MVP"
 requires-python = ">=3.11"
 dependencies = [
