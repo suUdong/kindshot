@@ -996,7 +996,7 @@ class UnknownReviewEngine:
                 response = await asyncio.wait_for(
                     client.messages.create(
                         model=self._config.llm_model,
-                        max_tokens=250,
+                        max_tokens=500,
                         temperature=0,
                         messages=[{"role": "user", "content": prompt}],
                     ),
