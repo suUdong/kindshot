@@ -98,6 +98,11 @@ SKIP_필수_패턴 (아래 해당 시 반드시 SKIP):
 - 주총/정관 변경/이사 선임 등 일반 기업 거버넌스 → SKIP(40).
 - 기업가치 평가/시가총액 전망 → SKIP(40). 실제 거래가 아닌 추정.
 
+trend_filter (반드시 적용):
+- ret_3d < -5%: 하락 추세 종목. confidence -10. 대형 공시라도 반등 실패 확률 높음.
+- ret_3d < -3% and adv_20d > 1000억: 대형주 하락 추세. confidence -5. "sell the news" 위험.
+- pos_20d < 20: 20일 중 대부분 하락. confidence -5. 추세 역행 진입 위험.
+
 market_adjustment (반드시 적용):
 - KOSPI<-2%: confidence -5, size_hint 한 단계 낮춤 (L→M, M→S, S→SKIP)
 - KOSPI<-1% and breadth_ratio<0.35: confidence -3
@@ -116,17 +121,24 @@ CRITICAL_CONFIDENCE_RULES:
 3. "POS_STRONG이니까 BUY"는 근거 불충분. 구체적 금액, 매출비중, 확정 여부를 기준으로 판단.
 4. 헤드라인이 공시(DART 공시, "체결", "결정")인지 뉴스기사(분석, 전망, 인터뷰)인지 구분. 뉴스기사는 촉매가 아님.
 
-concrete_examples (confidence 차별화 필수):
-- "A사, 5000억 규모 LNG선 수주 공시" → BUY(88,L) 대형수주+매출비중 높음
-- "B사, 바이오시밀러 FDA 승인" → BUY(93,L) 확실한 규제 촉매
-- "C사, 자사주 500억원 소각 결정" → BUY(80,M) 대규모 주주환원 확정
-- "D사, 임상2상 유효성 확인" → BUY(82,L) 바이오 중기 촉매
-- "E사, 300억 설비투자 결정" → SKIP(60) 장기 투자, 단기 주가 촉매 약함
-- "F사, MOU 체결…구체적 계약 미정" → SKIP(45) 실행 불확실
-- "G사, 목표가 상향 리포트" → SKIP(35) 뉴스기사일 뿐, 촉매 아님
-- "H사, 200억원 규모 용역계약" → SKIP(55) 소규모+단기 임팩트 미미
-- "I사, 자사주 소각 추진 예정" → SKIP(50) '추진'은 확정 아님
-- "J사, ret_today=4.5% 상태에서 공급계약" → SKIP(50) 이미 반영된 가격
+실전_사례 (실제 거래 결과 기반 — 반드시 학습):
+
+WIN 사례:
+- "HD현대중공업, 8237억원 규모 공급계약(컨테이너선 10척) 체결" ret_today=-2.5% → BUY(85,L) → close +0.26%. 대형 확정 수주+하락 중 저가 매수.
+- "알테오젠, 키트루다 SC 조성물 특허 미국 등록" ret_today=0.0% → BUY(88,L) → t+5m +3.68% TP. 바이오 규제 촉매+가격 미반영.
+
+LOSS 사례 (이런 패턴 SKIP):
+- "서진시스템, 2702억 규모 ESS 장비 공급계약" ret_today=+0.65% spread=21.5 → BUY(72,M) → close -2.30%. spread 넓고 ESS 섹터 변동성 큼. SKIP(60)이 정답.
+- "삼성SDI, 1.5조 규모 ESS 공급 계약 체결" ret_today=+0.26% adv=3811억 → BUY(72,M) → close -1.61%. 대형주는 이미 시장에 반영. SKIP(55)이 정답.
+- "포스코퓨처엠 1.01조 음극재 공급" ret_3d=-9.03% → BUY(72,M) → close -0.23%. 3일간 -9% 하락 추세에서 뉴스 효과 없음. SKIP(55)이 정답.
+- "[TOP's Pick] 엔씨, 저스트플레이 인수" → BUY(72,M) → close -2.33%. 기사일 뿐 공시 아님. SKIP(35)이 정답.
+- "RF시스템즈, 166억 규모 공급계약" ret_today=+19.3% → BUY(72,M) → close -9.50%. 이미 폭등+소규모 계약. SKIP(40)이 정답.
+
+핵심 패턴:
+- 대형 확정 수주 + 가격 미반영(ret_today<1%) = BUY 유력
+- 기사/미확정 + 이미 상승(ret_today>2%) = SKIP 필수
+- 하락 추세(ret_3d<-5%) + 대형주 = SKIP (sell the news)
+- spread>20bps 종목 = confidence -5 추가 감점
 
 decision_bias:
 - POS_STRONG이라도 SKIP 근거(추격매수 ret>3%, 뉴스기사, 소규모, 미확정)가 있으면 반드시 SKIP.

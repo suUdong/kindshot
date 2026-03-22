@@ -307,14 +307,14 @@ def test_prompt_contains_market_adjustment():
 
 
 def test_prompt_contains_concrete_examples():
-    """프롬프트에 구체적 confidence 예시 존재."""
+    """프롬프트에 실전 사례 기반 예시 존재."""
     ctx = ContextCard()
     prompt = _build_prompt(Bucket.POS_STRONG, "테스트", "005930", "삼성전자", "09:00:00", ctx)
-    assert "concrete_examples" in prompt
+    assert "실전_사례" in prompt
+    assert "BUY(85,L)" in prompt
     assert "BUY(88,L)" in prompt
-    assert "BUY(93,L)" in prompt
-    assert "BUY(80,M)" in prompt
-    assert "SKIP(55)" in prompt
+    assert "SKIP" in prompt
+    assert "LOSS 사례" in prompt
 
 
 def test_prompt_market_context_included():
