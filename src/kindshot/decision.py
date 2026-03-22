@@ -100,6 +100,12 @@ SKIP_필수_패턴 (아래 해당 시 반드시 SKIP):
 - 주총/정관 변경/이사 선임 등 일반 기업 거버넌스 → SKIP(40).
 - 기업가치 평가/시가총액 전망 → SKIP(40). 실제 거래가 아닌 추정.
 
+adv_filter (반드시 적용 — 대형주는 뉴스 반영이 이미 완료):
+- adv_20d > 5000억 (초대형주): confidence 상한 72 → 대부분 SKIP. "sell the news" 패턴 빈발.
+- adv_20d 2000~5000억 (대형주): confidence -3. 뉴스 반영 빠름, edge 제한적.
+- adv_20d 500~2000억 (중형주): 가장 유리한 구간. 뉴스 반영 지연 + 유동성 충분.
+- adv_20d < 500억: quant 필터에서 제외됨 (ADV_TOO_LOW).
+
 trend_filter (반드시 적용):
 - ret_3d < -5%: 하락 추세 종목. confidence -10. 대형 공시라도 반등 실패 확률 높음.
 - ret_3d < -3% and adv_20d > 1000억: 대형주 하락 추세. confidence -5. "sell the news" 위험.
