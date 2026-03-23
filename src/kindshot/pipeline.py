@@ -741,6 +741,7 @@ async def pipeline_loop(
     guardrail_state: Optional[GuardrailState] = None,
     feed_source: str = "KIND",
     unknown_review_queue: Optional[asyncio.Queue] = None,
+    health_state: Optional[object] = None,
 ) -> None:
     """Main pipeline: feed/registry + queue/worker event processing."""
     worker_count = max(1, config.pipeline_workers)
@@ -792,6 +793,8 @@ async def pipeline_loop(
 
     try:
         async for batch in feed.stream():
+            if health_state is not None and hasattr(health_state, "record_poll"):
+                health_state.record_poll()
             if stop_event is not None and stop_event.is_set():
                 logger.info("Pipeline stop_event detected, exiting feed loop")
                 feed.stop()
@@ -799,6 +802,8 @@ async def pipeline_loop(
             for raw in batch:
                 if counters is not None:
                     counters.totals["events_seen"] += 1
+                if health_state is not None and hasattr(health_state, "record_event"):
+                    health_state.record_event()
                 detected_at = raw.detected_at
 
                 # 1. Registry: dedup + correction

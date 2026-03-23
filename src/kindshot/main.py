@@ -292,6 +292,7 @@ async def run() -> None:
                 guardrail_state=guardrail_state,
                 feed_source=feed_source,
                 unknown_review_queue=unknown_review_queue,
+                health_state=health_state,
             ), name="pipeline"),
             asyncio.create_task(scheduler.run(), name="snapshots"),
             asyncio.create_task(_market_loop(), name="market"),
