@@ -172,6 +172,139 @@ async def test_scheduler_persists_runtime_price_snapshots(tmp_path):
     assert index_payload["entries"][0]["artifacts"]["price_snapshots"]["exists"] is True
 
 
+async def _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=10.0):
+    """Helper: create scheduler, schedule t0, fire t0 to set entry price."""
+    fetcher = PriceFetcher(kis=None)
+    log = MagicMock()
+    log.write = AsyncMock()
+    scheduler = SnapshotScheduler(cfg, fetcher, log)
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=t0_px, open_px=t0_px, spread_bps=spread_bps,
+        cum_value=1_000_000.0, fetch_latency_ms=10,
+    ))
+    scheduler.schedule_t0(
+        event_id="evt1", ticker="005930",
+        t0_basis=T0Basis.DECIDED_AT,
+        t0_ts=datetime.now(timezone.utc), run_id="run1",
+        mode="paper", is_buy_decision=True,
+    )
+    # Fire t0 to record entry price
+    t0_snap = [s for s in scheduler._heap if s.horizon == "t0"][0]
+    await scheduler._fire(t0_snap)
+    return scheduler, log
+
+
+async def test_paper_take_profit_triggers():
+    """TP 1.5%: t0=10000, t+1m=10200 (+2%) → TP hit."""
+    cfg = Config(paper_take_profit_pct=1.5, paper_stop_loss_pct=-1.0, trailing_stop_enabled=False)
+    scheduler, log = await _make_scheduler_with_t0(cfg)
+
+    # Fire t+1m with price up 2%
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10200.0, open_px=10000.0, spread_bps=10.0,
+        cum_value=1_200_000.0, fetch_latency_ms=10,
+    ))
+    t1_snap = [s for s in scheduler._heap if s.horizon == "t+1m"][0]
+    await scheduler._fire(t1_snap)
+
+    assert "evt1" in scheduler._virtual_exits
+    assert scheduler._virtual_exits["evt1"] == "t+1m"
+
+
+async def test_paper_stop_loss_triggers():
+    """SL -1.0%: t0=10000, t+30s=9850 (-1.5%) → SL hit."""
+    cfg = Config(paper_take_profit_pct=1.5, paper_stop_loss_pct=-1.0, trailing_stop_enabled=False)
+    scheduler, log = await _make_scheduler_with_t0(cfg)
+
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=9850.0, open_px=10000.0, spread_bps=10.0,
+        cum_value=900_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+30s"][0]
+    await scheduler._fire(snap)
+
+    assert "evt1" in scheduler._virtual_exits
+    assert scheduler._virtual_exits["evt1"] == "t+30s"
+
+
+async def test_paper_trailing_stop_triggers():
+    """Trailing stop: peak 1.5% → drop to 0.5% (peak - 0.8% trail) → exit."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,  # high TP so it doesn't trigger
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=True,
+        trailing_stop_activation_pct=0.8,
+        trailing_stop_pct=0.8,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+
+    # t+30s: +1.5% (above activation 0.8%) — sets peak
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10150.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_100_000.0, fetch_latency_ms=10,
+    ))
+    snap1 = [s for s in scheduler._heap if s.horizon == "t+30s"][0]
+    await scheduler._fire(snap1)
+    assert "evt1" not in scheduler._virtual_exits  # not yet
+
+    # t+1m: +0.5% (dropped from peak 1.5%, diff = 1.0% > trail 0.8%) → trailing stop
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10050.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_050_000.0, fetch_latency_ms=10,
+    ))
+    snap2 = [s for s in scheduler._heap if s.horizon == "t+1m"][0]
+    await scheduler._fire(snap2)
+
+    assert "evt1" in scheduler._virtual_exits
+    assert scheduler._virtual_exits["evt1"] == "t+1m"
+
+
+async def test_paper_max_hold_triggers():
+    """Max hold 30min: at t+30m horizon → forced exit."""
+    cfg = Config(
+        paper_take_profit_pct=10.0,  # high — won't trigger
+        paper_stop_loss_pct=-10.0,
+        trailing_stop_enabled=False,
+        max_hold_minutes=30,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg)
+
+    # t+30m: price unchanged — max hold triggers
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10000.0, open_px=10000.0, spread_bps=10.0,
+        cum_value=1_000_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+30m"][0]
+    await scheduler._fire(snap)
+
+    assert "evt1" in scheduler._virtual_exits
+    assert scheduler._virtual_exits["evt1"] == "t+30m"
+
+
+async def test_virtual_exit_prevents_double_trigger():
+    """Once TP fires, SL should not fire on subsequent snapshots."""
+    cfg = Config(paper_take_profit_pct=1.0, paper_stop_loss_pct=-1.0, trailing_stop_enabled=False)
+    scheduler, log = await _make_scheduler_with_t0(cfg)
+
+    # t+30s: +2% → TP hit
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10200.0, open_px=10000.0, spread_bps=10.0,
+        cum_value=1_200_000.0, fetch_latency_ms=10,
+    ))
+    snap1 = [s for s in scheduler._heap if s.horizon == "t+30s"][0]
+    await scheduler._fire(snap1)
+    assert scheduler._virtual_exits["evt1"] == "t+30s"
+
+    # t+1m: -5% crash — should NOT change exit
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=9500.0, open_px=10000.0, spread_bps=10.0,
+        cum_value=800_000.0, fetch_latency_ms=10,
+    ))
+    snap2 = [s for s in scheduler._heap if s.horizon == "t+1m"][0]
+    await scheduler._fire(snap2)
+    assert scheduler._virtual_exits["evt1"] == "t+30s"  # unchanged
+
+
 async def test_flush_close_on_shutdown_fires_pending_close_after_cutoff():
     cfg = Config(close_snapshot_delay_s=300.0)
     fetcher = PriceFetcher(kis=None)
