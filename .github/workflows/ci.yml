@@ -31,3 +31,8 @@ jobs:
       - name: Lint check (syntax errors only)
         run: |
           python -m py_compile src/kindshot/*.py
+
+      - name: Dependency security audit
+        run: |
+          pip install pip-audit
+          pip-audit --skip-editable
