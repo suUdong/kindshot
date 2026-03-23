@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from kindshot.feed import RawDisclosure, _extract_kind_uid
+from kindshot.tz import KST as _KST
 from kindshot.models import (
     EventIdMethod,
     EventKind,
@@ -123,8 +124,7 @@ class EventRegistry:
 
     def _load_state(self) -> None:
         """Load seen_ids from today's state file if it exists."""
-        kst = timezone(timedelta(hours=9))
-        today = datetime.now(kst).strftime("%Y%m%d")
+        today = datetime.now(_KST).strftime("%Y%m%d")
         self._current_date = today
         state_file = self._state_file()
         if not state_file or not state_file.exists():
@@ -193,8 +193,7 @@ class EventRegistry:
 
     def _prune_if_new_day(self, now: datetime) -> None:
         """Clear history when KST date changes (TTL = current trading day)."""
-        kst = timezone(timedelta(hours=9))
-        today = now.astimezone(kst).strftime("%Y%m%d")
+        today = now.astimezone(_KST).strftime("%Y%m%d")
         if self._current_date is not None and self._current_date != today:
             self._seen_ids.clear()
             self._history.clear()

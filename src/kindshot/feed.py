@@ -85,8 +85,7 @@ class KindFeed:
 
     def _is_market_hours(self) -> bool:
         from datetime import time as dt_time
-        kst = timezone(timedelta(hours=9))
-        now_kst = datetime.now(kst)
+        now_kst = datetime.now(_KST)
         # Weekend: always off-market
         if now_kst.weekday() >= 5:
             return False
@@ -108,7 +107,7 @@ class KindFeed:
 
     async def poll_once(self) -> list[RawDisclosure]:
         """Single poll. Returns list of new disclosures (may be empty on 304)."""
-        self._last_poll_at = datetime.now(timezone(timedelta(hours=9)))
+        self._last_poll_at = datetime.now(_KST)
         headers: dict[str, str] = {}
         if self._etag:
             headers["If-None-Match"] = self._etag
@@ -209,8 +208,7 @@ class KisFeed:
 
     def _is_market_hours(self) -> bool:
         from datetime import time as dt_time
-        kst = timezone(timedelta(hours=9))
-        now_kst = datetime.now(kst)
+        now_kst = datetime.now(_KST)
         if now_kst.weekday() >= 5:
             return False
         return dt_time(9, 0) <= now_kst.time() <= dt_time(15, 30)
@@ -234,8 +232,7 @@ class KisFeed:
         return self._state_dir / f"kis_feed_{self._current_date}.json"
 
     def _load_state(self) -> None:
-        kst = timezone(timedelta(hours=9))
-        self._current_date = datetime.now(kst).strftime("%Y%m%d")
+        self._current_date = datetime.now(_KST).strftime("%Y%m%d")
         state_file = self._state_file()
         if not state_file or not state_file.exists():
             return
@@ -302,7 +299,7 @@ class KisFeed:
 
     async def poll_once(self) -> list[RawDisclosure]:
         """Single poll via KIS news-title API."""
-        self._last_poll_at = datetime.now(timezone(timedelta(hours=9)))
+        self._last_poll_at = datetime.now(_KST)
         self._prune_if_new_day(self._last_poll_at)
         tracer = get_tracer()
         last_time_before = self._last_time
