@@ -314,6 +314,61 @@ async def test_append_runtime_context_card_writes_jsonl(tmp_path):
     assert index_payload["entries"][0]["artifacts"]["context_cards"]["exists"] is True
 
 
+def test_configure_cache_sets_globals():
+    """configure_cache should update module-level cache settings."""
+    cc.configure_cache(ttl_s=120, max_size=64)
+    assert cc._PYKRX_CACHE_TTL == 120
+    assert cc._PYKRX_CACHE_MAX_SIZE == 64
+    # Reset to defaults
+    cc.configure_cache(ttl_s=300, max_size=512)
+
+
+def test_configure_cache_enforces_minimums():
+    """configure_cache should enforce minimum of 1 for both settings."""
+    cc.configure_cache(ttl_s=0, max_size=-5)
+    assert cc._PYKRX_CACHE_TTL == 1
+    assert cc._PYKRX_CACHE_MAX_SIZE == 1
+    cc.configure_cache(ttl_s=300, max_size=512)
+
+
+def test_prune_cache_removes_expired():
+    """_prune_cache should remove entries past TTL."""
+    cc._pykrx_cache.clear()
+    now = time.monotonic()
+    cc._pykrx_cache["expired"] = ({"v": 1}, now - 10)
+    cc._pykrx_cache["valid"] = ({"v": 2}, now + 300)
+    cc._prune_cache(now, max_size=512)
+    assert "expired" not in cc._pykrx_cache
+    assert "valid" in cc._pykrx_cache
+
+
+def test_prune_cache_evicts_oldest_when_over_max():
+    """_prune_cache should evict oldest entries when over max_size."""
+    cc._pykrx_cache.clear()
+    now = time.monotonic()
+    for i in range(5):
+        cc._pykrx_cache[f"t{i}"] = ({"v": i}, now + 300)
+    cc._prune_cache(now, max_size=2)
+    assert len(cc._pykrx_cache) == 2
+
+
+async def test_build_context_card_no_kis(monkeypatch):
+    """build_context_card with kis=None should return empty card."""
+    cc._pykrx_cache.clear()
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_TTL", 300)
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_MAX_SIZE", 512)
+
+    async def _fake_to_thread(func, *args, **kwargs):
+        return {"prev_close": 50000, "adv_value_20d": 10e9}
+
+    monkeypatch.setattr(cc.asyncio, "to_thread", _fake_to_thread)
+
+    card, raw = await cc.build_context_card("005930", kis=None)
+    # No KIS → no price data, but pykrx features still loaded
+    assert card.adv_value_20d == 10e9
+    assert card.spread_bps is None  # no KIS price → no spread
+
+
 async def test_append_runtime_context_card_normalizes_numpy_scalar_market_ctx(tmp_path):
     np = pytest.importorskip("numpy")
     cfg = Config(
