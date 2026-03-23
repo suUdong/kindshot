@@ -500,3 +500,53 @@ def test_consecutive_stop_loss_does_not_block_skip():
         "005930", cfg, state=state, decision_action=Action.SKIP, **_base_args()
     )
     assert r.passed is True
+
+
+def test_guardrail_state_persist_atomic(tmp_path):
+    """State persists to disk via atomic write (tmp + rename)."""
+    cfg = _cfg()
+    state = GuardrailState(cfg, state_dir=tmp_path)
+    state._last_kst_date = "2026-03-23"
+    state.record_buy("005930")
+    state.record_pnl(-50000)
+
+    # File should exist and no .tmp remnant
+    state_file = tmp_path / "guardrail_state.json"
+    tmp_file = tmp_path / "guardrail_state.tmp"
+    assert state_file.exists()
+    assert not tmp_file.exists()
+
+    import json
+    data = json.loads(state_file.read_text())
+    assert "005930" in data["bought_tickers"]
+    assert data["daily_pnl"] == -50000
+    assert data["position_count"] == 1
+
+
+def test_guardrail_state_reload(tmp_path):
+    """State reloads correctly from persisted file on same KST date."""
+    import json
+    from datetime import datetime, timedelta, timezone
+    _KST = timezone(timedelta(hours=9))
+
+    cfg = _cfg()
+    today = datetime.now(_KST).strftime("%Y-%m-%d")
+
+    # Write state file with today's date so it will be loaded
+    state_file = tmp_path / "guardrail_state.json"
+    data = {
+        "date": today,
+        "daily_pnl": -100000,
+        "bought_tickers": ["005930", "035720"],
+        "position_count": 2,
+        "sector_positions": {},
+        "consecutive_stop_losses": 1,
+    }
+    state_file.write_text(json.dumps(data))
+
+    # New instance should reload from disk
+    state2 = GuardrailState(cfg, state_dir=tmp_path)
+    assert state2.position_count == 2
+    assert "005930" in state2.bought_tickers
+    assert state2.daily_pnl == -100000
+    assert state2.consecutive_stop_losses == 1

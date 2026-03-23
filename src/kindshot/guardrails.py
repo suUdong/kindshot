@@ -130,7 +130,10 @@ class GuardrailState:
                 "sector_positions": self._sector_positions,
                 "consecutive_stop_losses": self._consecutive_stop_losses,
             }
-            path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            # Atomic write: tmp file + rename to prevent corruption on crash
+            tmp_path = path.with_suffix(".tmp")
+            tmp_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            tmp_path.replace(path)
         except Exception:
             logger.exception("Failed to persist guardrail state")
 
