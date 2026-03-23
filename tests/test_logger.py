@@ -2,13 +2,15 @@
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from kindshot.logger import JsonlLogger
+from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.models import EventRecord, Bucket, EventIdMethod
+from kindshot.tz import KST as _KST
 
 
 def _make_event(event_id: str = "test123") -> EventRecord:
@@ -62,5 +64,31 @@ async def test_daily_rotation(log_dir: Path):
     # File name should contain today's date
     files = list(log_dir.glob("*.jsonl"))
     assert len(files) == 1
-    today = datetime.now().strftime("%Y%m%d")
-    assert today in files[0].name
+    today_kst = datetime.now(_KST).strftime("%Y%m%d")
+    assert today_kst in files[0].name
+
+
+async def test_log_write_error_on_readonly_dir(tmp_path: Path):
+    """LogWriteError raised when write fails (e.g., permission denied)."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    logger = JsonlLogger(log_dir, run_id="run_test")
+
+    # Make the log dir read-only to force OSError
+    log_dir.chmod(0o444)
+    try:
+        with pytest.raises(LogWriteError):
+            await logger.write(_make_event())
+    finally:
+        log_dir.chmod(0o755)
+
+
+async def test_file_uses_kst_date(log_dir: Path):
+    """Log file name should use KST date, not UTC."""
+    logger = JsonlLogger(log_dir, run_id="run_test")
+    await logger.write(_make_event())
+
+    files = list(log_dir.glob("*.jsonl"))
+    assert len(files) == 1
+    kst_date = datetime.now(_KST).strftime("%Y%m%d")
+    assert kst_date in files[0].name

@@ -9,6 +9,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from kindshot.tz import KST as _KST
+
 
 class LogWriteError(Exception):
     """Raised when log writing fails — triggers fail-stop."""
@@ -25,7 +27,7 @@ class JsonlLogger:
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
     def _today_file(self) -> Path:
-        today = datetime.now().strftime("%Y%m%d")
+        today = datetime.now(_KST).strftime("%Y%m%d")
         return self._log_dir / f"{self._file_prefix}_{today}.jsonl"
 
     def _write_sync(self, line: str) -> None:
