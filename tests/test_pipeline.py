@@ -12,6 +12,7 @@ from kindshot.bucket import BucketResult
 from kindshot.config import Config
 from kindshot.context_card import ContextCardData
 from kindshot.decision import LlmTimeoutError, LlmParseError, LlmCallError
+from kindshot.feed import RawDisclosure
 from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
 from kindshot.models import Bucket, ReviewStatus, SkipStage, UnknownReviewRecord
 
@@ -198,6 +199,47 @@ def test_runtime_counters_helpers():
     assert snap["skip_stage"]["LLM_ERROR"] == 1
     assert snap["skip_reason"]["RET_TODAY_DATA_MISSING"] == 1
     assert snap["skip_reason"]["LLM_ERROR"] == 1
+
+
+def test_make_error_event_record():
+    """_make_error_event_record builds a well-formed EventRecord for LLM errors."""
+    from kindshot.pipeline import _make_error_event_record
+    from kindshot.models import SkipStage, Bucket, EventIdMethod, EventKind
+
+    raw = RawDisclosure(
+        title="테스트 뉴스", link="http://test.com", rss_guid="guid1",
+        published="2026-03-24T09:00:00", ticker="005930", corp_name="삼성전자",
+        detected_at=datetime.now(timezone.utc),
+    )
+    processed = MagicMock()
+    processed.event_id = "evt_test"
+    processed.event_id_method = EventIdMethod.UID
+    processed.event_kind = EventKind.ORIGINAL
+    processed.parent_id = None
+    processed.event_group_id = "grp_test"
+    processed.parent_match_method = None
+    processed.parent_match_score = None
+    processed.parent_candidate_count = None
+    processed.kind_uid = "uid123"
+
+    bucket_result = MagicMock()
+    bucket_result.bucket = Bucket.POS_STRONG
+    bucket_result.keyword_hits = ["공급계약"]
+
+    cfg = Config(anthropic_api_key="test")
+    rec = _make_error_event_record(
+        mode="paper", config=cfg, run_id="run1", processed=processed,
+        raw=raw, detected_at=raw.detected_at, feed_source="KIS",
+        bucket_result=bucket_result, skip_stage=SkipStage.LLM_TIMEOUT,
+        skip_reason="LLM_TIMEOUT", market_snapshot=None,
+    )
+    assert rec.event_id == "evt_test"
+    assert rec.skip_stage == SkipStage.LLM_TIMEOUT
+    assert rec.skip_reason == "LLM_TIMEOUT"
+    assert rec.bucket == Bucket.POS_STRONG
+    assert rec.disclosed_at is None
+    assert rec.disclosed_at_missing is True
+    assert rec.ticker == "005930"
 
 
 async def test_paper_mode_logs_decision_with_paper_mode(tmp_path):
