@@ -153,7 +153,7 @@ async def test_get_price_empty_output_returns_none():
 
 async def test_get_price_no_credentials():
     """No KIS credentials = no token = None."""
-    cfg = Config()  # No kis keys
+    cfg = Config(kis_app_key="", kis_app_secret="")  # Explicitly no keys
     async with aiohttp.ClientSession() as session:
         kis = KisClient(cfg, session)
         result = await kis.get_price("005930")
