@@ -418,6 +418,40 @@ async def execute_bucket_path(
     return ProcessOutcome(event_id=processed.event_id, action=decision.action)
 
 
+def _make_error_event_record(
+    *,
+    mode: str,
+    config: Config,
+    run_id: str,
+    processed: ProcessedEvent,
+    raw: RawDisclosure,
+    detected_at: datetime,
+    feed_source: str,
+    bucket_result,
+    skip_stage: SkipStage,
+    skip_reason: str,
+    market_snapshot,
+) -> EventRecord:
+    """Build an EventRecord for LLM error paths (DRY helper)."""
+    return EventRecord(
+        mode=mode, schema_version=config.schema_version, run_id=run_id,
+        event_id=processed.event_id, event_id_method=processed.event_id_method,
+        event_kind=processed.event_kind, parent_id=processed.parent_id,
+        event_group_id=processed.event_group_id,
+        parent_match_method=processed.parent_match_method,
+        parent_match_score=processed.parent_match_score,
+        parent_candidate_count=processed.parent_candidate_count,
+        source=feed_source, rss_guid=raw.rss_guid, rss_link=raw.link,
+        kind_uid=processed.kind_uid,
+        disclosed_at=None, disclosed_at_missing=True,
+        detected_at=detected_at, delay_ms=None,
+        ticker=raw.ticker, corp_name=raw.corp_name, headline=raw.title,
+        bucket=bucket_result.bucket, keyword_hits=bucket_result.keyword_hits,
+        skip_stage=skip_stage, skip_reason=skip_reason,
+        market_ctx=market_snapshot,
+    )
+
+
 async def process_registered_event(
     raw: RawDisclosure,
     processed: ProcessedEvent,
@@ -520,24 +554,13 @@ async def process_registered_event(
         if counters is not None:
             counters.errors["llm_timeout"] += 1
         outcome = ProcessOutcome(processed.event_id, skip_stage=SkipStage.LLM_TIMEOUT, skip_reason="LLM_TIMEOUT")
-        event_rec = EventRecord(
-            mode=mode, schema_version=config.schema_version, run_id=run_id,
-            event_id=processed.event_id, event_id_method=processed.event_id_method,
-            event_kind=processed.event_kind, parent_id=processed.parent_id,
-            event_group_id=processed.event_group_id,
-            parent_match_method=processed.parent_match_method,
-            parent_match_score=processed.parent_match_score,
-            parent_candidate_count=processed.parent_candidate_count,
-            source=feed_source, rss_guid=raw.rss_guid, rss_link=raw.link,
-            kind_uid=processed.kind_uid,
-            disclosed_at=None, disclosed_at_missing=True,
-            detected_at=detected_at, delay_ms=None,
-            ticker=raw.ticker, corp_name=raw.corp_name, headline=raw.title,
-            bucket=bucket_result.bucket, keyword_hits=bucket_result.keyword_hits,
-            skip_stage=SkipStage.LLM_TIMEOUT, skip_reason="LLM_TIMEOUT",
-            market_ctx=market.snapshot,
+        err_rec = _make_error_event_record(
+            mode=mode, config=config, run_id=run_id, processed=processed,
+            raw=raw, detected_at=detected_at, feed_source=feed_source,
+            bucket_result=bucket_result, skip_stage=SkipStage.LLM_TIMEOUT,
+            skip_reason="LLM_TIMEOUT", market_snapshot=market.snapshot,
         )
-        await log.write(event_rec)
+        await log.write(err_rec)
         _mark_skip(counters, stage=SkipStage.LLM_TIMEOUT.value, reason="LLM_TIMEOUT")
     except LlmCallError:
         if _tracer and _t_llm is not None:
@@ -545,24 +568,13 @@ async def process_registered_event(
         if counters is not None:
             counters.errors["llm_call_error"] += 1
         outcome = ProcessOutcome(processed.event_id, skip_stage=SkipStage.LLM_ERROR, skip_reason="LLM_ERROR")
-        event_rec = EventRecord(
-            mode=mode, schema_version=config.schema_version, run_id=run_id,
-            event_id=processed.event_id, event_id_method=processed.event_id_method,
-            event_kind=processed.event_kind, parent_id=processed.parent_id,
-            event_group_id=processed.event_group_id,
-            parent_match_method=processed.parent_match_method,
-            parent_match_score=processed.parent_match_score,
-            parent_candidate_count=processed.parent_candidate_count,
-            source=feed_source, rss_guid=raw.rss_guid, rss_link=raw.link,
-            kind_uid=processed.kind_uid,
-            disclosed_at=None, disclosed_at_missing=True,
-            detected_at=detected_at, delay_ms=None,
-            ticker=raw.ticker, corp_name=raw.corp_name, headline=raw.title,
-            bucket=bucket_result.bucket, keyword_hits=bucket_result.keyword_hits,
-            skip_stage=SkipStage.LLM_ERROR, skip_reason="LLM_ERROR",
-            market_ctx=market.snapshot,
+        err_rec = _make_error_event_record(
+            mode=mode, config=config, run_id=run_id, processed=processed,
+            raw=raw, detected_at=detected_at, feed_source=feed_source,
+            bucket_result=bucket_result, skip_stage=SkipStage.LLM_ERROR,
+            skip_reason="LLM_ERROR", market_snapshot=market.snapshot,
         )
-        await log.write(event_rec)
+        await log.write(err_rec)
         _mark_skip(counters, stage=SkipStage.LLM_ERROR.value, reason="LLM_ERROR")
     except LlmParseError:
         if _tracer and _t_llm is not None:
@@ -570,27 +582,15 @@ async def process_registered_event(
         if counters is not None:
             counters.errors["llm_parse_error"] += 1
         outcome = ProcessOutcome(processed.event_id, skip_stage=SkipStage.LLM_PARSE, skip_reason="LLM_PARSE")
-        event_rec = EventRecord(
-            mode=mode, schema_version=config.schema_version, run_id=run_id,
-            event_id=processed.event_id, event_id_method=processed.event_id_method,
-            event_kind=processed.event_kind, parent_id=processed.parent_id,
-            event_group_id=processed.event_group_id,
-            parent_match_method=processed.parent_match_method,
-            parent_match_score=processed.parent_match_score,
-            parent_candidate_count=processed.parent_candidate_count,
-            source=feed_source, rss_guid=raw.rss_guid, rss_link=raw.link,
-            kind_uid=processed.kind_uid,
-            disclosed_at=None, disclosed_at_missing=True,
-            detected_at=detected_at, delay_ms=None,
-            ticker=raw.ticker, corp_name=raw.corp_name, headline=raw.title,
-            bucket=bucket_result.bucket, keyword_hits=bucket_result.keyword_hits,
-            skip_stage=SkipStage.LLM_PARSE, skip_reason="LLM_PARSE",
-            market_ctx=market.snapshot,
+        err_rec = _make_error_event_record(
+            mode=mode, config=config, run_id=run_id, processed=processed,
+            raw=raw, detected_at=detected_at, feed_source=feed_source,
+            bucket_result=bucket_result, skip_stage=SkipStage.LLM_PARSE,
+            skip_reason="LLM_PARSE", market_snapshot=market.snapshot,
         )
-        await log.write(event_rec)
+        await log.write(err_rec)
         _mark_skip(counters, stage=SkipStage.LLM_PARSE.value, reason="LLM_PARSE")
     except Exception:
-        # 예상치 못한 예외 — 이벤트 유실 방지
         logger.exception("Unexpected error processing %s [%s]", processed.event_id, raw.ticker)
         if _tracer and _t_llm is not None:
             _tracer.llm_end(_t_llm, raw.ticker, error="unexpected")
@@ -598,24 +598,13 @@ async def process_registered_event(
             counters.errors["unexpected_error"] = counters.errors.get("unexpected_error", 0) + 1
         outcome = ProcessOutcome(processed.event_id, skip_stage=SkipStage.LLM_ERROR, skip_reason="UNEXPECTED_ERROR")
         try:
-            event_rec = EventRecord(
-                mode=mode, schema_version=config.schema_version, run_id=run_id,
-                event_id=processed.event_id, event_id_method=processed.event_id_method,
-                event_kind=processed.event_kind, parent_id=processed.parent_id,
-                event_group_id=processed.event_group_id,
-                parent_match_method=processed.parent_match_method,
-                parent_match_score=processed.parent_match_score,
-                parent_candidate_count=processed.parent_candidate_count,
-                source=feed_source, rss_guid=raw.rss_guid, rss_link=raw.link,
-                kind_uid=processed.kind_uid,
-                disclosed_at=None, disclosed_at_missing=True,
-                detected_at=detected_at, delay_ms=None,
-                ticker=raw.ticker, corp_name=raw.corp_name, headline=raw.title,
-                bucket=bucket_result.bucket, keyword_hits=bucket_result.keyword_hits,
-                skip_stage=SkipStage.LLM_ERROR, skip_reason="UNEXPECTED_ERROR",
-                market_ctx=market.snapshot,
+            err_rec = _make_error_event_record(
+                mode=mode, config=config, run_id=run_id, processed=processed,
+                raw=raw, detected_at=detected_at, feed_source=feed_source,
+                bucket_result=bucket_result, skip_stage=SkipStage.LLM_ERROR,
+                skip_reason="UNEXPECTED_ERROR", market_snapshot=market.snapshot,
             )
-            await log.write(event_rec)
+            await log.write(err_rec)
         except Exception:
             logger.exception("Failed to log UNEXPECTED_ERROR event for %s", processed.event_id)
     else:
