@@ -42,7 +42,7 @@ class ContextCardData:
     sector: str = ""
 
 
-_KST = timezone(timedelta(hours=9))
+from kindshot.tz import KST as _KST
 
 
 def configure_cache(ttl_s: int, max_size: int) -> None:
@@ -68,7 +68,6 @@ async def _pykrx_features(ticker: str) -> dict:
         try:
             from pykrx import stock
 
-            _KST = timezone(timedelta(hours=9))
             today = datetime.now(_KST).strftime("%Y%m%d")
             start_20d = (datetime.now(_KST) - timedelta(days=40)).strftime("%Y%m%d")
 

@@ -16,9 +16,9 @@ from kindshot.config import Config
 from kindshot.bucket import classify
 from kindshot.kis_client import KisClient, NewsDisclosure, NewsDisclosureFetchResult
 
-logger = logging.getLogger(__name__)
+from kindshot.tz import KST as _KST
 
-_KST = timezone(timedelta(hours=9))
+logger = logging.getLogger(__name__)
 
 
 @dataclass

@@ -4,7 +4,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
-from kindshot.health import HealthState, _health_handler
+from kindshot.health import HealthState, _health_handler, start_health_server
 
 
 def test_health_state_defaults():
@@ -46,6 +46,13 @@ def test_health_state_degraded():
         state.record_error()
     snap = state.snapshot()
     assert snap["status"] == "degraded"
+
+
+def test_health_server_default_bind_is_localhost():
+    """start_health_server defaults to 127.0.0.1 (not 0.0.0.0)."""
+    import inspect
+    sig = inspect.signature(start_health_server)
+    assert sig.parameters["host"].default == "127.0.0.1"
 
 
 @pytest.mark.asyncio

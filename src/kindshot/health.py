@@ -11,8 +11,9 @@ from typing import Any, Optional
 
 from aiohttp import web
 
+from kindshot.tz import KST as _KST
+
 logger = logging.getLogger(__name__)
-_KST = timezone(timedelta(hours=9))
 
 
 class HealthState:
@@ -85,7 +86,7 @@ async def _health_handler(request: web.Request) -> web.Response:
 async def start_health_server(
     state: HealthState,
     *,
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 8080,
 ) -> tuple[web.AppRunner, asyncio.Task]:
     """Start health check server. Returns (runner, serve_task) for cleanup."""

@@ -18,8 +18,9 @@ from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.models import PriceSnapshot, T0Basis
 from kindshot.runtime_artifacts import update_runtime_artifact_index
 
+from kindshot.tz import KST as _KST
+
 logger = logging.getLogger(__name__)
-_KST = timezone(timedelta(hours=9))
 
 # Horizon offsets in seconds from t0
 HORIZON_OFFSETS: dict[str, float] = {

@@ -64,7 +64,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-_KST = timezone(timedelta(hours=9))
+from kindshot.tz import KST as _KST
 
 
 def _append_unknown_headline(log_dir: Path, headline: str, ticker: str) -> None:
@@ -235,7 +235,6 @@ async def _watchdog_loop(
     feed, counters, config: Config, stop_event: asyncio.Event
 ) -> None:
     """Periodically notify systemd watchdog and log heartbeat."""
-    _KST = timezone(timedelta(hours=9))
     while not stop_event.is_set():
         now = datetime.now(_KST)
         last_poll = feed.last_poll_at

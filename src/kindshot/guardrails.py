@@ -17,8 +17,9 @@ from kindshot.config import Config
 from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
 from kindshot.models import Action
 
+from kindshot.tz import KST as _KST
+
 logger = logging.getLogger(__name__)
-_KST = timezone(timedelta(hours=9))
 
 
 @dataclass
@@ -218,7 +219,8 @@ def check_guardrails(
             return GuardrailResult(passed=False, reason="LOW_CONFIDENCE")
 
     # 5b. No BUY after cutoff time (장 마감 임박 시 진입 차단)
-    if decision_action == Action.BUY:
+    #     hour >= 24 disables the check (used in tests / off-hours configs)
+    if decision_action == Action.BUY and config.no_buy_after_kst_hour < 24:
         now_kst = datetime.now(_KST)
         cutoff = now_kst.replace(
             hour=config.no_buy_after_kst_hour,

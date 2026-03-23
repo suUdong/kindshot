@@ -14,8 +14,9 @@ from kindshot.kis_client import IndexInfo, KisClient
 from kindshot.models import MarketContext
 from kindshot.runtime_artifacts import update_runtime_artifact_index
 
+from kindshot.tz import KST as _KST
+
 logger = logging.getLogger(__name__)
-_KST = timezone(timedelta(hours=9))
 
 
 async def _fetch_vkospi() -> Optional[float]:

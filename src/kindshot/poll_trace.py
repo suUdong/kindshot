@@ -10,9 +10,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-logger = logging.getLogger(__name__)
+from kindshot.tz import KST as _KST
 
-_KST = timezone(timedelta(hours=9))
+logger = logging.getLogger(__name__)
 
 
 class PollTracer:

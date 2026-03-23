@@ -95,6 +95,10 @@ class Config:
     snapshot_horizons: tuple[str, ...] = ("t0", "t+30s", "t+1m", "t+2m", "t+5m", "t+30m", "close")
     close_snapshot_delay_s: float = 300.0  # 15:31~15:35
 
+    # --- Health ---
+    health_host: str = field(default_factory=lambda: _env("HEALTH_HOST", "127.0.0.1"))
+    health_port: int = field(default_factory=lambda: _env_int("HEALTH_PORT", 8080))
+
     # --- Logging ---
     log_dir: Path = field(default_factory=lambda: Path(_env("LOG_DIR", "logs")))
     schema_version: str = "0.1.3"

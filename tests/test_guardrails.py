@@ -190,7 +190,7 @@ def test_liquidation_trade_blocks_trade():
 
 
 def test_orderbook_top_level_liquidity_blocks_buy():
-    cfg = _cfg(order_size=5_000_000, no_buy_after_kst_hour=23)
+    cfg = _cfg(order_size=5_000_000, no_buy_after_kst_hour=24)
     r = check_guardrails(
         "005930",
         cfg,
@@ -231,7 +231,7 @@ def test_orderbook_top_level_liquidity_does_not_block_skip():
 
 
 def test_intraday_value_ratio_blocks_buy():
-    cfg = _cfg(min_intraday_value_vs_adv20d=0.01, no_buy_after_kst_hour=23)
+    cfg = _cfg(min_intraday_value_vs_adv20d=0.01, no_buy_after_kst_hour=24)
     r = check_guardrails(
         "005930",
         cfg,
@@ -268,7 +268,7 @@ def test_normalized_quote_temp_stop_blocks_without_raw_dataclass():
 
 
 def test_normalized_top_ask_notional_blocks_buy_without_raw_dataclass():
-    cfg = _cfg(order_size=5_000_000, no_buy_after_kst_hour=23)
+    cfg = _cfg(order_size=5_000_000, no_buy_after_kst_hour=24)
     r = check_guardrails(
         "005930",
         cfg,
@@ -354,7 +354,7 @@ def test_chase_buy_blocked():
     """당일 3%+ 상승 종목 BUY → CHASE_BUY_BLOCKED."""
     r = check_guardrails(
         ticker="005930",
-        config=_cfg(spread_check_enabled=True, no_buy_after_kst_hour=23),
+        config=_cfg(spread_check_enabled=True, no_buy_after_kst_hour=24),
         spread_bps=10.0,
         adv_value_20d=10e9,
         ret_today=3.5,
@@ -381,7 +381,7 @@ def test_chase_buy_passes_under_threshold():
     """당일 2% 상승은 통과."""
     r = check_guardrails(
         ticker="005930",
-        config=_cfg(spread_check_enabled=True, no_buy_after_kst_hour=23),
+        config=_cfg(spread_check_enabled=True, no_buy_after_kst_hour=24),
         spread_bps=10.0,
         adv_value_20d=10e9,
         ret_today=2.5,
@@ -394,7 +394,7 @@ def test_low_confidence_blocked():
     """confidence < 70 → LOW_CONFIDENCE."""
     r = check_guardrails(
         ticker="005930",
-        config=_cfg(spread_check_enabled=True, min_buy_confidence=70, no_buy_after_kst_hour=23),
+        config=_cfg(spread_check_enabled=True, min_buy_confidence=70, no_buy_after_kst_hour=24),
         spread_bps=10.0,
         adv_value_20d=10e9,
         ret_today=2.0,
@@ -409,7 +409,7 @@ def test_high_confidence_passes():
     """confidence >= 70 → 통과."""
     r = check_guardrails(
         ticker="005930",
-        config=_cfg(spread_check_enabled=True, min_buy_confidence=70, no_buy_after_kst_hour=23),
+        config=_cfg(spread_check_enabled=True, min_buy_confidence=70, no_buy_after_kst_hour=24),
         spread_bps=10.0,
         adv_value_20d=10e9,
         ret_today=2.0,
@@ -423,7 +423,7 @@ def test_high_confidence_passes():
 
 def test_consecutive_stop_loss_blocks_buy():
     """3연속 손절 시 BUY 차단."""
-    cfg = _cfg(no_buy_after_kst_hour=23)
+    cfg = _cfg(no_buy_after_kst_hour=24)
     state = GuardrailState(cfg)
     state.record_stop_loss()
     state.record_stop_loss()
@@ -438,7 +438,7 @@ def test_consecutive_stop_loss_blocks_buy():
 
 def test_consecutive_stop_loss_allows_under_threshold():
     """2연속 손절은 BUY 허용."""
-    cfg = _cfg(no_buy_after_kst_hour=23)
+    cfg = _cfg(no_buy_after_kst_hour=24)
     state = GuardrailState(cfg)
     state.record_stop_loss()
     state.record_stop_loss()
@@ -451,7 +451,7 @@ def test_consecutive_stop_loss_allows_under_threshold():
 
 def test_consecutive_stop_loss_resets_on_profit():
     """수익 청산 시 연속 손절 카운터 리셋."""
-    cfg = _cfg(no_buy_after_kst_hour=23)
+    cfg = _cfg(no_buy_after_kst_hour=24)
     state = GuardrailState(cfg)
     state.record_stop_loss()
     state.record_stop_loss()

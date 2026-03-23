@@ -19,6 +19,7 @@ import feedparser
 from kindshot.config import Config
 from kindshot.kis_client import KisClient, NewsDisclosure
 from kindshot.poll_trace import get_tracer
+from kindshot.tz import KST as _KST
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +140,6 @@ class KindFeed:
             return []
 
         feed = feedparser.parse(body)
-        _KST = timezone(timedelta(hours=9))
         now = datetime.now(_KST)
         results: list[RawDisclosure] = []
 
@@ -346,7 +346,6 @@ class KisFeed:
             return []
 
         self._consecutive_failures = 0
-        _KST = timezone(timedelta(hours=9))
         now = datetime.now(_KST)
         results: list[RawDisclosure] = []
         seen_dup = 0

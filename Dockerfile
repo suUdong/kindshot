@@ -9,6 +9,7 @@ COPY deploy/ deploy/
 
 RUN pip install --no-cache-dir -e .
 
+ENV HEALTH_HOST=0.0.0.0
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

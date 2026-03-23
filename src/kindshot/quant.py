@@ -9,9 +9,7 @@ from typing import Optional
 
 from kindshot.config import Config
 from kindshot.models import QuantCheckDetail
-
-
-_KST = timezone(timedelta(hours=9))
+from kindshot.tz import KST as _KST
 _CONTINUOUS_SESSION_START = time(9, 0)
 _CONTINUOUS_SESSION_END = time(15, 30)
 

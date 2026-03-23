@@ -35,8 +35,9 @@ from kindshot.models import (
     UnknownReviewRecord,
 )
 
+from kindshot.tz import KST as _KST
+
 logger = logging.getLogger(__name__)
-_KST = timezone(timedelta(hours=9))
 
 
 @dataclass(frozen=True)
