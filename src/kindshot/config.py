@@ -163,6 +163,34 @@ class Config:
             return self.order_size_s
         return self.order_size
 
+    def validate(self) -> list[str]:
+        """Return config warnings. Raises ValueError on fatal issues."""
+        import logging
+        _log = logging.getLogger(__name__)
+        warnings: list[str] = []
+
+        if not self.anthropic_api_key:
+            warnings.append("ANTHROPIC_API_KEY not set")
+            _log.warning("Config: ANTHROPIC_API_KEY not set — LLM calls will fail")
+
+        if self.paper_take_profit_pct <= 0:
+            raise ValueError(f"paper_take_profit_pct must be positive, got {self.paper_take_profit_pct}")
+        if self.paper_stop_loss_pct >= 0:
+            raise ValueError(f"paper_stop_loss_pct must be negative, got {self.paper_stop_loss_pct}")
+        if self.chase_buy_pct <= 0:
+            raise ValueError(f"chase_buy_pct must be positive, got {self.chase_buy_pct}")
+        if not (0 <= self.min_buy_confidence <= 100):
+            raise ValueError(f"min_buy_confidence must be 0-100, got {self.min_buy_confidence}")
+        if self.adv_threshold < 0:
+            raise ValueError(f"adv_threshold must be non-negative, got {self.adv_threshold}")
+
+        if not self.kis_app_key or not self.kis_app_secret:
+            warnings.append("KIS API keys not set")
+
+        return warnings
+
 
 def load_config(**overrides: object) -> Config:
-    return Config(**overrides)  # type: ignore[arg-type]
+    cfg = Config(**overrides)  # type: ignore[arg-type]
+    cfg.validate()
+    return cfg

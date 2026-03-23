@@ -180,7 +180,7 @@ class KindFeed:
                     timeout=self._interval_with_backoff(),
                 )
             except asyncio.TimeoutError:
-                pass
+                pass  # Normal wakeup — interruptible sleep via stop_event
 
 
 class KisFeed:

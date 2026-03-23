@@ -355,7 +355,7 @@ class SnapshotScheduler:
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=1.0)
             except asyncio.TimeoutError:
-                pass
+                pass  # Normal wakeup — interruptible sleep via stop_event
 
     def stop(self) -> None:
         self._stop_event.set()

@@ -66,3 +66,44 @@ def test_config_is_frozen():
         assert False, "Config should be frozen"
     except AttributeError:
         pass
+
+
+def test_validate_missing_api_key_warns():
+    cfg = Config(anthropic_api_key="")
+    warnings = cfg.validate()
+    assert any("ANTHROPIC_API_KEY" in w for w in warnings)
+
+
+def test_validate_bad_tp_raises():
+    import pytest
+    cfg = Config(paper_take_profit_pct=-1.0)
+    with pytest.raises(ValueError, match="paper_take_profit_pct"):
+        cfg.validate()
+
+
+def test_validate_bad_sl_raises():
+    import pytest
+    cfg = Config(paper_stop_loss_pct=1.0)
+    with pytest.raises(ValueError, match="paper_stop_loss_pct"):
+        cfg.validate()
+
+
+def test_validate_bad_chase_buy_raises():
+    import pytest
+    cfg = Config(chase_buy_pct=-2.0)
+    with pytest.raises(ValueError, match="chase_buy_pct"):
+        cfg.validate()
+
+
+def test_validate_bad_confidence_raises():
+    import pytest
+    cfg = Config(min_buy_confidence=150)
+    with pytest.raises(ValueError, match="min_buy_confidence"):
+        cfg.validate()
+
+
+def test_load_config_calls_validate():
+    from kindshot.config import load_config
+    import pytest
+    with pytest.raises(ValueError):
+        load_config(paper_take_profit_pct=-1.0)

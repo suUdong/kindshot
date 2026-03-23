@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import time
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -24,6 +25,16 @@ from kindshot.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
+_STRATEGY_PROMPT: Optional[str] = None
+
+
+def _load_strategy_prompt() -> str:
+    global _STRATEGY_PROMPT
+    if _STRATEGY_PROMPT is None:
+        _STRATEGY_PROMPT = (_PROMPTS_DIR / "decision_strategy.txt").read_text(encoding="utf-8")
+    return _STRATEGY_PROMPT
 
 
 # Re-export from llm_client for backward compatibility
@@ -63,6 +74,8 @@ def _build_prompt(
         breadth = f"{market_ctx.kospi_breadth_ratio:.2f}" if market_ctx.kospi_breadth_ratio is not None else "N/A"
         market_line = f"\nctx_market: KOSPI={kospi} KOSDAQ={kosdaq} breadth_ratio={breadth}"
 
+    strategy = _load_strategy_prompt()
+
     return f"""event: [{bucket.value}] {corp_name}, {headline}
 corp: {corp_name}({ticker})
 detected_at: {detected_at} KST
@@ -72,93 +85,7 @@ ctx_micro: {ctx_micro}{market_line}
 
 constraints: max_pos=10% no_overnight=true daily_loss_remaining=85%
 
-strategy_guide:
-- 수주·공급계약: 매출 대비 10%+ 대형수주 → BUY(88,L), 5-10% 중형 → BUY(78,M), <5% 소규모 → SKIP(55)
-- 수주·공급계약 금액 불명 또는 100억 미만 → SKIP(50), 시장 임팩트 부족
-- 수주·공급계약 금액 100억-500억 → confidence 상한 72, size_hint=S
-- 바이오/제약 FDA허가·임상3상 성공 → BUY(92,L), 임상2상 완료 → BUY(80,M), 임상1상 결과 → SKIP(60)
-- 유증·CB발행 → SKIP (희석 리스크)
-- 자사주 소각·취득 "결정/공시" → BUY(78,M). 단, "추진/검토/계획" → SKIP(55) 확정 아님
-- 대형 M&A·합작법인 설립 확정 → BUY(80,M). 단, "협의 중/검토 중" → SKIP(50) 불확실
-- spread_bps>30 → size_hint 한 단계 낮춤 (L→M, M→S)
-- 같은 종목 반복 뉴스(중복 보도) → 처음만 BUY, 후속은 SKIP
-
-SKIP_필수_패턴 (아래 해당 시 반드시 SKIP):
-- ret_today>3%: 이미 시장에 반영됨. 추격매수 금지. 예외 없음.
-- ret_today>2% and 뉴스기사(공시 아님): 이미 반영+촉매 약함 → SKIP(45).
-- 뉴스 기사/분석 리포트/전망 기사 → SKIP(40). 공시가 아닌 기사는 촉매 아님.
-  감별법: "[TOP's Pick]", "[카드]", "[종합]", "전망", "보인다", "분석", "'X' 넘어", "파죽지세" 등 수식 표현, CEO 인터뷰 인용("..."), 마침표 3개(...) 포함 → 기사.
-  공시 감별: "체결", "결정", "공시", "수주공시", "단일판매", "규모 공급계약" + 구체 금액 → 공시.
-- 의도/계획 표현: "추진", "검토", "협의 중", "계획", "방안", "논의", "예정", "나서겠다" → SKIP(55). 확정된 사실만 BUY.
-- 생산라인 전환/구조조정/조직개편 → SKIP(50). 신규 수주/계약이 아님.
-- 1척 추가, 소량 추가 수주 등 점진적 물량 → SKIP(55). 시장에 이미 반영된 반복 수주.
-- 주총/정관 변경/이사 선임 등 일반 기업 거버넌스 → SKIP(40).
-- 기업가치 평가/시가총액 전망 → SKIP(40). 실제 거래가 아닌 추정.
-
-adv_filter (반드시 적용 — 대형주는 뉴스 반영이 이미 완료):
-- adv_20d > 5000억 (초대형주): confidence 상한 72 → 대부분 SKIP. "sell the news" 패턴 빈발.
-- adv_20d 2000~5000억 (대형주): confidence -3. 뉴스 반영 빠름, edge 제한적.
-- adv_20d 500~2000억 (중형주): 가장 유리한 구간. 뉴스 반영 지연 + 유동성 충분.
-- adv_20d < 500억: quant 필터에서 제외됨 (ADV_TOO_LOW).
-
-trend_filter (반드시 적용):
-- ret_3d < -5%: 하락 추세 종목. confidence -10. 대형 공시라도 반등 실패 확률 높음.
-- ret_3d < -3% and adv_20d > 1000억: 대형주 하락 추세. confidence -5. "sell the news" 위험.
-- pos_20d < 20: 20일 중 대부분 하락. confidence -5. 추세 역행 진입 위험.
-
-technical_indicators (참고 — 있을 때만 적용):
-- rsi_14 > 75: 과매수 구간. confidence -5. 단기 조정 가능성.
-- rsi_14 < 30: 과매도 구간. 뉴스 촉매와 결합 시 반등 가능성 → confidence +3.
-- macd_hist > 0: 상승 모멘텀. 촉매와 방향 일치 → 긍정 신호.
-- macd_hist < 0: 하락 모멘텀. 촉매가 추세 역행 → confidence -3.
-
-market_adjustment (반드시 적용):
-- KOSPI<-2%: confidence -5, size_hint 한 단계 낮춤 (L→M, M→S, S→SKIP)
-- KOSPI<-1% and breadth_ratio<0.35: confidence -3
-- KOSPI>+1% and breadth_ratio>0.6: confidence +3 (상한 95)
-
-confidence & size_hint 매핑 (반드시 준수):
-- 90-95: 확실한 촉매(FDA승인, 대형수주 매출10%+, 사상최대실적) → size_hint=L
-- 82-89: 강한 촉매(임상2상성공, 대형공급계약 매출5%+, 기술수출) → size_hint=L
-- 75-81: 보통 촉매(확정된 M&A, 자사주소각 결정, 중형계약 매출3-5%) → size_hint=M
-- 68-74: 약한 촉매(소규모 확정 계약) → size_hint=S, 대부분 SKIP이 나음
-- <68: 촉매 불충분 또는 불확실 → 반드시 SKIP
-
-CRITICAL_CONFIDENCE_RULES:
-1. confidence 70-75 사이 값을 남발하면 안 됨. 촉매가 확실하면 80+, 불확실하면 60 이하로 명확히 분리.
-2. 같은 세션에서 모든 이벤트에 동일 confidence를 부여하는 것은 시스템 실패. 반드시 차별화.
-3. "POS_STRONG이니까 BUY"는 근거 불충분. 구체적 금액, 매출비중, 확정 여부를 기준으로 판단.
-4. 헤드라인이 공시(DART 공시, "체결", "결정")인지 뉴스기사(분석, 전망, 인터뷰)인지 구분. 뉴스기사는 촉매가 아님.
-
-실전_사례 (실제 거래 결과 기반 — 반드시 학습):
-
-WIN 사례:
-- "HD현대중공업, 8237억원 규모 공급계약(컨테이너선 10척) 체결" ret_today=-2.5% → BUY(85,L) → close +0.26%. 대형 확정 수주+하락 중 저가 매수.
-- "알테오젠, 키트루다 SC 조성물 특허 미국 등록" ret_today=0.0% → BUY(88,L) → t+5m +3.68% TP. 바이오 규제 촉매+가격 미반영.
-
-LOSS 사례 (이런 패턴 SKIP):
-- "서진시스템, 2702억 규모 ESS 장비 공급계약" ret_today=+0.65% spread=21.5 → BUY(72,M) → close -2.30%. spread 넓고 ESS 섹터 변동성 큼. SKIP(60)이 정답.
-- "삼성SDI, 1.5조 규모 ESS 공급 계약 체결" ret_today=+0.26% adv=3811억 → BUY(72,M) → close -1.61%. 대형주는 이미 시장에 반영. SKIP(55)이 정답.
-- "포스코퓨처엠 1.01조 음극재 공급" ret_3d=-9.03% → BUY(72,M) → close -0.23%. 3일간 -9% 하락 추세에서 뉴스 효과 없음. SKIP(55)이 정답.
-- "[TOP's Pick] 엔씨, 저스트플레이 인수" → BUY(72,M) → close -2.33%. 기사일 뿐 공시 아님. SKIP(35)이 정답.
-- "RF시스템즈, 166억 규모 공급계약" ret_today=+19.3% → BUY(72,M) → close -9.50%. 이미 폭등+소규모 계약. SKIP(40)이 정답.
-
-핵심 패턴:
-- 대형 확정 수주 + 가격 미반영(ret_today<1%) = BUY 유력
-- 기사/미확정 + 이미 상승(ret_today>2%) = SKIP 필수
-- 하락 추세(ret_3d<-5%) + 대형주 = SKIP (sell the news)
-- spread>20bps 종목 = confidence -5 추가 감점
-
-decision_bias:
-- POS_STRONG이라도 SKIP 근거(추격매수 ret>3%, 뉴스기사, 소규모, 미확정)가 있으면 반드시 SKIP.
-- 확정된 대형 공시(매출비중 5%+, 체결/결정 문구)만 BUY. 나머지는 SKIP이 안전.
-- POS_WEAK: confidence<75이면 SKIP. ret_today>2%이면 SKIP.
-- SKIP reason에 구체적 근거 필수: "ret_today=4.5% 추격", "100억 미만 소규모", "'추진' 미확정" 등.
-- "불확실하다" 같은 모호한 이유 금지.
-
-task: decide BUY or SKIP. respond with ONLY a JSON object (no markdown, no code fences).
-example: {{"action":"BUY","confidence":85,"size_hint":"L","reason":"FDA 허가 획득, 바이오 강한 촉매"}}
-fields: action="BUY" or "SKIP", confidence=0-100, size_hint="S" or "M" or "L", reason=max 100 chars"""
+{strategy}"""
 
 
 def _parse_llm_response(raw: str) -> Optional[dict]:
