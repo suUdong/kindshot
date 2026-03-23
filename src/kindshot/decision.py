@@ -43,6 +43,9 @@ class LlmParseError(Exception):
     """LLM response could not be parsed."""
 
 
+_MAX_HEADLINE_LEN = 500
+
+
 def _build_prompt(
     bucket: Bucket,
     headline: str,
@@ -52,6 +55,8 @@ def _build_prompt(
     ctx: ContextCard,
     market_ctx: Optional[MarketContext] = None,
 ) -> str:
+    # Truncate headline to prevent prompt injection via excessively long input
+    headline = headline[:_MAX_HEADLINE_LEN]
     rsi_str = f" rsi_14={ctx.rsi_14}" if ctx.rsi_14 is not None else ""
     macd_str = f" macd_hist={ctx.macd_hist}" if ctx.macd_hist is not None else ""
     ctx_price = (

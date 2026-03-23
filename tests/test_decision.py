@@ -148,6 +148,26 @@ def test_build_prompt():
     assert "top_ask_notional=8500000" in prompt
 
 
+def test_build_prompt_truncates_long_headline():
+    """Headlines longer than 500 chars are truncated to prevent prompt injection."""
+    ctx = ContextCard(
+        ret_today=1.0, ret_1d=0.0, ret_3d=0.0, pos_20d=50,
+        gap=0.0, adv_value_20d=10e9, spread_bps=10.0,
+    )
+    long_headline = "A" * 1000
+    prompt = _build_prompt(
+        bucket=Bucket.POS_STRONG,
+        headline=long_headline,
+        ticker="005930",
+        corp_name="테스트",
+        detected_at="09:00:00",
+        ctx=ctx,
+    )
+    # Headline in prompt should be truncated to 500 chars
+    assert "A" * 500 in prompt
+    assert "A" * 501 not in prompt
+
+
 def test_cache_key_changes_with_microstructure_context():
     cfg = Config(anthropic_api_key="test")
     engine = DecisionEngine(cfg)
