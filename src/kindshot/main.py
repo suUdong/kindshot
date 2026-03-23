@@ -31,6 +31,7 @@ from kindshot.poll_trace import init_tracer
 from kindshot.price import PriceFetcher, SnapshotScheduler
 from kindshot.sd_notify import notify_ready, notify_watchdog
 from kindshot.tz import KST as _KST
+from kindshot.health import HealthState, start_health_server
 from kindshot.unknown_review import (
     UnknownReviewEngine,
     append_unknown_review,
@@ -272,6 +273,16 @@ async def run() -> None:
                     logger.exception("Market monitor error")
                 await _wait_or_stop(stop_event, 60)
 
+        # Health check server
+        health_state = HealthState()
+        health_runner = None
+        try:
+            health_runner, _health_task = await start_health_server(
+                health_state, host=config.health_host, port=config.health_port,
+            )
+        except Exception:
+            logger.warning("Health server failed to start", exc_info=True)
+
         notify_ready()
 
         tasks = [
@@ -314,4 +325,6 @@ async def run() -> None:
             logger.info("Runtime counters: %s", counter_snapshot(counters))
             if flushed_close:
                 logger.info("Shutdown flushed close snapshots: %d", flushed_close)
+            if health_runner is not None:
+                await health_runner.cleanup()
             logger.info("Shutdown complete. Pending snapshots lost: %d", scheduler.pending_count)
