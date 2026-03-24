@@ -50,8 +50,11 @@ def test_env_override_int():
 def test_trailing_stop_defaults():
     cfg = Config()
     assert cfg.trailing_stop_enabled is True
-    assert cfg.trailing_stop_pct == 0.8
-    assert cfg.trailing_stop_activation_pct == 0.8
+    assert cfg.trailing_stop_pct == 0.5
+    assert cfg.trailing_stop_activation_pct == 0.3
+    assert cfg.trailing_stop_early_pct == 0.3
+    assert cfg.trailing_stop_mid_pct == 0.5
+    assert cfg.trailing_stop_late_pct == 0.7
     assert cfg.max_hold_minutes == 30
 
 
@@ -64,7 +67,7 @@ def test_unknown_review_defaults_enabled():
 
 def test_paper_tp_sl_defaults():
     cfg = Config()
-    assert cfg.paper_take_profit_pct == 1.5
+    assert cfg.paper_take_profit_pct == 0.8
     assert cfg.paper_stop_loss_pct == -1.0
 
 

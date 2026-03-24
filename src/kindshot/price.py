@@ -93,6 +93,21 @@ class SnapshotScheduler:
         self._virtual_exits: dict[str, str] = {}
         # Trailing stop peak 추적 (event_id → peak return %)
         self._peak_returns: dict[str, float] = {}
+        # 진입 시각 추적 (event_id → monotonic time at t0 fire)
+        self._entry_times: dict[str, float] = {}
+
+    def _get_trailing_stop_pct(self, event_id: str) -> float:
+        """시간대별 trailing stop 폭 반환: 0~5분 early, 5~30분 mid, 30분+ late."""
+        entry_time = self._entry_times.get(event_id)
+        if entry_time is None:
+            return self._config.trailing_stop_pct
+        elapsed_s = time.monotonic() - entry_time
+        if elapsed_s < 300:  # 0~5분
+            return self._config.trailing_stop_early_pct
+        elif elapsed_s < 1800:  # 5~30분
+            return self._config.trailing_stop_mid_pct
+        else:  # 30분+
+            return self._config.trailing_stop_late_pct
 
     def _runtime_snapshot_path(self, ts: datetime) -> Path:
         dt = ts.astimezone(_KST).strftime("%Y%m%d")
@@ -217,6 +232,7 @@ class SnapshotScheduler:
                 is_buy_decision=snap.is_buy_decision,
             )
             self._t0_prices[snap.event_id] = (effective_entry_px, cum_value)
+            self._entry_times[snap.event_id] = time.monotonic()
         else:
             t0_px, t0_cum = self._t0_prices.get(snap.event_id, (None, None))
             if px is not None and t0_px and t0_px > 0:
@@ -228,6 +244,7 @@ class SnapshotScheduler:
             if snap.horizon == "close":
                 self._t0_prices.pop(snap.event_id, None)
                 self._event_tickers.pop(snap.event_id, None)
+                self._entry_times.pop(snap.event_id, None)
                 # Report close P&L to guardrail state (BUY decisions only)
                 if snap.is_buy_decision and ret_long is not None and self._pnl_callback and t0_px:
                     pnl_won = ret_long * self._config.order_size
@@ -289,13 +306,14 @@ class SnapshotScheduler:
             elif (
                 self._config.trailing_stop_enabled
                 and peak >= self._config.trailing_stop_activation_pct
-                and ret_pct <= peak - self._config.trailing_stop_pct
+                and ret_pct <= peak - self._get_trailing_stop_pct(snap.event_id)
             ):
+                trail_pct = self._get_trailing_stop_pct(snap.event_id)
                 self._virtual_exits[snap.event_id] = snap.horizon
                 logger.info(
                     "PAPER TRAILING STOP [%s] %s: %.2f%% at %s (peak %.2f%%, trail -%.1f%%)",
                     snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
-                    peak, self._config.trailing_stop_pct,
+                    peak, trail_pct,
                 )
             elif (
                 self._config.max_hold_minutes > 0

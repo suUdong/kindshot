@@ -195,8 +195,8 @@ async def _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=10.0):
 
 
 async def test_paper_take_profit_triggers():
-    """TP 1.5%: t0=10000, t+1m=10200 (+2%) → TP hit."""
-    cfg = Config(paper_take_profit_pct=1.5, paper_stop_loss_pct=-1.0, trailing_stop_enabled=False)
+    """TP 0.8%: t0=10000, t+1m=10200 (+2%) → TP hit."""
+    cfg = Config(paper_take_profit_pct=0.8, paper_stop_loss_pct=-1.0, trailing_stop_enabled=False)
     scheduler, log = await _make_scheduler_with_t0(cfg)
 
     # Fire t+1m with price up 2%
@@ -303,6 +303,109 @@ async def test_virtual_exit_prevents_double_trigger():
     snap2 = [s for s in scheduler._heap if s.horizon == "t+1m"][0]
     await scheduler._fire(snap2)
     assert scheduler._virtual_exits["evt1"] == "t+30s"  # unchanged
+
+
+async def test_trailing_stop_early_tier_tight():
+    """0~5분 구간: early trailing (0.3%) 적용. peak 0.5% → drop to 0.1% (diff 0.4% > 0.3%) → exit."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=True,
+        trailing_stop_activation_pct=0.3,
+        trailing_stop_early_pct=0.3,
+        trailing_stop_mid_pct=0.5,
+        trailing_stop_late_pct=0.7,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+
+    # t+30s: +0.5% (above activation 0.3%) — sets peak, within early tier (< 5min)
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10050.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_100_000.0, fetch_latency_ms=10,
+    ))
+    snap1 = [s for s in scheduler._heap if s.horizon == "t+30s"][0]
+    await scheduler._fire(snap1)
+    assert "evt1" not in scheduler._virtual_exits
+
+    # t+1m: +0.1% (dropped 0.4% from peak 0.5%, > early trail 0.3%) → exit
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10010.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_010_000.0, fetch_latency_ms=10,
+    ))
+    snap2 = [s for s in scheduler._heap if s.horizon == "t+1m"][0]
+    await scheduler._fire(snap2)
+    assert "evt1" in scheduler._virtual_exits
+    assert scheduler._virtual_exits["evt1"] == "t+1m"
+
+
+async def test_trailing_stop_mid_tier():
+    """5~30분 구간: mid trailing (0.5%) 적용. 시간을 인위적으로 조작."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=True,
+        trailing_stop_activation_pct=0.3,
+        trailing_stop_early_pct=0.3,
+        trailing_stop_mid_pct=0.5,
+        trailing_stop_late_pct=0.7,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+
+    # Simulate 6 minutes elapsed (mid tier)
+    scheduler._entry_times["evt1"] = time.monotonic() - 360
+
+    # Set peak at 1.0%
+    scheduler._peak_returns["evt1"] = 1.0
+
+    # Price at +0.4% (dropped 0.6% from peak 1.0%, > mid trail 0.5%) → exit
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10040.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_040_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+5m"][0]
+    await scheduler._fire(snap)
+    assert "evt1" in scheduler._virtual_exits
+
+
+async def test_trailing_stop_mid_tier_no_exit_within_tolerance():
+    """5~30분 구간: peak 대비 drop이 mid trail 이내면 exit 안 함."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=True,
+        trailing_stop_activation_pct=0.3,
+        trailing_stop_early_pct=0.3,
+        trailing_stop_mid_pct=0.5,
+        trailing_stop_late_pct=0.7,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+
+    # Simulate 6 minutes elapsed (mid tier)
+    scheduler._entry_times["evt1"] = time.monotonic() - 360
+
+    # Set peak at 1.0%
+    scheduler._peak_returns["evt1"] = 1.0
+
+    # Price at +0.6% (dropped 0.4% from peak 1.0%, < mid trail 0.5%) → NO exit
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10060.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_060_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+5m"][0]
+    await scheduler._fire(snap)
+    assert "evt1" not in scheduler._virtual_exits
+
+
+async def test_tp_default_lowered_to_0_8():
+    """TP 기본값이 0.8%로 낮아졌는지 확인."""
+    cfg = Config()
+    assert cfg.paper_take_profit_pct == 0.8
+
+
+async def test_trailing_activation_default_lowered_to_0_3():
+    """Trailing stop activation 기본값이 0.3%로 낮아졌는지 확인."""
+    cfg = Config()
+    assert cfg.trailing_stop_activation_pct == 0.3
 
 
 async def test_flush_close_on_shutdown_fires_pending_close_after_cutoff():
