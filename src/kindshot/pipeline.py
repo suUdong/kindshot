@@ -23,6 +23,7 @@ from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, Llm
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
 from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint
+from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.market import MarketMonitor
@@ -400,6 +401,9 @@ async def execute_bucket_path(
     if decision.action == Action.BUY and guardrail_state is not None:
         guardrail_state.record_buy(raw.ticker)
 
+    # 보유시간 차등화: 키워드 기반 hold profile
+    hold_minutes = get_max_hold_minutes(raw.title, keyword_hits, config) if decision.action == Action.BUY else 0
+
     scheduler.schedule_t0(
         event_id=processed.event_id,
         ticker=raw.ticker,
@@ -408,6 +412,7 @@ async def execute_bucket_path(
         run_id=run_id,
         mode=mode,
         is_buy_decision=(decision.action == Action.BUY),
+        max_hold_minutes=hold_minutes,
     )
     if mode == "paper":
         logger.info(

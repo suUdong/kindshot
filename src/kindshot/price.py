@@ -95,6 +95,8 @@ class SnapshotScheduler:
         self._peak_returns: dict[str, float] = {}
         # 진입 시각 추적 (event_id → monotonic time at t0 fire)
         self._entry_times: dict[str, float] = {}
+        # 이벤트별 max_hold_minutes (0=EOD까지)
+        self._max_hold_minutes: dict[str, int] = {}
 
     def _get_trailing_stop_pct(self, event_id: str) -> float:
         """시간대별 trailing stop 폭 반환: 0~5분 early, 5~30분 mid, 30분+ late."""
@@ -146,11 +148,14 @@ class SnapshotScheduler:
         run_id: str,
         mode: str = "live",
         is_buy_decision: bool = False,
+        max_hold_minutes: int = 0,
     ) -> None:
         """Schedule t0 snapshot immediately + future horizons."""
         now = time.monotonic()
 
         self._event_tickers[event_id] = ticker
+        if max_hold_minutes > 0:
+            self._max_hold_minutes[event_id] = max_hold_minutes
 
         # t0: fire immediately (will be fetched in the run loop)
         heapq.heappush(self._heap, ScheduledSnapshot(
@@ -245,6 +250,7 @@ class SnapshotScheduler:
                 self._t0_prices.pop(snap.event_id, None)
                 self._event_tickers.pop(snap.event_id, None)
                 self._entry_times.pop(snap.event_id, None)
+                self._max_hold_minutes.pop(snap.event_id, None)
                 # Report close P&L to guardrail state (BUY decisions only)
                 if snap.is_buy_decision and ret_long is not None and self._pnl_callback and t0_px:
                     pnl_won = ret_long * self._config.order_size
@@ -315,16 +321,16 @@ class SnapshotScheduler:
                     snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
                     peak, trail_pct,
                 )
-            elif (
-                self._config.max_hold_minutes > 0
-                and snap.horizon == f"t+{self._config.max_hold_minutes}m"
-            ):
-                self._virtual_exits[snap.event_id] = snap.horizon
-                logger.info(
-                    "PAPER MAX HOLD [%s] %s: %.2f%% at %s (%dm limit)",
-                    snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
-                    self._config.max_hold_minutes,
-                )
+            else:
+                # 이벤트별 또는 전역 max_hold_minutes 체크
+                event_max = self._max_hold_minutes.get(snap.event_id, self._config.max_hold_minutes)
+                if event_max > 0 and snap.horizon == f"t+{event_max}m":
+                    self._virtual_exits[snap.event_id] = snap.horizon
+                    logger.info(
+                        "PAPER MAX HOLD [%s] %s: %.2f%% at %s (%dm limit)",
+                        snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
+                        event_max,
+                    )
 
     async def flush_close_on_shutdown(self) -> int:
         """Fire pending close snapshots if shutdown happens after close fetch time."""
