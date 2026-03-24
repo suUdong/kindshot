@@ -233,6 +233,15 @@ def check_guardrails(
         if now_kst >= cutoff:
             return GuardrailResult(passed=False, reason="MARKET_CLOSE_CUTOFF")
 
+    # 5d. 비유동 시간대(11:00~14:00) spread 강화: spread 기준 70% 적용
+    if decision_action == Action.BUY and config.no_buy_after_kst_hour < 24:
+        now_kst = datetime.now(_KST)
+        hour = now_kst.hour
+        if 11 <= hour < 14 and spread_bps is not None:
+            midday_spread_limit = config.spread_bps_limit * 0.7
+            if spread_bps > midday_spread_limit:
+                return GuardrailResult(passed=False, reason="MIDDAY_SPREAD_TOO_WIDE")
+
     # 5c. Chase-buy prevention: 당일 이미 크게 상승한 종목은 BUY 차단
     if decision_action == Action.BUY and ret_today is not None:
         if ret_today > config.chase_buy_pct:

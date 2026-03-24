@@ -38,6 +38,13 @@ technical_indicators (참고 — 있을 때만 적용):
 - macd_hist > 0: 상승 모멘텀. 촉매와 방향 일치 → 긍정 신호.
 - macd_hist < 0: 하락 모멘텀. 촉매가 추세 역행 → confidence -3.
 
+time_session_rules (detected_at 기준, 반드시 적용):
+- 06:00~08:30 (장전 공시): 개장 갭 기회. 공시 확인 후 BUY 유리. confidence +5 가산.
+- 09:00~09:30 (개장 직후): 변동성 최고. 확실한 촉매만 BUY. spread_bps>25이면 SKIP.
+- 09:30~11:00 (오전장): 표준 전략 적용.
+- 11:00~14:00 (비유동 시간): 유동성 급감, 스프레드 넓어짐. confidence -3. 소형주 SKIP 유도.
+- 14:30~15:00 (마감 임박): 새 포지션 진입 비추. confidence -5. 확실한 촉매(conf>85)만 BUY.
+
 market_adjustment (반드시 적용):
 - KOSPI<-2%: confidence -5, size_hint 한 단계 낮춤 (L→M, M→S, S→SKIP)
 - KOSPI<-1% and breadth_ratio<0.35: confidence -3

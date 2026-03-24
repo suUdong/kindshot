@@ -600,6 +600,62 @@ def test_kill_switch_3_losses_blocks_buy():
     assert r.reason == "CONSECUTIVE_STOP_LOSS"
 
 
+def test_midday_spread_blocks_buy():
+    """11:00~14:00 비유동 시간대: spread 기준 70% 강화."""
+    from unittest.mock import patch
+    from datetime import datetime, timedelta, timezone
+    _KST = timezone(timedelta(hours=9))
+    midday = datetime(2026, 3, 24, 12, 0, 0, tzinfo=_KST)
+    cfg = _cfg(spread_check_enabled=True, spread_bps_limit=50.0, no_buy_after_kst_hour=15)
+    with patch("kindshot.guardrails.datetime") as mock_dt:
+        mock_dt.now.return_value = midday
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        # spread 40bps: 정상이면 통과지만 midday 70% 적용 → 한도 35bps → 차단
+        r = check_guardrails(
+            "005930", cfg, spread_bps=40.0,
+            adv_value_20d=10e9, ret_today=2.0,
+            decision_action=Action.BUY,
+        )
+    assert r.passed is False
+    assert r.reason == "MIDDAY_SPREAD_TOO_WIDE"
+
+
+def test_midday_spread_passes_low_spread():
+    """11:00~14:00 시간대라도 spread 낮으면 통과."""
+    from unittest.mock import patch
+    from datetime import datetime, timedelta, timezone
+    _KST = timezone(timedelta(hours=9))
+    midday = datetime(2026, 3, 24, 12, 0, 0, tzinfo=_KST)
+    cfg = _cfg(spread_check_enabled=True, spread_bps_limit=50.0, no_buy_after_kst_hour=15)
+    with patch("kindshot.guardrails.datetime") as mock_dt:
+        mock_dt.now.return_value = midday
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        r = check_guardrails(
+            "005930", cfg, spread_bps=30.0,
+            adv_value_20d=10e9, ret_today=2.0,
+            decision_action=Action.BUY,
+        )
+    assert r.passed is True
+
+
+def test_non_midday_spread_normal_limit():
+    """10:00 (비유동 시간대 아님): 정상 spread 한도 적용."""
+    from unittest.mock import patch
+    from datetime import datetime, timedelta, timezone
+    _KST = timezone(timedelta(hours=9))
+    morning = datetime(2026, 3, 24, 10, 0, 0, tzinfo=_KST)
+    cfg = _cfg(spread_check_enabled=True, spread_bps_limit=50.0, no_buy_after_kst_hour=15)
+    with patch("kindshot.guardrails.datetime") as mock_dt:
+        mock_dt.now.return_value = morning
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        r = check_guardrails(
+            "005930", cfg, spread_bps=40.0,
+            adv_value_20d=10e9, ret_today=2.0,
+            decision_action=Action.BUY,
+        )
+    assert r.passed is True
+
+
 def test_kill_switch_configurable_halt_at_2():
     """consecutive_loss_halt=2 이면 2연패에서 차단."""
     cfg = _cfg(consecutive_loss_halt=2, no_buy_after_kst_hour=24)
