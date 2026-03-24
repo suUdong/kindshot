@@ -976,3 +976,73 @@ async def test_quant_fail_still_tracks_price(tmp_path):
 
     # quant 실패해도 가격 추적 스케줄러에 반드시 등록되어야 함
     assert len(scheduler._heap) >= 1, "quant 실패 종목도 가격 추적 스케줄링 되어야 함"
+
+
+async def test_skip_decision_tracks_price_for_false_negative(tmp_path):
+    """SKIP 결정된 POS_STRONG 종목도 가격 추적하여 false negative 식별."""
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.SKIP,  # SKIP 결정
+        confidence=55,
+        size_hint=SizeHint.S,
+        reason="소규모 계약",
+        decision_source="LLM",
+    )
+
+    from kindshot.event_registry import EventRegistry
+    from kindshot.feed import KindFeed
+    from kindshot.guardrails import GuardrailResult
+    from kindshot.logger import JsonlLogger
+    from kindshot.pipeline import pipeline_loop
+    from kindshot.market import MarketMonitor
+    from kindshot.models import ContextCard
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+
+    cfg = Config(log_dir=tmp_path / "logs", paper=True)
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+
+    mock_engine = MagicMock()
+    mock_engine.decide = AsyncMock(return_value=mock_decision)
+
+    raw = _make_raw()
+    mock_feed = AsyncMock(spec=KindFeed)
+
+    async def _one_batch():
+        yield [raw]
+    mock_feed.stream = _one_batch
+
+    with patch("kindshot.pipeline.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.pipeline.check_guardrails") as mock_gr:
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0),
+            ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=2.0),
+        )
+        mock_gr.return_value = GuardrailResult(passed=True)
+
+        try:
+            await asyncio.wait_for(
+                pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
+                timeout=1.0,
+            )
+        except (asyncio.TimeoutError, StopAsyncIteration):
+            pass
+
+    # SKIP 종목도 가격 추적: "skip_" 프리픽스 이벤트 ID가 스케줄러에 있어야 함
+    skip_events = [s for s in scheduler._heap if s.event_id.startswith("skip_")]
+    assert len(skip_events) >= 1, "SKIP 결정된 POS_STRONG 종목도 가격 추적되어야 함"
+
+    # 원본 이벤트도 스케줄링됨 (SKIP이어도 schedule_t0 호출)
+    main_events = [s for s in scheduler._heap if not s.event_id.startswith("skip_")]
+    assert len(main_events) >= 1

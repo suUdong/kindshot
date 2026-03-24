@@ -402,7 +402,8 @@ async def execute_bucket_path(
         guardrail_state.record_buy(raw.ticker)
 
     # 보유시간 차등화: 키워드 기반 hold profile
-    hold_minutes = get_max_hold_minutes(raw.title, keyword_hits, config) if decision.action == Action.BUY else 0
+    is_buy = decision.action == Action.BUY
+    hold_minutes = get_max_hold_minutes(raw.title, keyword_hits, config) if is_buy else 0
 
     scheduler.schedule_t0(
         event_id=processed.event_id,
@@ -411,9 +412,21 @@ async def execute_bucket_path(
         t0_ts=decision.decided_at,
         run_id=run_id,
         mode=mode,
-        is_buy_decision=(decision.action == Action.BUY),
+        is_buy_decision=is_buy,
         max_hold_minutes=hold_minutes,
     )
+
+    # SKIP 종목 후속 추적: false negative 식별을 위해 가격 스냅샷 스케줄
+    if decision.action == Action.SKIP and bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
+        scheduler.schedule_t0(
+            event_id=f"skip_{processed.event_id}",
+            ticker=raw.ticker,
+            t0_basis=T0Basis.DECIDED_AT,
+            t0_ts=decision.decided_at,
+            run_id=run_id,
+            mode=mode,
+            is_buy_decision=False,
+        )
     if mode == "paper":
         logger.info(
             "PAPER %s [%s] conf=%d hint=%s: %s",
