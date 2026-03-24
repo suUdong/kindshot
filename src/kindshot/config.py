@@ -85,6 +85,9 @@ class Config:
     max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 30))  # 최대 보유 30분 (0=비활성)
     quant_fail_sample_rate: float = 0.10
     daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 3_000_000))  # won
+    # 킬 스위치: 연패 기반 size 축소 & 당일 중단
+    consecutive_loss_size_down: int = field(default_factory=lambda: _env_int("CONSECUTIVE_LOSS_SIZE_DOWN", 2))  # N연패 시 size 한단계 다운
+    consecutive_loss_halt: int = field(default_factory=lambda: _env_int("CONSECUTIVE_LOSS_HALT", 3))  # N연패 시 당일 BUY 중단
     max_positions: int = field(default_factory=lambda: _env_int("MAX_POSITIONS", 5))
     max_sector_positions: int = field(default_factory=lambda: _env_int("MAX_SECTOR_POSITIONS", 2))
     order_size: float = field(default_factory=lambda: _env_float("ORDER_SIZE", 5_000_000))  # won per trade (기본, M size)

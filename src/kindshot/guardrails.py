@@ -271,8 +271,8 @@ def check_guardrails(
         if state.position_count >= config.max_positions:
             return GuardrailResult(passed=False, reason="MAX_POSITIONS")
 
-        # 12a. Consecutive stop-loss circuit breaker (3연속 손절 시 BUY 차단)
-        if decision_action == Action.BUY and state.consecutive_stop_losses >= 3:
+        # 12a. Consecutive stop-loss circuit breaker (N연속 손절 시 BUY 차단)
+        if decision_action == Action.BUY and state.consecutive_stop_losses >= config.consecutive_loss_halt:
             return GuardrailResult(passed=False, reason="CONSECUTIVE_STOP_LOSS")
 
     # 12. Restricted stock (관리종목/투자경고/투자위험)
@@ -288,3 +288,25 @@ def get_dynamic_stop_loss_pct(config: Config, confidence: int) -> float:
     if confidence >= 85:
         return min(config.paper_stop_loss_pct * 1.33, -2.0)  # -1.5% → -2.0%
     return config.paper_stop_loss_pct
+
+
+def downgrade_size_hint(size_hint: str) -> str:
+    """size_hint를 한 단계 낮춤: L→M, M→S, S→S."""
+    if size_hint == "L":
+        return "M"
+    if size_hint == "M":
+        return "S"
+    return "S"
+
+
+def get_kill_switch_size_hint(
+    config: Config,
+    state: Optional[GuardrailState],
+    original_hint: str,
+) -> str:
+    """연패 상태에 따라 size_hint 다운그레이드. 2연패 시 한단계 축소."""
+    if state is None:
+        return original_hint
+    if state.consecutive_stop_losses >= config.consecutive_loss_size_down:
+        return downgrade_size_hint(original_hint)
+    return original_hint

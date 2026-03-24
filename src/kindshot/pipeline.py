@@ -22,7 +22,7 @@ from kindshot.context_card import (
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
-from kindshot.guardrails import GuardrailState, check_guardrails
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.market import MarketMonitor
@@ -348,6 +348,18 @@ async def execute_bucket_path(
     )
     decision.event_id = processed.event_id
     decision.mode = mode
+
+    # 킬 스위치: 연패 시 size_hint 다운그레이드
+    if decision.action == Action.BUY and guardrail_state is not None:
+        adjusted = get_kill_switch_size_hint(config, guardrail_state, decision.size_hint.value)
+        if adjusted != decision.size_hint.value:
+            from kindshot.models import SizeHint
+            logger.info(
+                "KILL SWITCH size down [%s]: %s → %s (consecutive_losses=%d)",
+                raw.ticker, decision.size_hint.value, adjusted,
+                guardrail_state.consecutive_stop_losses,
+            )
+            decision.size_hint = SizeHint(adjusted)
 
     # Inline decision into event_rec (유실 방지)
     event_rec.decision_action = decision.action.value

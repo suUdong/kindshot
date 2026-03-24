@@ -1,7 +1,10 @@
 """Tests for guardrails including portfolio-level controls."""
 
 from kindshot.config import Config
-from kindshot.guardrails import check_guardrails, GuardrailResult, GuardrailState, get_dynamic_stop_loss_pct
+from kindshot.guardrails import (
+    check_guardrails, GuardrailResult, GuardrailState,
+    get_dynamic_stop_loss_pct, downgrade_size_hint, get_kill_switch_size_hint,
+)
 from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
 from kindshot.models import Action
 
@@ -550,3 +553,59 @@ def test_guardrail_state_reload(tmp_path):
     assert "005930" in state2.bought_tickers
     assert state2.daily_pnl == -100000
     assert state2.consecutive_stop_losses == 1
+
+
+# ── 킬 스위치 테스트 ──────────────────
+
+def test_downgrade_size_hint():
+    """L→M, M→S, S→S."""
+    assert downgrade_size_hint("L") == "M"
+    assert downgrade_size_hint("M") == "S"
+    assert downgrade_size_hint("S") == "S"
+
+
+def test_kill_switch_2_losses_downgrades():
+    """2연패 시 size_hint 한단계 다운."""
+    cfg = _cfg(consecutive_loss_size_down=2)
+    state = GuardrailState(cfg)
+    state.record_stop_loss()
+    state.record_stop_loss()
+    assert get_kill_switch_size_hint(cfg, state, "L") == "M"
+    assert get_kill_switch_size_hint(cfg, state, "M") == "S"
+    assert get_kill_switch_size_hint(cfg, state, "S") == "S"
+
+
+def test_kill_switch_1_loss_no_downgrade():
+    """1연패 시 다운그레이드 없음."""
+    cfg = _cfg(consecutive_loss_size_down=2)
+    state = GuardrailState(cfg)
+    state.record_stop_loss()
+    assert get_kill_switch_size_hint(cfg, state, "L") == "L"
+
+
+def test_kill_switch_no_state():
+    """state 없으면 원래 hint 유지."""
+    cfg = _cfg()
+    assert get_kill_switch_size_hint(cfg, None, "L") == "L"
+
+
+def test_kill_switch_3_losses_blocks_buy():
+    """3연패 시 BUY 차단 (configurable halt threshold)."""
+    cfg = _cfg(consecutive_loss_halt=3, no_buy_after_kst_hour=24)
+    state = GuardrailState(cfg)
+    for _ in range(3):
+        state.record_stop_loss()
+    r = check_guardrails("005930", cfg, state=state, decision_action=Action.BUY, **_base_args())
+    assert r.passed is False
+    assert r.reason == "CONSECUTIVE_STOP_LOSS"
+
+
+def test_kill_switch_configurable_halt_at_2():
+    """consecutive_loss_halt=2 이면 2연패에서 차단."""
+    cfg = _cfg(consecutive_loss_halt=2, no_buy_after_kst_hour=24)
+    state = GuardrailState(cfg)
+    state.record_stop_loss()
+    state.record_stop_loss()
+    r = check_guardrails("005930", cfg, state=state, decision_action=Action.BUY, **_base_args())
+    assert r.passed is False
+    assert r.reason == "CONSECUTIVE_STOP_LOSS"
