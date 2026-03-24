@@ -519,3 +519,47 @@ def test_pos_weak_new_product_launch():
     result = classify("A사, 차세대 반도체 공정 신제품 출시")
     assert result.bucket == Bucket.POS_WEAK
     assert "신제품 출시" in result.keyword_hits
+
+
+# ── 체결/해지 구분 테스트 ──────────────────
+
+def test_neg_supply_contract_termination():
+    """공급계약 해지 → NEG_STRONG (POS '공급계약'보다 우선)."""
+    result = classify("삼성전자, 1000억 규모 공급계약 해지 통보")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "공급계약 해지" in result.keyword_hits
+
+
+def test_neg_supply_contract_cancellation():
+    """공급계약 파기 → NEG_STRONG."""
+    result = classify("현대차, 500억 공급계약 파기")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "공급계약 파기" in result.keyword_hits
+
+
+def test_neg_delivery_contract_termination():
+    """납품계약 해지 → NEG_STRONG."""
+    result = classify("A사, 납품계약 해지 결정")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "납품계약 해지" in result.keyword_hits
+
+
+def test_neg_order_contract_termination():
+    """수주계약 해지 → NEG_STRONG."""
+    result = classify("B사, 수주계약 해지 공시")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "수주계약 해지" in result.keyword_hits
+
+
+def test_pos_supply_contract_conclusion():
+    """공급계약 체결 → POS_STRONG (해지가 아닌 체결)."""
+    result = classify("삼성전자, 5000억 규모 공급계약 체결")
+    assert result.bucket == Bucket.POS_STRONG
+    assert "공급계약" in result.keyword_hits
+
+
+def test_neg_contract_release():
+    """계약 해제 → NEG_STRONG."""
+    result = classify("C사, 주요 거래처 계약 해제 공시")
+    assert result.bucket == Bucket.NEG_STRONG
+    assert "계약 해제" in result.keyword_hits
