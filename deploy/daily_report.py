@@ -25,6 +25,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from kindshot.hold_profile import resolve_hold_profile
 from kindshot.strategy_observability import (
     StrategyReportConfig,
     classify_buy_exit,
@@ -463,6 +464,69 @@ def format_telegram(log_path: Path, data: dict) -> str:
                 wins = sum(1 for r in rets if r > 0)
                 avg = sum(rets) / len(rets)
                 w(f"  c={label}: {wins}/{len(rets)}승 ({wins/len(rets)*100:.0f}%) avg={avg:+.1f}%")
+
+    # Bucket별 BUY 승률
+    if buy_decisions:
+        bucket_rets: dict[str, list[float]] = defaultdict(list)
+        for eid, dec in buy_decisions.items():
+            ev = events.get(eid, {})
+            bucket = ev.get("bucket", "?")
+            cr = _ret_pct(snapshots.get(eid, {}), "close")
+            if cr is not None:
+                bucket_rets[bucket].append(cr)
+        active_bkts = {k: v for k, v in bucket_rets.items() if v}
+        if active_bkts:
+            w("")
+            w("🏷 <b>Bucket별 승률</b>")
+            for bkt, rets in sorted(active_bkts.items()):
+                bwins = sum(1 for r in rets if r > 0)
+                bavg = sum(rets) / len(rets)
+                w(f"  {bkt}: {bwins}/{len(rets)}승 ({bwins/len(rets)*100:.0f}%) avg={bavg:+.1f}%")
+
+    # 시간대별 BUY 승률
+    if buy_decisions:
+        hour_rets: dict[int, list[float]] = defaultdict(list)
+        for eid, dec in buy_decisions.items():
+            ev = events.get(eid, {})
+            detected = ev.get("detected_at", "")
+            cr = _ret_pct(snapshots.get(eid, {}), "close")
+            if cr is None or not detected:
+                continue
+            try:
+                hour = datetime.fromisoformat(detected).hour
+                hour_rets[hour].append(cr)
+            except (ValueError, TypeError):
+                pass
+        if hour_rets:
+            w("")
+            w("⏰ <b>시간대별 BUY 승률</b>")
+            for hour in sorted(hour_rets.keys()):
+                rets = hour_rets[hour]
+                hwins = sum(1 for r in rets if r > 0)
+                havg = sum(rets) / len(rets)
+                w(f"  {hour:02d}시: {hwins}/{len(rets)}승 ({hwins/len(rets)*100:.0f}%) avg={havg:+.1f}%")
+
+    # Hold Profile별 성과
+    if buy_decisions:
+        hp_config = StrategyReportConfig()
+        hp_rets: dict[str, list[float]] = defaultdict(list)
+        for eid, dec in buy_decisions.items():
+            ev = events.get(eid, {})
+            headline = ev.get("headline", "")
+            kw_hits = ev.get("keyword_hits", []) or []
+            hold_min, matched_kw = resolve_hold_profile(headline, kw_hits, hp_config)
+            if matched_kw is not None:
+                label = "EOD" if hold_min == 0 else f"{hold_min}m"
+                cr = _ret_pct(snapshots.get(eid, {}), "close")
+                if cr is not None:
+                    hp_rets[label].append(cr)
+        if hp_rets:
+            w("")
+            w("🕐 <b>Hold Profile별 성과</b>")
+            for label, rets in sorted(hp_rets.items()):
+                hwins = sum(1 for r in rets if r > 0)
+                havg = sum(rets) / len(rets)
+                w(f"  {label}: {hwins}/{len(rets)}승 ({hwins/len(rets)*100:.0f}%) avg={havg:+.1f}%")
 
     # SKIP 요약 (reason별 집계)
     skip_decisions = {eid: d for eid, d in decisions.items() if d.get("action") == "SKIP"}
