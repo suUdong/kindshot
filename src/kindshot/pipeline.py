@@ -381,6 +381,8 @@ async def execute_bucket_path(
     event_rec.decision_size_hint = decision.size_hint.value
     event_rec.decision_reason = decision.reason
 
+    hold_minutes = get_max_hold_minutes(raw.title, keyword_hits, config) if decision.action == Action.BUY else 0
+
     gr = check_guardrails(
         ticker=raw.ticker,
         config=config,
@@ -395,6 +397,9 @@ async def execute_bucket_path(
         intraday_value_vs_adv20d=raw_data.intraday_value_vs_adv20d if ctx else None,
         decision_action=decision.action,
         decision_confidence=decision.confidence,
+        decision_time_kst=decision.decided_at,
+        event_time_kst=detected_at,
+        decision_hold_minutes=hold_minutes,
         adv_threshold=config.adv_threshold_for_bucket(bucket.value),
     )
     if not gr.passed:
@@ -417,7 +422,6 @@ async def execute_bucket_path(
 
     # 보유시간 차등화: 키워드 기반 hold profile
     is_buy = decision.action == Action.BUY
-    hold_minutes = get_max_hold_minutes(raw.title, keyword_hits, config) if is_buy else 0
 
     scheduler.schedule_t0(
         event_id=processed.event_id,

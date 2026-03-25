@@ -167,6 +167,15 @@ class GuardrailState:
 _RESTRICTED_MARKERS = frozenset(["관리종목", "투자경고", "투자위험", "투자주의", "거래정지"])
 
 
+def _resolve_decision_time_kst(decision_time_kst: Optional[datetime]) -> datetime:
+    """Return the effective decision time in KST for deterministic time-based checks."""
+    if decision_time_kst is None:
+        return datetime.now(_KST)
+    if decision_time_kst.tzinfo is None:
+        return decision_time_kst.replace(tzinfo=_KST)
+    return decision_time_kst.astimezone(_KST)
+
+
 def check_guardrails(
     ticker: str,
     config: Config,
@@ -185,6 +194,9 @@ def check_guardrails(
     top_ask_notional: Optional[float] = None,
     decision_action: Optional[Action] = None,
     decision_confidence: Optional[int] = None,
+    decision_time_kst: Optional[datetime] = None,
+    event_time_kst: Optional[datetime] = None,
+    decision_hold_minutes: Optional[int] = None,
     adv_threshold: Optional[float] = None,
     **kwargs: object,
 ) -> GuardrailResult:
@@ -223,15 +235,32 @@ def check_guardrails(
     if quote_liquidation_trade is True:
         return GuardrailResult(passed=False, reason="LIQUIDATION_TRADE")
 
-    # 5a. Minimum confidence for BUY
+    # 5a. Fast-decay hold profile late-entry block.
+    if (
+        decision_action == Action.BUY
+        and decision_hold_minutes is not None
+        and decision_hold_minutes == config.fast_profile_hold_minutes
+        and config.fast_profile_no_buy_after_kst_hour < 24
+    ):
+        now_kst = _resolve_decision_time_kst(event_time_kst or decision_time_kst)
+        fast_cutoff = now_kst.replace(
+            hour=config.fast_profile_no_buy_after_kst_hour,
+            minute=config.fast_profile_no_buy_after_kst_minute,
+            second=0,
+            microsecond=0,
+        )
+        if now_kst >= fast_cutoff:
+            return GuardrailResult(passed=False, reason="FAST_PROFILE_LATE_ENTRY")
+
+    # 5b. Minimum confidence for BUY
     if decision_action == Action.BUY and decision_confidence is not None:
         if decision_confidence < config.min_buy_confidence:
             return GuardrailResult(passed=False, reason="LOW_CONFIDENCE")
 
-    # 5b. No BUY after cutoff time (장 마감 임박 시 진입 차단)
+    # 5c. No BUY after cutoff time (장 마감 임박 시 진입 차단)
     #     hour >= 24 disables the check (used in tests / off-hours configs)
     if decision_action == Action.BUY and config.no_buy_after_kst_hour < 24:
-        now_kst = datetime.now(_KST)
+        now_kst = _resolve_decision_time_kst(decision_time_kst)
         cutoff = now_kst.replace(
             hour=config.no_buy_after_kst_hour,
             minute=config.no_buy_after_kst_minute,
@@ -242,7 +271,7 @@ def check_guardrails(
 
     # 5d. 비유동 시간대(11:00~14:00) spread 강화: spread 기준 70% 적용
     if decision_action == Action.BUY and config.no_buy_after_kst_hour < 24:
-        now_kst = datetime.now(_KST)
+        now_kst = _resolve_decision_time_kst(decision_time_kst)
         hour = now_kst.hour
         if 11 <= hour < 14 and spread_bps is not None:
             midday_spread_limit = config.spread_bps_limit * 0.7
@@ -251,7 +280,7 @@ def check_guardrails(
 
     # 5e. 시간대별 confidence 문턱 (개장 직후 / 마감 임박)
     if decision_action == Action.BUY and decision_confidence is not None and config.no_buy_after_kst_hour < 24:
-        now_kst = datetime.now(_KST)
+        now_kst = _resolve_decision_time_kst(decision_time_kst)
         h, m = now_kst.hour, now_kst.minute
         # 09:00~09:30: 변동성 최고, 높은 확신만 진입
         if h == 9 and m < 30 and decision_confidence < config.opening_min_confidence:
@@ -260,7 +289,7 @@ def check_guardrails(
         if (h == 14 and m >= 30) and decision_confidence < config.closing_min_confidence:
             return GuardrailResult(passed=False, reason="CLOSING_LOW_CONFIDENCE")
 
-    # 5c. Chase-buy prevention: 당일 이미 크게 상승한 종목은 BUY 차단
+    # 5f. Chase-buy prevention: 당일 이미 크게 상승한 종목은 BUY 차단
     if decision_action == Action.BUY and ret_today is not None:
         if ret_today > config.chase_buy_pct:
             return GuardrailResult(passed=False, reason="CHASE_BUY_BLOCKED")

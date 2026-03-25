@@ -13,6 +13,7 @@ from typing import Any, Optional
 from kindshot.config import Config
 from kindshot.decision import DecisionEngine, LlmTimeoutError, LlmCallError, LlmParseError
 from kindshot.guardrails import check_guardrails
+from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.logger import JsonlLogger
 from kindshot.models import (
     Action,
@@ -783,17 +784,21 @@ async def _run_replay(
         ctx_data = rec.get("ctx") or {}
         ctx = ContextCard(**{k: v for k, v in ctx_data.items() if k in ContextCard.model_fields})
 
-        detected_at_str = rec.get("detected_at", "")
+        detected_at_raw = rec.get("detected_at", "")
+        detected_at_dt: Optional[datetime] = None
+        detected_at_str = detected_at_raw
         if detected_at_str:
             try:
                 from datetime import timedelta, timezone as tz
                 _KST = tz(timedelta(hours=9))
                 dt = datetime.fromisoformat(detected_at_str)
+                detected_at_dt = dt
                 # Convert to KST to match live pipeline's KST prompt labeling
                 dt_kst = dt.astimezone(_KST)
                 detected_at_str = dt_kst.strftime("%H:%M:%S")
             except (ValueError, TypeError):
                 detected_at_str = "09:00:00"
+                detected_at_dt = None
 
         # LLM decision
         try:
@@ -827,6 +832,11 @@ async def _run_replay(
             quote_liquidation_trade=ctx.quote_liquidation_trade,
             top_ask_notional=ctx.top_ask_notional,
             decision_action=Action(decision.action.value),
+            decision_confidence=decision.confidence,
+            decision_time_kst=detected_at_dt,
+            event_time_kst=detected_at_dt,
+            decision_hold_minutes=get_max_hold_minutes(headline, rec.get("keyword_hits") or [], config)
+            if decision.action.value == "BUY" else 0,
         )
         if not gr.passed:
             logger.info("Replay GUARDRAIL block %s: %s", ticker, gr.reason)

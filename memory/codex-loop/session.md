@@ -3,45 +3,39 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `Daily Runtime Verification`
-- Focus: explain zero-BUY pressure on 2026-03-25 and remove the dominant low-risk choke point.
-- Active hypothesis: `ADV_THRESHOLD=50억` is too strict for `POS_STRONG`; reducing ADV only for strong-catalyst events should restore candidate flow without broadening `POS_WEAK` risk.
+- Phase: `Backtest Analysis`
+- Focus: use the latest 7 logged trading days to isolate one underperforming strategy slice and land a reversible guardrail backed by tests.
+- Active hypothesis: fast-decay `15m` hold profiles should not open new BUYs after `14:00` KST, and time-based guardrails should evaluate against the event time instead of wall-clock `now()`.
 
 ## Environment
 
 - Host: local workspace
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.12.3`
-- Validation status: `source .venv/bin/activate && python -m pytest tests/test_collector.py -q` passed (`40 passed`) and `source .venv/bin/activate && python -m pytest -q` passes (`329 passed`).
-- Tooling note: local `.venv` remains the default test runner path for subsequent batches.
-- Git note: earlier local commits `0187bd5` and `ac26fe2` exist on `main`; `git push origin HEAD` still cannot reach `github.com` from this environment.
-- Server ops note: `kindshot-server` now has `/swapfile` 2G enabled, persisted in `/etc/fstab`, with `vm.swappiness=10` and `vm.vfs_cache_pressure=50`.
+- Validation status:
+  - `source .venv/bin/activate && python -m pytest tests/test_config.py tests/test_guardrails.py tests/test_pipeline.py -q` passed (`110 passed`)
+  - `source .venv/bin/activate && python -m pytest -q` passed (`551 passed, 1 warning`)
+- Tooling note: local `.venv` remains the default runner for follow-up verification.
 
 ## Last Completed Step
 
-- Audited local runtime artifacts for `2026-03-25` and confirmed that today's `context_cards` / `price_snapshots` are test-generated while `logs/kindshot_20260325.jsonl` is missing.
-- Reconstructed the latest real runtime day (`2026-03-19`) from local logs:
-  - `232` events total
-  - `66` `POS_STRONG`, `29` `POS_WEAK`
-  - `21` LLM decisions with `BUY=2`, `SKIP=19`
-  - `ADV_TOO_LOW=45`
-  - `CONSECUTIVE_STOP_LOSS=0`
-- Implemented a bounded strategy change:
-  - added `POS_STRONG_ADV_THRESHOLD` support with effective bucket-level ADV resolution
-  - applied the relaxed ADV floor only to `POS_STRONG` in both quant and final guardrail checks
-  - left `POS_WEAK` and other paths on the stricter general ADV threshold
-- Added strategy observability to operator outputs:
-  - `deploy/daily_report.py` now prints a strategy activity section
-  - Telegram daily summary now includes strategy counts
-  - current local 7-log aggregate shows `TP=2`, `Trailing Stop=2`, `Max Hold=4`, `Hold Profile Applied=18`, `Kill Switch Halt=0`, `Close Cutoff=7`
-- Wrote the operator report at `docs/daily-check-20260325.md`.
+- Read `SESSION_HANDOFF.md` and reconstructed the most recent locally available 7-log window: `2026-03-11`, `2026-03-12`, `2026-03-13`, `2026-03-16`, `2026-03-17`, `2026-03-18`, `2026-03-19`.
+- Wrote `docs/backtest-analysis.md` with per-strategy counts, win rates, and approximate PnL.
+- Identified the worst repeatable cohort:
+  - `15m` hold profile after `14:00` KST
+  - `5` trades, `0` wins, avg `-0.796%`, sum `-3.979%`
+- Implemented one bounded change:
+  - added config-backed `FAST_PROFILE_*` cutoff defaults
+  - added `FAST_PROFILE_LATE_ENTRY` guardrail
+  - made time-based guardrails consume injected event time in both runtime pipeline and replay
+- Added regression coverage for fast-profile cutoff and guardrail argument propagation.
 
 ## Next Intended Step
 
-- Sync or inspect the real `2026-03-25` runtime log from the running environment so the daily report can be cross-checked against non-local evidence, then watch whether the `POS_STRONG` ADV relaxation lifts BUY candidate flow without a large rise in false positives.
+- Observe the next real runtime logs to confirm whether `FAST_PROFILE_LATE_ENTRY` appears on late-session contract/suju headlines and whether the blocked cohort stays net-negative.
+- If sufficient new runtime logs accumulate, re-run the same 7-day analysis on post-change data before considering any further strategy tuning.
 
 ## Notes
 
-- Local workspace currently lacks operational `2026-03-25` JSONL logs; do not treat `data/runtime/context_cards/20260325.jsonl` or `data/runtime/price_snapshots/20260325.jsonl` as production evidence because they are test fixtures.
-- Kill switch is not the leading suspect in local evidence; no `CONSECUTIVE_STOP_LOSS` hit appears in recent real logs.
-- The new ADV relaxation is deliberately scoped to `POS_STRONG` only to avoid broadening `POS_WEAK` quality.
+- Local workspace still lacks `logs/kindshot_*.jsonl` after `2026-03-19`; do not describe later dates as verified runtime evidence from this machine.
+- Untracked workspace items under `.omc/`, `.omx/`, `data/`, `docs/superpowers/plans/`, `IMPROVEMENT_ANALYSIS.md`, and `scripts/auto-improve.sh` were left untouched.

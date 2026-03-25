@@ -1,5 +1,7 @@
 """Tests for guardrails including portfolio-level controls."""
 
+from datetime import datetime, timedelta, timezone
+
 from kindshot.config import Config
 from kindshot.guardrails import (
     check_guardrails, GuardrailResult, GuardrailState,
@@ -138,6 +140,10 @@ def test_ret_today_missing():
 
 def _base_args():
     return dict(adv_value_20d=10e9, ret_today=2.0, spread_bps=10.0)
+
+
+def _kst_dt(hour: int, minute: int = 0) -> datetime:
+    return datetime(2026, 3, 24, hour, minute, 0, tzinfo=timezone(timedelta(hours=9)))
 
 
 def test_daily_loss_limit():
@@ -829,3 +835,97 @@ def test_closing_low_confidence_blocked():
         )
     assert r.passed is False
     assert r.reason == "CLOSING_LOW_CONFIDENCE"
+
+
+def test_fast_profile_late_entry_blocked_with_injected_time():
+    cfg = _cfg(
+        no_buy_after_kst_hour=15,
+        fast_profile_hold_minutes=15,
+        fast_profile_no_buy_after_kst_hour=14,
+        fast_profile_no_buy_after_kst_minute=0,
+    )
+    r = check_guardrails(
+        "005930",
+        cfg,
+        decision_action=Action.BUY,
+        decision_confidence=82,
+        decision_hold_minutes=15,
+        decision_time_kst=_kst_dt(14, 5),
+        **_base_args(),
+    )
+    assert r.passed is False
+    assert r.reason == "FAST_PROFILE_LATE_ENTRY"
+
+
+def test_fast_profile_before_cutoff_passes():
+    cfg = _cfg(
+        no_buy_after_kst_hour=15,
+        fast_profile_hold_minutes=15,
+        fast_profile_no_buy_after_kst_hour=14,
+        fast_profile_no_buy_after_kst_minute=0,
+    )
+    r = check_guardrails(
+        "005930",
+        cfg,
+        decision_action=Action.BUY,
+        decision_confidence=82,
+        decision_hold_minutes=15,
+        decision_time_kst=_kst_dt(13, 59),
+        **_base_args(),
+    )
+    assert r.passed is True
+
+
+def test_fast_profile_reason_wins_over_low_confidence():
+    cfg = _cfg(
+        no_buy_after_kst_hour=15,
+        min_buy_confidence=75,
+        fast_profile_hold_minutes=15,
+        fast_profile_no_buy_after_kst_hour=14,
+        fast_profile_no_buy_after_kst_minute=0,
+    )
+    r = check_guardrails(
+        "005930",
+        cfg,
+        decision_action=Action.BUY,
+        decision_confidence=72,
+        decision_hold_minutes=15,
+        decision_time_kst=_kst_dt(14, 5),
+        **_base_args(),
+    )
+    assert r.passed is False
+    assert r.reason == "FAST_PROFILE_LATE_ENTRY"
+
+
+def test_non_fast_profile_not_blocked_by_fast_profile_cutoff():
+    cfg = _cfg(
+        no_buy_after_kst_hour=15,
+        fast_profile_hold_minutes=15,
+        fast_profile_no_buy_after_kst_hour=14,
+        fast_profile_no_buy_after_kst_minute=0,
+    )
+    r = check_guardrails(
+        "005930",
+        cfg,
+        decision_action=Action.BUY,
+        decision_confidence=82,
+        decision_hold_minutes=30,
+        decision_time_kst=_kst_dt(14, 5),
+        **_base_args(),
+    )
+    assert r.passed is True
+
+
+def test_midday_spread_uses_injected_time_without_datetime_patch():
+    cfg = _cfg(spread_check_enabled=True, spread_bps_limit=50.0, no_buy_after_kst_hour=15)
+    r = check_guardrails(
+        "005930",
+        cfg,
+        spread_bps=40.0,
+        adv_value_20d=10e9,
+        ret_today=2.0,
+        decision_action=Action.BUY,
+        decision_time_kst=_kst_dt(12, 0),
+    )
+    assert r.passed is False
+    assert r.reason == "MIDDAY_SPREAD_TOO_WIDE"

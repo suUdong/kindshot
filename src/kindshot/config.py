@@ -102,6 +102,9 @@ class Config:
     # 시간대별 confidence 문턱
     opening_min_confidence: int = field(default_factory=lambda: _env_int("OPENING_MIN_CONFIDENCE", 80))  # 09:00-09:30 BUY 최소 confidence
     closing_min_confidence: int = field(default_factory=lambda: _env_int("CLOSING_MIN_CONFIDENCE", 85))  # 14:30-15:00 BUY 최소 confidence
+    fast_profile_hold_minutes: int = field(default_factory=lambda: _env_int("FAST_PROFILE_HOLD_MINUTES", 15))  # fast-decay hold profile 기준값
+    fast_profile_no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("FAST_PROFILE_NO_BUY_AFTER_KST_HOUR", 14))  # 14:00+ fast profile BUY 차단
+    fast_profile_no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("FAST_PROFILE_NO_BUY_AFTER_KST_MINUTE", 0))
 
     # --- Market ---
     kospi_halt_pct: float = field(default_factory=lambda: _env_float("KOSPI_HALT_PCT", -8.0))

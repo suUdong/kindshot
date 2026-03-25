@@ -26,6 +26,7 @@ async def _run_pipeline_once(
     paper=False,
     ctx_raw=None,
     config_overrides=None,
+    capture_guardrail_calls=False,
 ):
     """Helper: run one iteration of the pipeline and return logged records."""
     from kindshot.event_registry import EventRegistry
@@ -79,6 +80,7 @@ async def _run_pipeline_once(
             )
         except (asyncio.TimeoutError, StopAsyncIteration):
             pass
+        guardrail_calls = mock_gr.call_args_list
 
     # Read back logged records
     records = []
@@ -86,6 +88,8 @@ async def _run_pipeline_once(
         for line in f.read_text(encoding="utf-8").strip().split("\n"):
             if line:
                 records.append(json.loads(line))
+    if capture_guardrail_calls:
+        return records, guardrail_calls
     return records
 
 
@@ -183,6 +187,49 @@ async def test_guardrail_block_logged(tmp_path):
     # No decision record should be written when guardrail blocks
     decision_records = [r for r in records if r.get("type") == "decision"]
     assert len(decision_records) == 0
+
+
+async def test_pipeline_passes_time_and_hold_profile_to_guardrails(tmp_path):
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    detected_at = datetime(2026, 3, 24, 5, 10, 0, tzinfo=timezone.utc)
+    decided_at = datetime(2026, 3, 24, 5, 10, 5, tzinfo=timezone.utc)
+    raw = RawDisclosure(
+        title="삼성전자(005930) - 공급계약 체결",
+        link="https://kind.krx.co.kr/?rcpNo=20260305000001",
+        rss_guid="guid1",
+        published="2026-03-24T14:10:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=detected_at,
+    )
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=decided_at,
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=82,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+
+    _records, guardrail_calls = await _run_pipeline_once(
+        tmp_path,
+        [raw],
+        decision_side_effect=[mock_decision],
+        paper=True,
+        capture_guardrail_calls=True,
+    )
+
+    assert len(guardrail_calls) == 1
+    kwargs = guardrail_calls[0].kwargs
+    assert kwargs["decision_time_kst"] == decided_at
+    assert kwargs["event_time_kst"] == detected_at
+    assert kwargs["decision_hold_minutes"] == 15
 
 
 def test_runtime_counters_helpers():

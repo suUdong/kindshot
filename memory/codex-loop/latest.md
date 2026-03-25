@@ -1,41 +1,31 @@
-Hypothesis: recent zero-BUY pressure is primarily caused by an overly strict ADV filter, not by a kill switch. Relaxing ADV only for `POS_STRONG` should reopen strong-catalyst flow without weakening `POS_WEAK` risk control.
+Hypothesis: fast-decay `15m` hold-profile headlines (`공급계약`, `수주`, `납품계약`) lose edge after `14:00` KST. Blocking late-session BUYs for that profile should improve risk-adjusted returns, and the rule must use injected event time so runtime and replay evaluate the same window.
 
 Changed files:
-- `.env.example`
-- `deploy/daily_report.py`
-- `docs/daily-check-20260325.md`
+- `docs/backtest-analysis.md`
 - `src/kindshot/config.py`
 - `src/kindshot/guardrails.py`
-- `src/kindshot/hold_profile.py`
 - `src/kindshot/pipeline.py`
-- `src/kindshot/quant.py`
-- `src/kindshot/strategy_observability.py`
+- `src/kindshot/replay.py`
 - `tests/test_config.py`
-- `tests/test_daily_report.py`
 - `tests/test_guardrails.py`
-- `tests/test_hold_profile.py`
 - `tests/test_pipeline.py`
-- `tests/test_quant.py`
-- `tests/test_strategy_observability.py`
 - `memory/codex-loop/latest.md`
 - `memory/codex-loop/session.md`
 
 Validation:
-- Local artifact audit:
-  - `logs/kindshot_20260325.jsonl` is missing.
-  - `data/runtime/context_cards/20260325.jsonl` is test-generated (`65 rows`, `run_id=test_run`, single event id).
-  - `data/runtime/price_snapshots/20260325.jsonl` is test-generated (`115 rows`, `run_id=run1`, single event id).
-- Recent real-log analysis:
-  - `2026-03-19`: `232` events, `66` `POS_STRONG`, `21` LLM decisions, `2` BUY, `19` SKIP, `45` `ADV_TOO_LOW`, `0` `CONSECUTIVE_STOP_LOSS`.
-  - Recent 7 logged days: `50` LLM decisions total, `23` BUY, `27` SKIP.
-  - Recent 7 logged days: `ADV_TOO_LOW=240`; with `POS_STRONG_ADV_THRESHOLD=20억`, `42` prior `POS_STRONG` ADV skips would re-enter the candidate set.
-  - Recent 7 logged days strategy summary: `TP=2`, `Trailing Stop=2`, `Stop Loss=4`, `Max Hold=4`, `Hold Profile Applied=18`, `Kill Switch Halt=0`, `Market Close Cutoff=7`, `Contract-cancellation NEG=9`.
+- Analysis window used: `2026-03-11`, `2026-03-12`, `2026-03-13`, `2026-03-16`, `2026-03-17`, `2026-03-18`, `2026-03-19` (latest 7 logged trading days available locally).
+- Historical cohort evidence:
+  - total BUYs: `23`
+  - realized result: `11` wins / `12` losses, sum return `+0.150%`, approx `+7,487 KRW`
+  - late `15m` cohort (`14:00+`): `5` trades, `0` wins, avg `-0.796%`, sum `-3.979%`, approx `-198,934 KRW`
+  - what-if blocked late `15m` cohort: `18` trades, `61.1%` win rate, sum return `+4.128%`, approx `+206,421 KRW`
 - Test commands:
-  - `source .venv/bin/activate && python -m pytest tests/test_strategy_observability.py tests/test_daily_report.py tests/test_hold_profile.py tests/test_config.py tests/test_quant.py tests/test_guardrails.py tests/test_pipeline.py tests/test_price.py -q` passed (`150 passed`).
-  - `source .venv/bin/activate && python -m pytest -q` passed (`527 passed, 1 warning`).
+  - `source .venv/bin/activate && python -m pytest tests/test_config.py tests/test_guardrails.py tests/test_pipeline.py -q` passed (`110 passed`)
+  - `source .venv/bin/activate && python -m pytest -q` passed (`551 passed, 1 warning`)
+- Diagnostics:
+  - affected files in `src/` and `tests/` returned `0` LSP diagnostic errors
 
 Risk and rollback note:
-- Today's operational path is still unverifiable from this workspace until `2026-03-25` runtime logs are synced locally or inspected on the runtime host.
-- The new logic intentionally changes only `POS_STRONG`; `POS_WEAK` remains under the stricter general ADV floor.
-- Strategy activity is now visible in `deploy/daily_report.py` output and Telegram summaries, and the reconstruction uses pinned strategy defaults instead of live env values so the same log yields the same report later.
-- Roll back by reverting the config/quant/guardrail/pipeline changes and removing `POS_STRONG`-specific ADV handling.
+- The 7-day evidence window is limited by missing local logs after `2026-03-19`; the analysis explicitly uses the latest seven logged days rather than calendar-recent dates.
+- Some historical late losers were also below today's confidence floor, so the new guardrail is additive risk control, not the sole explanation for those past losses.
+- Roll back by reverting the fast-profile config fields and the `FAST_PROFILE_LATE_ENTRY` guardrail path in `guardrails.py`, `pipeline.py`, and `replay.py`.
