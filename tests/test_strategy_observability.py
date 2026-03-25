@@ -1,18 +1,9 @@
 from kindshot.config import Config
-from kindshot.strategy_observability import collect_strategy_summary
+from kindshot.strategy_observability import StrategyReportConfig, collect_strategy_summary
 
 
 def test_collect_strategy_summary_counts_key_strategies():
-    cfg = Config(
-        paper_take_profit_pct=0.8,
-        paper_stop_loss_pct=-1.0,
-        trailing_stop_enabled=True,
-        trailing_stop_activation_pct=0.3,
-        trailing_stop_early_pct=0.3,
-        trailing_stop_mid_pct=0.5,
-        trailing_stop_late_pct=0.7,
-        max_hold_minutes=30,
-    )
+    cfg = StrategyReportConfig()
 
     events = {
         "buy_tp": {

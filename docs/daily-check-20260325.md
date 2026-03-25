@@ -177,10 +177,10 @@ Bucket별 LLM 도달 건수:
 
 실행 결과:
 
-- `source .venv/bin/activate && python -m pytest tests/test_config.py tests/test_quant.py tests/test_guardrails.py tests/test_pipeline.py -q`
-  - `103 passed`
+- `source .venv/bin/activate && python -m pytest tests/test_strategy_observability.py tests/test_daily_report.py tests/test_hold_profile.py tests/test_config.py tests/test_quant.py tests/test_guardrails.py tests/test_pipeline.py tests/test_price.py -q`
+  - `150 passed`
 - `source .venv/bin/activate && python -m pytest -q`
-  - `501 passed, 1 warning`
+  - `527 passed, 1 warning`
 
 추가로 잠근 테스트:
 
@@ -191,6 +191,7 @@ Bucket별 LLM 도달 건수:
 ## 7. Strategy Activity Status
 
 전략 동작 현황은 이제 `deploy/daily_report.py` 와 텔레그램 요약에도 포함된다.
+이 요약은 **현재 env가 아니라 report code에 고정된 strategy config**(`TP 0.8`, `SL -1.0`, trailing `0.3/0.5/0.7`, activation `0.3`, default hold `30m`)로 재구성하므로 과거 로그를 다시 읽어도 숫자가 흔들리지 않는다.
 
 ### 7.1 Latest real runtime day (`2026-03-19`)
 
@@ -243,9 +244,12 @@ Bucket별 LLM 도달 건수:
 - `tests/test_hold_profile.py`
 - `tests/test_strategy_observability.py`
 - `tests/test_daily_report.py`
+- `tests/test_price.py`
 - `.env.example`
 - `deploy/daily_report.py`
 - `docs/daily-check-20260325.md`
+- `memory/codex-loop/latest.md`
+- `memory/codex-loop/session.md`
 
 ## 9. Risks and Rollback
 

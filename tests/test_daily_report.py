@@ -21,6 +21,7 @@ def test_daily_report_formats_strategy_section():
         "snapshots": {},
         "bucket_counts": {"POS_STRONG": 1, "POS_WEAK": 0, "NEG_STRONG": 0, "NEG_WEAK": 0, "IGNORE": 0, "UNKNOWN": 0},
         "hour_dist": {},
+        "report_config": mod.StrategyReportConfig(),
         "strategy_summary": {
             "take_profit_hits": 1,
             "trailing_stop_hits": 2,

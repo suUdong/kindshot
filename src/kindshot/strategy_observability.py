@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from typing import Any
 
-from kindshot.config import Config
 from kindshot.hold_profile import resolve_hold_profile
 
 _HORIZON_ORDER = ["t+30s", "t+1m", "t+2m", "t+5m", "t+15m", "t+20m", "t+30m", "close"]
@@ -21,6 +21,20 @@ _CONTRACT_CANCEL_TERMS = (
 )
 
 
+@dataclass(frozen=True)
+class StrategyReportConfig:
+    """Pinned strategy parameters for deterministic report reconstruction."""
+
+    paper_take_profit_pct: float = 0.8
+    paper_stop_loss_pct: float = -1.0
+    trailing_stop_enabled: bool = True
+    trailing_stop_activation_pct: float = 0.3
+    trailing_stop_early_pct: float = 0.3
+    trailing_stop_mid_pct: float = 0.5
+    trailing_stop_late_pct: float = 0.7
+    max_hold_minutes: int = 30
+
+
 def _ret_pct(snapshots: dict[str, dict[str, Any]], horizon: str) -> float | None:
     row = snapshots.get(horizon, {})
     ret = row.get("ret_long_vs_t0")
@@ -29,7 +43,7 @@ def _ret_pct(snapshots: dict[str, dict[str, Any]], horizon: str) -> float | None
     return ret * 100
 
 
-def _trail_pct_for_horizon(horizon: str, config: Config) -> float:
+def _trail_pct_for_horizon(horizon: str, config: StrategyReportConfig) -> float:
     if horizon in {"t+30s", "t+1m", "t+2m"}:
         return config.trailing_stop_early_pct
     if horizon in {"t+5m", "t+15m", "t+20m"}:
@@ -37,12 +51,17 @@ def _trail_pct_for_horizon(horizon: str, config: Config) -> float:
     return config.trailing_stop_late_pct
 
 
-def _simulate_exit(
+def classify_buy_exit(
+    event: dict[str, Any],
     snapshots: dict[str, dict[str, Any]],
     *,
-    hold_minutes: int,
-    config: Config,
-) -> str | None:
+    config: StrategyReportConfig,
+) -> tuple[str | None, str | None]:
+    hold_minutes, _matched_keyword = resolve_hold_profile(
+        event.get("headline", ""),
+        event.get("keyword_hits", []) or [],
+        config,
+    )
     peak = 0.0
     tp_active = config.paper_take_profit_pct > 0
     sl_active = config.paper_stop_loss_pct < 0
@@ -57,19 +76,19 @@ def _simulate_exit(
             peak = max(peak, ret_pct)
 
         if tp_active and ret_pct >= config.paper_take_profit_pct:
-            return "take_profit"
+            return "take_profit", horizon
         if sl_active and ret_pct <= config.paper_stop_loss_pct:
-            return "stop_loss"
+            return "stop_loss", horizon
         if (
             config.trailing_stop_enabled
             and peak >= config.trailing_stop_activation_pct
             and ret_pct <= peak - _trail_pct_for_horizon(horizon, config)
         ):
-            return "trailing_stop"
+            return "trailing_stop", horizon
         if hold_horizon and horizon == hold_horizon:
-            return "max_hold"
+            return "max_hold", horizon
 
-    return None
+    return None, None
 
 
 def _is_contract_cancellation(event: dict[str, Any]) -> bool:
@@ -85,7 +104,7 @@ def collect_strategy_summary(
     events: dict[str, dict[str, Any]],
     decisions: dict[str, dict[str, Any]],
     snapshots: dict[str, dict[str, dict[str, Any]]],
-    config: Config,
+    config: StrategyReportConfig,
 ) -> dict[str, Any]:
     """Summarize runtime strategy activity from event/decision/snapshot records."""
 
@@ -130,7 +149,7 @@ def collect_strategy_summary(
             label = "EOD" if hold_minutes == 0 else f"{hold_minutes}m"
             summary["hold_profile_breakdown"][label] += 1
 
-        exit_type = _simulate_exit(snapshots.get(event_id, {}), hold_minutes=hold_minutes, config=config)
+        exit_type, _exit_horizon = classify_buy_exit(event, snapshots.get(event_id, {}), config=config)
         if exit_type == "take_profit":
             summary["take_profit_hits"] += 1
         elif exit_type == "trailing_stop":

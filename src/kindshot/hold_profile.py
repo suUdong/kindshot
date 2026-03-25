@@ -9,7 +9,11 @@
 
 from __future__ import annotations
 
-from kindshot.config import Config
+from typing import Protocol
+
+
+class _HasMaxHoldMinutes(Protocol):
+    max_hold_minutes: int
 
 # 키워드 → 보유시간(분). 0 = EOD까지 (max_hold 비활성).
 # 긴 키워드가 먼저 매칭되도록 길이 역순 정렬하여 검색.
@@ -40,7 +44,11 @@ _HOLD_PROFILES: list[tuple[str, int]] = [
 ]
 
 
-def resolve_hold_profile(headline: str, keyword_hits: list[str], config: Config) -> tuple[int, str | None]:
+def resolve_hold_profile(
+    headline: str,
+    keyword_hits: list[str],
+    config: _HasMaxHoldMinutes,
+) -> tuple[int, str | None]:
     """Resolve the hold profile and the matched keyword, if any."""
     # keyword_hits 먼저 확인 (bucket 분류에 사용된 키워드)
     for kw, minutes in _HOLD_PROFILES:
@@ -57,7 +65,7 @@ def resolve_hold_profile(headline: str, keyword_hits: list[str], config: Config)
     return config.max_hold_minutes, None
 
 
-def get_max_hold_minutes(headline: str, keyword_hits: list[str], config: Config) -> int:
+def get_max_hold_minutes(headline: str, keyword_hits: list[str], config: _HasMaxHoldMinutes) -> int:
     """headline과 keyword_hits를 기반으로 최대 보유시간(분) 반환.
 
     Returns:

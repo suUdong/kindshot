@@ -25,8 +25,11 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from kindshot.config import Config
-from kindshot.strategy_observability import collect_strategy_summary
+from kindshot.strategy_observability import (
+    StrategyReportConfig,
+    classify_buy_exit,
+    collect_strategy_summary,
+)
 
 
 # ── 데이터 수집 ──
@@ -82,8 +85,8 @@ def _collect(log_path: Path) -> dict:
             except (ValueError, TypeError):
                 pass
 
-    cfg = Config()
-    strategy_summary = collect_strategy_summary(events, decisions, snapshots, cfg)
+    report_config = StrategyReportConfig()
+    strategy_summary = collect_strategy_summary(events, decisions, snapshots, report_config)
 
     return {
         "events": events,
@@ -91,6 +94,7 @@ def _collect(log_path: Path) -> dict:
         "snapshots": snapshots,
         "bucket_counts": bucket_counts,
         "hour_dist": hour_dist,
+        "report_config": report_config,
         "strategy_summary": strategy_summary,
     }
 
@@ -109,33 +113,48 @@ def _ret_pct(snaps: dict, horizon: str, key: str = "ret_long_vs_t0") -> Optional
     return None
 
 
-def _detect_tp_sl(snaps: dict, tp_pct: float = 3.0, sl_pct: float = -1.5) -> Optional[str]:
-    """snapshot 수익률에서 TP/SL hit를 결정론적으로 도출. 첫 hit 반환."""
-    for h in ["t+30s", "t+1m", "t+2m", "t+5m", "t+30m", "close"]:
-        r = _ret_pct(snaps, h)
-        if r is None:
-            continue
-        if r >= tp_pct:
-            return f"TP@{h}"
-        if r <= sl_pct:
-            return f"SL@{h}"
+def _exit_tag(event: dict, snaps: dict, report_config: StrategyReportConfig) -> Optional[str]:
+    exit_type, horizon = classify_buy_exit(event, snaps, config=report_config)
+    if exit_type is None or horizon is None:
+        return None
+    if exit_type == "take_profit":
+        return f"TP@{horizon}"
+    if exit_type == "stop_loss":
+        return f"SL@{horizon}"
+    if exit_type == "trailing_stop":
+        return f"TRAIL@{horizon}"
+    if exit_type == "max_hold":
+        return f"HOLD@{horizon}"
     return None
 
 
-def _tp_sl_stats(buy_eids: list[str], snapshots: dict, tp_pct: float = 3.0, sl_pct: float = -1.5) -> dict:
-    """BUY 이벤트들의 TP/SL 통계."""
+def _tp_sl_stats(events: dict, buy_eids: list[str], snapshots: dict, report_config: StrategyReportConfig) -> dict:
+    """BUY 이벤트들의 exit-type 통계."""
     tp_count = 0
     sl_count = 0
+    trailing_count = 0
+    hold_count = 0
     neither = 0
     for eid in buy_eids:
-        result = _detect_tp_sl(snapshots.get(eid, {}), tp_pct, sl_pct)
-        if result and result.startswith("TP"):
+        exit_type, _horizon = classify_buy_exit(events.get(eid, {}), snapshots.get(eid, {}), config=report_config)
+        if exit_type == "take_profit":
             tp_count += 1
-        elif result and result.startswith("SL"):
+        elif exit_type == "stop_loss":
             sl_count += 1
+        elif exit_type == "trailing_stop":
+            trailing_count += 1
+        elif exit_type == "max_hold":
+            hold_count += 1
         else:
             neither += 1
-    return {"tp": tp_count, "sl": sl_count, "neither": neither, "total": len(buy_eids)}
+    return {
+        "tp": tp_count,
+        "sl": sl_count,
+        "trail": trailing_count,
+        "hold": hold_count,
+        "neither": neither,
+        "total": len(buy_eids),
+    }
 
 
 # ── TXT 포맷 (파일/터미널용) ──
@@ -146,6 +165,7 @@ def format_txt(log_path: Path, data: dict) -> str:
     snapshots = data["snapshots"]
     bucket_counts = data["bucket_counts"]
     hour_dist = data["hour_dist"]
+    report_config = data["report_config"]
     strategy_summary = data["strategy_summary"]
 
     lines = []
@@ -196,7 +216,9 @@ def format_txt(log_path: Path, data: dict) -> str:
                 else:
                     cols.append(f"{'N/A':>7}")
 
-            w(f"  {ticker:<8} {headline:<28} {conf:>4} {' '.join(cols)}")
+            exit_tag = _exit_tag(ev, snaps, report_config) or ""
+            suffix = f" [{exit_tag}]" if exit_tag else ""
+            w(f"  {ticker:<8} {headline:<28} {conf:>4} {' '.join(cols)}{suffix}")
 
         if close_rets:
             w(f"  {'─' * 70}")
@@ -307,6 +329,7 @@ def format_telegram(log_path: Path, data: dict) -> str:
     snapshots = data["snapshots"]
     bucket_counts = data["bucket_counts"]
     hour_dist = data["hour_dist"]
+    report_config = data["report_config"]
     strategy_summary = data["strategy_summary"]
 
     lines = []
@@ -347,7 +370,7 @@ def format_telegram(log_path: Path, data: dict) -> str:
             if close_r is not None:
                 close_rets.append(close_r)
 
-            exit_tag = _detect_tp_sl(snaps) or ""
+            exit_tag = _exit_tag(ev, snaps, report_config) or ""
             if exit_tag:
                 exit_tag = f" [{exit_tag}]"
 
@@ -360,9 +383,17 @@ def format_telegram(log_path: Path, data: dict) -> str:
             w(f"\n📈 승률 {len(wins)}/{len(close_rets)} ({len(wins)/len(close_rets)*100:.0f}%) 평균 {avg:+.2f}%")
 
         # TP/SL 통계
-        tpsl = _tp_sl_stats(list(buy_decisions.keys()), snapshots)
+        tpsl = _tp_sl_stats(events, list(buy_decisions.keys()), snapshots, report_config)
         if tpsl["total"] > 0:
-            w(f"🎯 TP:{tpsl['tp']} SL:{tpsl['sl']} 미도달:{tpsl['neither']}")
+            w(
+                "🎯 TP:{tp} SL:{sl} TRAIL:{trail} HOLD:{hold} 미도달:{neither}".format(
+                    tp=tpsl["tp"],
+                    sl=tpsl["sl"],
+                    trail=tpsl["trail"],
+                    hold=tpsl["hold"],
+                    neither=tpsl["neither"],
+                )
+            )
 
         # confidence 구간별 승률
         conf_buckets: dict[str, list[float]] = {"90+": [], "80-89": [], "70-79": [], "65-69": []}
