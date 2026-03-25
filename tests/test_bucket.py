@@ -669,3 +669,71 @@ def test_ignore_override_lp_contract_conclusion():
     result = classify("삼성증권 ETF 유동성공급계약 체결")
     assert result.bucket == Bucket.IGNORE
     assert "유동성공급계약 체결" in result.keyword_hits
+
+
+# ── UNKNOWN 버킷 축소: 신규 IGNORE 키워드 ──────────────────
+
+def test_ignore_shareholder_meeting_concentration_day():
+    """주주총회 집중일 개최 사유 신고 → IGNORE."""
+    result = classify("(주)위세아이텍 주주총회 집중일 개최 사유 신고")
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_morning_briefing():
+    """[아침밥] 증권사 브리핑 → IGNORE."""
+    result = classify('[아침밥] 유안타 "헥토이노베이션 사상 최대 실적에 스테이블코인 기대"')
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_stock_show():
+    """[생생한 주식쇼] → IGNORE."""
+    result = classify("[생생한 주식쇼 생쇼] 변동성 활용, 실적 기반 바닥주 공략 전략")
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_stock_magnifier():
+    """[종목돋보기] → IGNORE."""
+    result = classify("[종목돋보기]한주에이알티 베일 뒤로 향하는 90억")
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_advance_payment():
+    """선급금 지급 → IGNORE."""
+    result = classify("엘아이지넥스원(주) 선급금 지급 결정")
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_delisting_cleanup_trading():
+    """정리매매 → IGNORE."""
+    result = classify("(주)ABC 정리매매 절차 안내")
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_business_suspension():
+    """영업정지 → IGNORE."""
+    result = classify("(주)경동인베스트 영업정지(종속회사의 주요경영사항)")
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_subsidiary_inclusion():
+    """지주회사의 자회사 편입 → IGNORE."""
+    result = classify("JW홀딩스(주) 지주회사의 자회사 편입")
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_kospi_summary():
+    """[코스피 전 거래일 주요공시] → IGNORE."""
+    result = classify("[코스피코스닥 전 거래일(12일) 주요공시]")
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_record_date_setting():
+    """기준일 설정 → IGNORE."""
+    result = classify("주식회사 디앤디플랫폼위탁관리부동산투자회사 주주명부폐쇄기간 또는 기준일 설정")
+    assert result.bucket == Bucket.IGNORE
+
+
+def test_ignore_business_status_ir():
+    """경영현황 → IGNORE."""
+    result = classify("[IR일정] 오픈엣지테크놀로지, 주요 경영현황과 2025년 연간 경영실적 설명")
+    assert result.bucket == Bucket.IGNORE

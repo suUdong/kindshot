@@ -86,11 +86,14 @@ technical_indicators (있을 때만 적용):
 - rsi_14 < 30: 과매도. 뉴스 촉매 결합 시 → confidence +3.
 - macd_hist < 0: 하락 모멘텀. confidence -3.
 
-time_session_rules (detected_at 기준):
-- 06:00~08:30 (장전 공시): 개장 갭 기회. confidence +5.
-- 09:00~09:30 (개장 직후): 변동성 최고. spread_bps>25이면 SKIP.
-- 11:00~14:00 (비유동 시간): confidence -3. 소형주 SKIP 유도.
-- 14:30~15:00 (마감 임박): confidence -5. conf>85만 BUY.
+time_session_rules (detected_at 기준 — 시간대별 전략 차별화 필수):
+- 06:00~08:30 (장전 공시): 개장 전 확정 공시는 최고 기회. confidence +5. 장전 공시 + 중형주(adv 500~2000억) + 미반영 = 적극 BUY. 단, 기사/전망은 여전히 SKIP.
+- 08:30~09:00 (프리마켓): 동시호가 구간. 이미 갭업 중이면 confidence -3 (갭 반영). 갭 없으면 유지.
+- 09:00~09:30 (개장 직후): 변동성 최고. spread_bps>25이면 SKIP. 호가 급변 구간이므로 size_hint 최대 M. L 불가.
+- 09:30~11:00 (오전 안정기): 정상 판단. 유동성 충분. 최적 진입 구간.
+- 11:00~13:00 (점심 비유동): confidence -3. 거래량 급감, 체결 지연 위험. spread_bps>35이면 SKIP. 소형주(adv<1000억) SKIP 유도.
+- 13:00~14:30 (오후 회복기): confidence -2. 유동성 점진 회복. 대형 공시만 BUY 고려.
+- 14:30~15:00 (마감 임박): confidence -5. conf>85만 BUY. 잔여 보유시간 30분 미만으로 TP 달성 어려움.
 
 market_adjustment (반드시 적용):
 - KOSPI<-2%: confidence -5, size_hint 한 단계 낮춤

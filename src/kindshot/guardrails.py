@@ -388,7 +388,8 @@ def calculate_position_size(
 
     if account_balance > 0 and config.account_risk_pct > 0:
         # 계좌 잔고의 N%를 1건 최대 리스크로 → SL 기준 포지션 산출
-        sl_pct = abs(config.paper_stop_loss_pct) / 100 if abs(config.paper_stop_loss_pct) < 1 else abs(config.paper_stop_loss_pct) / 100
+        # paper_stop_loss_pct는 퍼센트 단위 (e.g. -0.7 = -0.7%)
+        sl_pct = abs(config.paper_stop_loss_pct) / 100
         if sl_pct > 0:
             risk_amount = account_balance * (config.account_risk_pct / 100)
             account_based = risk_amount / sl_pct

@@ -985,3 +985,36 @@ def test_closing_confidence_uses_decision_time_even_if_event_arrived_earlier():
     )
     assert r.passed is False
     assert r.reason == "CLOSING_LOW_CONFIDENCE"
+
+
+# ── 포지션 사이징: account_balance 기반 산출 검증 ──────────────────
+
+def test_position_size_account_risk():
+    """계좌 리스크 기반 포지션 = (잔고 * risk%) / (SL%)."""
+    cfg = _cfg(
+        order_size=5_000_000,
+        account_risk_pct=2.0,
+        paper_stop_loss_pct=-0.7,
+    )
+    # risk_amount = 10M * 2% = 200_000
+    # sl_pct = 0.7 / 100 = 0.007
+    # account_based = 200_000 / 0.007 = 28_571_428
+    # min(5M, 28.5M) = 5M (hint가 더 작음)
+    size = calculate_position_size(cfg, "M", account_balance=10_000_000)
+    assert size == 5_000_000
+
+
+def test_position_size_account_risk_constrains():
+    """소액 계좌에서 account_based가 hint보다 작을 때 제약."""
+    cfg = _cfg(
+        order_size=5_000_000,
+        account_risk_pct=2.0,
+        paper_stop_loss_pct=-0.7,
+    )
+    # risk_amount = 1M * 2% = 20_000
+    # sl_pct = 0.007
+    # account_based = 20_000 / 0.007 ≈ 2_857_142
+    # min(5M, 2.857M) = 2.857M
+    size = calculate_position_size(cfg, "M", account_balance=1_000_000)
+    expected = 1_000_000 * 0.02 / 0.007
+    assert abs(size - expected) < 1  # 부동소수점 허용
