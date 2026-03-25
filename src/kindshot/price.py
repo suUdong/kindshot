@@ -28,6 +28,8 @@ HORIZON_OFFSETS: dict[str, float] = {
     "t+1m": 60,
     "t+2m": 120,
     "t+5m": 300,
+    "t+15m": 900,
+    "t+20m": 1200,
     "t+30m": 1800,
 }
 
