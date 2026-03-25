@@ -40,11 +40,13 @@ def quant_check(
     ret_today: Optional[float],
     config: Config,
     *,
+    adv_threshold: Optional[float] = None,
     observed_at: Optional[datetime] = None,
 ) -> QuantResult:
     """Run 3 quant filters. Returns result with pass/fail and skip reason."""
 
-    adv_ok = adv_value_20d >= config.adv_threshold
+    effective_adv_threshold = config.adv_threshold if adv_threshold is None else adv_threshold
+    adv_ok = adv_value_20d >= effective_adv_threshold
 
     if config.spread_check_enabled:
         if spread_bps is None:

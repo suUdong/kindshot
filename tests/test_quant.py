@@ -36,6 +36,32 @@ def test_adv_too_low():
     assert r.skip_reason == "ADV_TOO_LOW"
 
 
+def test_pos_strong_adv_override_passes_mid_liquidity_name():
+    cfg = _cfg(adv_threshold=5_000_000_000, pos_strong_adv_threshold=2_000_000_000)
+    r = quant_check(
+        adv_value_20d=2_500_000_000,
+        spread_bps=10.0,
+        ret_today=2.0,
+        config=cfg,
+        adv_threshold=cfg.adv_threshold_for_bucket("POS_STRONG"),
+    )
+    assert r.passed is True
+    assert r.detail.adv_value_20d_ok is True
+
+
+def test_pos_weak_keeps_strict_adv_threshold():
+    cfg = _cfg(adv_threshold=5_000_000_000, pos_strong_adv_threshold=2_000_000_000)
+    r = quant_check(
+        adv_value_20d=2_500_000_000,
+        spread_bps=10.0,
+        ret_today=2.0,
+        config=cfg,
+        adv_threshold=cfg.adv_threshold_for_bucket("POS_WEAK"),
+    )
+    assert r.passed is False
+    assert r.skip_reason == "ADV_TOO_LOW"
+
+
 def test_spread_too_wide():
     r = quant_check(
         adv_value_20d=10_000_000_000,

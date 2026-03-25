@@ -938,6 +938,7 @@ async def test_quant_fail_still_tracks_price(tmp_path):
         paper=True,
         # adv_threshold 크게 설정해 quant 실패 유도 (컨텍스트 카드 adv=10e9 < threshold)
         adv_threshold=9_999_999_999_999,
+        pos_strong_adv_threshold=9_999_999_999_999,
     )
     log = JsonlLogger(cfg.log_dir, run_id="test_run")
     registry = EventRegistry()
@@ -976,6 +977,93 @@ async def test_quant_fail_still_tracks_price(tmp_path):
 
     # quant 실패해도 가격 추적 스케줄러에 반드시 등록되어야 함
     assert len(scheduler._heap) >= 1, "quant 실패 종목도 가격 추적 스케줄링 되어야 함"
+
+
+async def test_pos_strong_adv_override_reaches_decision_engine(tmp_path):
+    from kindshot.event_registry import EventRegistry
+    from kindshot.feed import KindFeed
+    from kindshot.guardrails import GuardrailResult
+    from kindshot.logger import JsonlLogger
+    from kindshot.pipeline import pipeline_loop
+    from kindshot.market import MarketMonitor
+    from kindshot.models import Action, ContextCard, DecisionRecord, SizeHint
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+
+    cfg = Config(
+        log_dir=tmp_path / "logs",
+        paper=True,
+        adv_threshold=5_000_000_000,
+        pos_strong_adv_threshold=2_000_000_000,
+    )
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.3",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=80,
+        size_hint=SizeHint.M,
+        reason="strong catalyst",
+        decision_source="LLM",
+    )
+    mock_engine = MagicMock()
+    mock_engine.decide = AsyncMock(return_value=mock_decision)
+
+    raw = _make_raw(title="힘스, HDD용 유리플래터 검사장비 대규모 독점 공급계약 체결")
+    mock_feed = AsyncMock(spec=KindFeed)
+
+    async def _one_batch():
+        yield [raw]
+    mock_feed.stream = _one_batch
+
+    with patch("kindshot.pipeline.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.pipeline.check_guardrails") as mock_gr:
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=2.5e9, spread_bps=10.0),
+            ContextCardData(adv_value_20d=2.5e9, spread_bps=10.0, ret_today=2.0),
+        )
+        mock_gr.return_value = GuardrailResult(passed=True)
+
+        try:
+            await asyncio.wait_for(
+                pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
+                timeout=1.0,
+            )
+        except (asyncio.TimeoutError, StopAsyncIteration):
+            pass
+
+    mock_engine.decide.assert_awaited_once()
+    assert mock_gr.call_args is not None
+    assert mock_gr.call_args.kwargs["adv_threshold"] == 2_000_000_000
+
+
+async def test_pos_weak_still_stops_at_strict_adv_threshold(tmp_path):
+    raw = _make_raw(title="에이비엘바이오, AACR서 이중항체 ADC 2종 공개…美 임상 1상 추진")
+    records = await _run_pipeline_once(
+        tmp_path,
+        [raw],
+        paper=True,
+        config_overrides={
+            "adv_threshold": 5_000_000_000,
+            "pos_strong_adv_threshold": 2_000_000_000,
+        },
+        ctx_raw=ContextCardData(adv_value_20d=2.5e9, spread_bps=10.0, ret_today=2.0),
+    )
+
+    quant_records = [r for r in records if r.get("type") == "event"]
+    assert len(quant_records) == 1
+    assert quant_records[0]["bucket"] == "POS_WEAK"
+    assert quant_records[0]["skip_stage"] == "QUANT"
+    assert quant_records[0]["skip_reason"] == "ADV_TOO_LOW"
 
 
 async def test_skip_decision_tracks_price_for_false_negative(tmp_path):

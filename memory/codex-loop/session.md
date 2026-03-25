@@ -3,9 +3,9 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `Historical Collection Foundation`
-- Focus: Repeatable server-side historical backfill with no backlog blockers.
-- Active hypothesis: with no-news-day backlog suppression and server swap enabled, auto backfill can keep progressing historical ranges without operator intervention beyond repeated invocation.
+- Phase: `Daily Runtime Verification`
+- Focus: explain zero-BUY pressure on 2026-03-25 and remove the dominant low-risk choke point.
+- Active hypothesis: `ADV_THRESHOLD=50억` is too strict for `POS_STRONG`; reducing ADV only for strong-catalyst events should restore candidate flow without broadening `POS_WEAK` risk.
 
 ## Environment
 
@@ -19,25 +19,29 @@
 
 ## Last Completed Step
 
-- Updated collector completeness rules so no-news trading days no longer remain blocked solely by `daily_index_missing`.
-- Synced the collector fix to the server, confirmed backlog health, and continued auto backfill:
-  - `scripts/collect_backfill_auto.py --max-days 3 --oldest-date 20260301` ended with `processed=0 complete=0 partial=0 skipped=2` for weekend dates `20260302->20260301`
-  - `python -m kindshot collect status --json` now reports `health=healthy`, `partial_count=0`, `error_count=0`, `cursor_date=20260228`, `last_completed_date=20260303`
-  - `scripts/collect_backfill_auto.py --max-days 5 --oldest-date 20260201` then completed `20260228->20260224` with `processed=4 complete=4 partial=0 skipped=1`, advancing cursor to `20260223`
-- Registered a daily cron on `kindshot-server` for `02:40 KST` with `timeout 3h`, Telegram env injection, and log redirection to `/opt/kindshot/logs/backfill_auto.log`.
+- Audited local runtime artifacts for `2026-03-25` and confirmed that today's `context_cards` / `price_snapshots` are test-generated while `logs/kindshot_20260325.jsonl` is missing.
+- Reconstructed the latest real runtime day (`2026-03-19`) from local logs:
+  - `232` events total
+  - `66` `POS_STRONG`, `29` `POS_WEAK`
+  - `21` LLM decisions with `BUY=2`, `SKIP=19`
+  - `ADV_TOO_LOW=45`
+  - `CONSECUTIVE_STOP_LOSS=0`
+- Implemented a bounded strategy change:
+  - added `POS_STRONG_ADV_THRESHOLD` support with effective bucket-level ADV resolution
+  - applied the relaxed ADV floor only to `POS_STRONG` in both quant and final guardrail checks
+  - left `POS_WEAK` and other paths on the stricter general ADV threshold
+- Added strategy observability to operator outputs:
+  - `deploy/daily_report.py` now prints a strategy activity section
+  - Telegram daily summary now includes strategy counts
+  - current local 7-log aggregate shows `TP=2`, `Trailing Stop=2`, `Max Hold=4`, `Hold Profile Applied=18`, `Kill Switch Halt=0`, `Close Cutoff=7`
+- Wrote the operator report at `docs/daily-check-20260325.md`.
 
 ## Next Intended Step
 
-- Let the scheduled cron continue historical catch-up nightly and watch Telegram plus `/opt/kindshot/logs/backfill_auto.log` for any reintroduced `partial` or `error` backlog before building replay-batch automation on top.
+- Sync or inspect the real `2026-03-25` runtime log from the running environment so the daily report can be cross-checked against non-local evidence, then watch whether the `POS_STRONG` ADV relaxation lifts BUY candidate flow without a large rise in false positives.
 
 ## Notes
 
-- Keep the original UNKNOWN event immutable in logs; promotion remains a derived paper-only path.
-- Keep live automation unchanged; `UNKNOWN_PAPER_PROMOTION_ENABLED` is still opt-in and only effective in paper mode.
-- UNKNOWN rule queue output defaults to `data/unknown_review/rule_queue/latest.json`.
-- UNKNOWN rule patch draft output defaults to `data/unknown_review/rule_patch/latest.json`.
-- UNKNOWN article enrichment remains opt-in behind `UNKNOWN_REVIEW_ARTICLE_ENRICHMENT_ENABLED`.
-- Recent narrow keyword adoption intentionally excluded ambiguous phrases like `협력 확대` and `주주환원 추진`.
-- Recent IGNORE adoption still intentionally excludes broad summaries like `주요공시` pending a tighter false-positive review.
-- Remaining risky administrative phrases like `증권 발행결과(자율공시)` are deferred until matching semantics can be tighter than simple substring.
-- Server root still contains stray copies of `backfill_auto.py`, `collect_backfill_auto.py`, and `2026-03-16-backfill-automation.md`; the real paths under `/opt/kindshot/src`, `/opt/kindshot/scripts`, and `/opt/kindshot/docs/plans` are the ones in use.
+- Local workspace currently lacks operational `2026-03-25` JSONL logs; do not treat `data/runtime/context_cards/20260325.jsonl` or `data/runtime/price_snapshots/20260325.jsonl` as production evidence because they are test fixtures.
+- Kill switch is not the leading suspect in local evidence; no `CONSECUTIVE_STOP_LOSS` hit appears in recent real logs.
+- The new ADV relaxation is deliberately scoped to `POS_STRONG` only to avoid broadening `POS_WEAK` quality.

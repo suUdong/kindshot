@@ -31,7 +31,7 @@ class GuardrailResult:
 class GuardrailState:
     """Tracks intra-day trading state for portfolio-level guardrails."""
 
-    def __init__(self, config: Config, *, state_dir: Optional[Path] = None) -> None:
+    def __init__(self, config: Config, *, state_dir: Optional[Path] = None, account_balance: float = 0.0) -> None:
         self._config = config
         self._daily_pnl: float = 0.0  # accumulated realized P&L (won)
         self._bought_tickers: set[str] = set()  # tickers bought today
@@ -40,6 +40,7 @@ class GuardrailState:
         self._consecutive_stop_losses: int = 0  # 연속 손절 카운터
         self._last_kst_date: Optional[str] = None  # YYYY-MM-DD
         self._state_dir = state_dir
+        self._account_balance: float = account_balance  # 계좌 잔고 (비율 기반 손실 제한용)
         if state_dir:
             self._load_state()
 
@@ -157,6 +158,10 @@ class GuardrailState:
     def consecutive_stop_losses(self) -> int:
         return self._consecutive_stop_losses
 
+    @property
+    def account_balance(self) -> float:
+        return self._account_balance
+
 
 # Well-known restricted stock markers from KRX
 _RESTRICTED_MARKERS = frozenset(["관리종목", "투자경고", "투자위험", "투자주의", "거래정지"])
@@ -180,6 +185,7 @@ def check_guardrails(
     top_ask_notional: Optional[float] = None,
     decision_action: Optional[Action] = None,
     decision_confidence: Optional[int] = None,
+    adv_threshold: Optional[float] = None,
     **kwargs: object,
 ) -> GuardrailResult:
     """Final safety checks before order execution."""
@@ -195,7 +201,8 @@ def check_guardrails(
     # 2. ADV check
     if adv_value_20d is None:
         return GuardrailResult(passed=False, reason="ADV_DATA_MISSING")
-    if adv_value_20d < config.adv_threshold:
+    effective_adv_threshold = config.adv_threshold if adv_threshold is None else adv_threshold
+    if adv_value_20d < effective_adv_threshold:
         return GuardrailResult(passed=False, reason="ADV_TOO_LOW")
 
     # 3. Extreme move check
@@ -242,6 +249,17 @@ def check_guardrails(
             if spread_bps > midday_spread_limit:
                 return GuardrailResult(passed=False, reason="MIDDAY_SPREAD_TOO_WIDE")
 
+    # 5e. 시간대별 confidence 문턱 (개장 직후 / 마감 임박)
+    if decision_action == Action.BUY and decision_confidence is not None and config.no_buy_after_kst_hour < 24:
+        now_kst = datetime.now(_KST)
+        h, m = now_kst.hour, now_kst.minute
+        # 09:00~09:30: 변동성 최고, 높은 확신만 진입
+        if h == 9 and m < 30 and decision_confidence < config.opening_min_confidence:
+            return GuardrailResult(passed=False, reason="OPENING_LOW_CONFIDENCE")
+        # 14:30~15:00: 마감 임박, 확실한 촉매만
+        if (h == 14 and m >= 30) and decision_confidence < config.closing_min_confidence:
+            return GuardrailResult(passed=False, reason="CLOSING_LOW_CONFIDENCE")
+
     # 5c. Chase-buy prevention: 당일 이미 크게 상승한 종목은 BUY 차단
     if decision_action == Action.BUY and ret_today is not None:
         if ret_today > config.chase_buy_pct:
@@ -263,9 +281,15 @@ def check_guardrails(
 
     # 8-11: Portfolio-level guardrails (require state tracking)
     if state is not None:
-        # 8. Daily loss limit
+        # 8. Daily loss limit (won 기반)
         if state.daily_pnl <= -config.daily_loss_limit:
             return GuardrailResult(passed=False, reason="DAILY_LOSS_LIMIT")
+
+        # 8b. Daily loss limit (비율 기반 — account_balance가 state에 있을 때)
+        if hasattr(state, 'account_balance') and state.account_balance > 0:
+            loss_pct = (state.daily_pnl / state.account_balance) * 100
+            if loss_pct <= config.daily_loss_limit_pct:
+                return GuardrailResult(passed=False, reason="DAILY_LOSS_LIMIT_PCT")
 
         # 9. Same-stock re-buy today
         if ticker in state.bought_tickers:
@@ -295,8 +319,60 @@ def check_guardrails(
 def get_dynamic_stop_loss_pct(config: Config, confidence: int) -> float:
     """confidence 기반 동적 손절 비율. 고확신 포지션은 SL 완화."""
     if confidence >= 85:
-        return min(config.paper_stop_loss_pct * 1.33, -2.0)  # -1.5% → -2.0%
+        return min(config.paper_stop_loss_pct * 1.5, -1.5)  # -0.7 * 1.5 = -1.05%
     return config.paper_stop_loss_pct
+
+
+def get_dynamic_tp_pct(config: Config, confidence: int) -> float:
+    """confidence 기반 동적 익절 비율. 고확신 → 더 넓은 TP."""
+    if confidence >= 85:
+        return 1.5
+    if confidence >= 75:
+        return 1.0
+    return config.paper_take_profit_pct
+
+
+def apply_adv_confidence_adjustment(confidence: int, adv_value_20d: float) -> int:
+    """ADV 기반 confidence 캡/페널티. 소형주 집중 전략."""
+    if adv_value_20d >= 500_000_000_000:  # 5000억+: 초대형주 → cap 68
+        return min(confidence, 68)
+    if adv_value_20d >= 200_000_000_000:  # 2000~5000억: 대형주 → -5
+        return max(0, confidence - 5)
+    # 500~2000억: 최적 구간, 조정 없음
+    return confidence
+
+
+def calculate_position_size(
+    config: Config,
+    size_hint: str,
+    *,
+    account_balance: float = 0.0,
+    minute_volume: float = 0.0,
+    ask_depth_notional: float = 0.0,
+) -> float:
+    """포지션 사이즈 계산: min(hint 기반, 계좌리스크, 거래대금, 호가잔량).
+
+    Returns:
+        주문 금액 (won). 0이면 진입 불가.
+    """
+    hint_size = config.order_size_for_hint(size_hint)
+    candidates = [hint_size]
+
+    if account_balance > 0 and config.account_risk_pct > 0:
+        # 계좌 잔고의 N%를 1건 최대 리스크로 → SL 기준 포지션 산출
+        sl_pct = abs(config.paper_stop_loss_pct) / 100 if abs(config.paper_stop_loss_pct) < 1 else abs(config.paper_stop_loss_pct) / 100
+        if sl_pct > 0:
+            risk_amount = account_balance * (config.account_risk_pct / 100)
+            account_based = risk_amount / sl_pct
+            candidates.append(account_based)
+
+    if minute_volume > 0 and config.minute_volume_cap_pct > 0:
+        candidates.append(minute_volume * (config.minute_volume_cap_pct / 100))
+
+    if ask_depth_notional > 0 and config.ask_depth_cap_pct > 0:
+        candidates.append(ask_depth_notional * (config.ask_depth_cap_pct / 100))
+
+    return min(candidates)
 
 
 def downgrade_size_hint(size_hint: str) -> str:

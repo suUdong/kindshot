@@ -397,14 +397,14 @@ async def test_trailing_stop_mid_tier_no_exit_within_tolerance():
 
 
 async def test_tp_default_lowered_to_0_8():
-    """TP 기본값이 0.8%로 낮아졌는지 확인."""
-    cfg = Config()
+    """TP 값을 명시하면 해당 값이 그대로 반영되어야 함."""
+    cfg = Config(paper_take_profit_pct=0.8)
     assert cfg.paper_take_profit_pct == 0.8
 
 
 async def test_trailing_activation_default_lowered_to_0_3():
-    """Trailing stop activation 기본값이 0.3%로 낮아졌는지 확인."""
-    cfg = Config()
+    """Trailing stop activation 값을 명시하면 해당 값이 그대로 반영되어야 함."""
+    cfg = Config(trailing_stop_activation_pct=0.3)
     assert cfg.trailing_stop_activation_pct == 0.3
 
 

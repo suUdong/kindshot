@@ -22,7 +22,7 @@ from kindshot.context_card import (
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -178,12 +178,14 @@ async def execute_bucket_path(
     elif bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
         ctx_card, raw_data = await build_context_card(raw.ticker, kis, config=config)
         ctx = ctx_card
+        effective_adv_threshold = config.adv_threshold_for_bucket(bucket.value)
 
         qr = quant_check(
             raw_data.adv_value_20d or 0,
             raw_data.spread_bps,
             raw_data.ret_today,
             config,
+            adv_threshold=effective_adv_threshold,
             observed_at=detected_at,
         )
         quant_passed = qr.passed
@@ -350,6 +352,17 @@ async def execute_bucket_path(
     decision.event_id = processed.event_id
     decision.mode = mode
 
+    # ADV 기반 confidence 조정 (소형주 집중 전략)
+    if decision.action == Action.BUY and raw_data.adv_value_20d is not None:
+        original_conf = decision.confidence
+        decision.confidence = apply_adv_confidence_adjustment(decision.confidence, raw_data.adv_value_20d)
+        if decision.confidence != original_conf:
+            logger.info(
+                "ADV confidence adj [%s]: %d → %d (adv=%.0f억)",
+                raw.ticker, original_conf, decision.confidence,
+                raw_data.adv_value_20d / 1e8,
+            )
+
     # 킬 스위치: 연패 시 size_hint 다운그레이드
     if decision.action == Action.BUY and guardrail_state is not None:
         adjusted = get_kill_switch_size_hint(config, guardrail_state, decision.size_hint.value)
@@ -382,6 +395,7 @@ async def execute_bucket_path(
         intraday_value_vs_adv20d=raw_data.intraday_value_vs_adv20d if ctx else None,
         decision_action=decision.action,
         decision_confidence=decision.confidence,
+        adv_threshold=config.adv_threshold_for_bucket(bucket.value),
     )
     if not gr.passed:
         event_rec.skip_stage = SkipStage.GUARDRAIL

@@ -40,22 +40,28 @@ _HOLD_PROFILES: list[tuple[str, int]] = [
 ]
 
 
+def resolve_hold_profile(headline: str, keyword_hits: list[str], config: Config) -> tuple[int, str | None]:
+    """Resolve the hold profile and the matched keyword, if any."""
+    # keyword_hits 먼저 확인 (bucket 분류에 사용된 키워드)
+    for kw, minutes in _HOLD_PROFILES:
+        for hit in keyword_hits:
+            if kw in hit:
+                return minutes, kw
+
+    # headline에서 직접 매칭
+    for kw, minutes in _HOLD_PROFILES:
+        if kw in headline:
+            return minutes, kw
+
+    # 기본값: config
+    return config.max_hold_minutes, None
+
+
 def get_max_hold_minutes(headline: str, keyword_hits: list[str], config: Config) -> int:
     """headline과 keyword_hits를 기반으로 최대 보유시간(분) 반환.
 
     Returns:
         0이면 max_hold 비활성 (EOD까지), 양수면 해당 분수.
     """
-    # keyword_hits 먼저 확인 (bucket 분류에 사용된 키워드)
-    for kw, minutes in _HOLD_PROFILES:
-        for hit in keyword_hits:
-            if kw in hit:
-                return minutes
-
-    # headline에서 직접 매칭
-    for kw, minutes in _HOLD_PROFILES:
-        if kw in headline:
-            return minutes
-
-    # 기본값: config
-    return config.max_hold_minutes
+    minutes, _matched = resolve_hold_profile(headline, keyword_hits, config)
+    return minutes

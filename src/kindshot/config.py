@@ -62,6 +62,7 @@ class Config:
 
     # --- Quant thresholds ---
     adv_threshold: float = field(default_factory=lambda: _env_float("ADV_THRESHOLD", 500_000_000))
+    pos_strong_adv_threshold: float = field(default_factory=lambda: _env_float("POS_STRONG_ADV_THRESHOLD", 2_000_000_000))
     spread_bps_limit: float = 50.0
     extreme_move_pct: float = 20.0
     spread_check_enabled: bool = field(default_factory=lambda: _env_bool("SPREAD_CHECK_ENABLED", True))
@@ -72,8 +73,8 @@ class Config:
     no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_HOUR", 15))  # 15시 이후 BUY 차단
     no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_MINUTE", 0))  # 15:00 이후 차단
     # 가상 익절/손절 (paper mode 추적용)
-    paper_take_profit_pct: float = field(default_factory=lambda: _env_float("PAPER_TAKE_PROFIT_PCT", 0.8))  # 0.8% 익절 (뉴스 반응 특성상 1.5%는 과도)
-    paper_stop_loss_pct: float = field(default_factory=lambda: _env_float("PAPER_STOP_LOSS_PCT", -1.0))  # -1.0% 손절
+    paper_take_profit_pct: float = field(default_factory=lambda: _env_float("PAPER_TAKE_PROFIT_PCT", 1.0))  # 1.0% 기본 익절 (confidence별 동적 TP와 병행)
+    paper_stop_loss_pct: float = field(default_factory=lambda: _env_float("PAPER_STOP_LOSS_PCT", -0.7))  # -0.7% 손절 (단기 트레이딩에 맞게 타이트)
     # Trailing stop + 30분 룰
     trailing_stop_enabled: bool = field(default_factory=lambda: _env_bool("TRAILING_STOP_ENABLED", True))
     trailing_stop_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_PCT", 0.5))  # 기본 trailing (5분 이후)
@@ -85,14 +86,22 @@ class Config:
     max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 30))  # 최대 보유 30분 (0=비활성)
     quant_fail_sample_rate: float = 0.10
     daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 3_000_000))  # won
+    daily_loss_limit_pct: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT_PCT", -1.0))  # 계좌 대비 -1% 도달 시 당일 BUY 중단
     # 킬 스위치: 연패 기반 size 축소 & 당일 중단
     consecutive_loss_size_down: int = field(default_factory=lambda: _env_int("CONSECUTIVE_LOSS_SIZE_DOWN", 2))  # N연패 시 size 한단계 다운
     consecutive_loss_halt: int = field(default_factory=lambda: _env_int("CONSECUTIVE_LOSS_HALT", 3))  # N연패 시 당일 BUY 중단
-    max_positions: int = field(default_factory=lambda: _env_int("MAX_POSITIONS", 5))
+    max_positions: int = field(default_factory=lambda: _env_int("MAX_POSITIONS", 3))
     max_sector_positions: int = field(default_factory=lambda: _env_int("MAX_SECTOR_POSITIONS", 2))
     order_size: float = field(default_factory=lambda: _env_float("ORDER_SIZE", 5_000_000))  # won per trade (기본, M size)
     order_size_l: float = field(default_factory=lambda: _env_float("ORDER_SIZE_L", 7_000_000))  # L size (high confidence)
     order_size_s: float = field(default_factory=lambda: _env_float("ORDER_SIZE_S", 3_000_000))  # S size (low confidence/wide spread)
+    # 포지션 사이징 제약
+    account_risk_pct: float = field(default_factory=lambda: _env_float("ACCOUNT_RISK_PCT", 2.0))  # 계좌 대비 최대 리스크 %
+    minute_volume_cap_pct: float = field(default_factory=lambda: _env_float("MINUTE_VOLUME_CAP_PCT", 5.0))  # 1분 거래대금의 5%
+    ask_depth_cap_pct: float = field(default_factory=lambda: _env_float("ASK_DEPTH_CAP_PCT", 10.0))  # 매도 5호가 잔량의 10%
+    # 시간대별 confidence 문턱
+    opening_min_confidence: int = field(default_factory=lambda: _env_int("OPENING_MIN_CONFIDENCE", 80))  # 09:00-09:30 BUY 최소 confidence
+    closing_min_confidence: int = field(default_factory=lambda: _env_int("CLOSING_MIN_CONFIDENCE", 85))  # 14:30-15:00 BUY 최소 confidence
 
     # --- Market ---
     kospi_halt_pct: float = field(default_factory=lambda: _env_float("KOSPI_HALT_PCT", -8.0))
@@ -174,6 +183,12 @@ class Config:
             return self.order_size_s
         return self.order_size
 
+    def adv_threshold_for_bucket(self, bucket: str) -> float:
+        """Return the effective ADV threshold for a bucket."""
+        if bucket == "POS_STRONG":
+            return min(self.adv_threshold, self.pos_strong_adv_threshold)
+        return self.adv_threshold
+
     def validate(self) -> list[str]:
         """Return config warnings. Raises ValueError on fatal issues."""
         import logging
@@ -194,6 +209,10 @@ class Config:
             raise ValueError(f"min_buy_confidence must be 0-100, got {self.min_buy_confidence}")
         if self.adv_threshold < 0:
             raise ValueError(f"adv_threshold must be non-negative, got {self.adv_threshold}")
+        if self.pos_strong_adv_threshold < 0:
+            raise ValueError(
+                f"pos_strong_adv_threshold must be non-negative, got {self.pos_strong_adv_threshold}"
+            )
 
         if not self.kis_app_key or not self.kis_app_secret:
             warnings.append("KIS API keys not set")

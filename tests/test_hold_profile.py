@@ -1,7 +1,7 @@
 """Tests for hold_profile — 보유시간 차등화."""
 
 from kindshot.config import Config
-from kindshot.hold_profile import get_max_hold_minutes
+from kindshot.hold_profile import get_max_hold_minutes, resolve_hold_profile
 
 
 def test_supply_contract_15min():
@@ -72,3 +72,10 @@ def test_clinical_phase2_20min():
     """임상2상 → 20분."""
     cfg = Config()
     assert get_max_hold_minutes("임상 2상 완료", ["임상 2상"], cfg) == 20
+
+
+def test_resolve_hold_profile_returns_match():
+    cfg = Config()
+    minutes, matched = resolve_hold_profile("삼성전자 1000억 규모 공급계약 체결", ["공급계약"], cfg)
+    assert minutes == 15
+    assert matched == "공급계약"

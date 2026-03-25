@@ -3,7 +3,9 @@
 from kindshot.config import Config
 from kindshot.guardrails import (
     check_guardrails, GuardrailResult, GuardrailState,
-    get_dynamic_stop_loss_pct, downgrade_size_hint, get_kill_switch_size_hint,
+    get_dynamic_stop_loss_pct, get_dynamic_tp_pct,
+    apply_adv_confidence_adjustment, calculate_position_size,
+    downgrade_size_hint, get_kill_switch_size_hint,
 )
 from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
 from kindshot.models import Action
@@ -83,6 +85,19 @@ def test_adv_too_low():
     )
     assert r.passed is False
     assert r.reason == "ADV_TOO_LOW"
+
+
+def test_adv_override_allows_pos_strong_mid_liquidity_name():
+    cfg = _cfg(adv_threshold=5_000_000_000, pos_strong_adv_threshold=2_000_000_000)
+    r = check_guardrails(
+        ticker="005930",
+        config=cfg,
+        spread_bps=10.0,
+        adv_value_20d=2.5e9,
+        ret_today=2.0,
+        adv_threshold=cfg.adv_threshold_for_bucket("POS_STRONG"),
+    )
+    assert r.passed is True
 
 
 def test_adv_missing():
@@ -479,10 +494,10 @@ def test_consecutive_stop_loss_resets_daily():
 
 
 def test_dynamic_stop_loss_high_confidence():
-    """confidence>=85 시 SL -2.0% (완화)."""
+    """confidence>=85 시 기본 SL의 1.5배로 완화."""
     cfg = _cfg(paper_stop_loss_pct=-1.5)
     sl = get_dynamic_stop_loss_pct(cfg, confidence=90)
-    assert sl == -2.0
+    assert sl == -2.25
 
 
 def test_dynamic_stop_loss_normal_confidence():
@@ -665,3 +680,152 @@ def test_kill_switch_configurable_halt_at_2():
     r = check_guardrails("005930", cfg, state=state, decision_action=Action.BUY, **_base_args())
     assert r.passed is False
     assert r.reason == "CONSECUTIVE_STOP_LOSS"
+
+
+# ── US-001: 동적 TP 테스트 ──────────────────
+
+def test_dynamic_tp_high_confidence():
+    """conf>=85 → TP 1.5%."""
+    cfg = _cfg()
+    assert get_dynamic_tp_pct(cfg, 90) == 1.5
+    assert get_dynamic_tp_pct(cfg, 85) == 1.5
+
+
+def test_dynamic_tp_mid_confidence():
+    """conf 75-84 → TP 1.0%."""
+    cfg = _cfg()
+    assert get_dynamic_tp_pct(cfg, 80) == 1.0
+    assert get_dynamic_tp_pct(cfg, 75) == 1.0
+
+
+def test_dynamic_tp_low_confidence():
+    """conf<75 → config 기본값."""
+    cfg = _cfg(paper_take_profit_pct=1.0)
+    assert get_dynamic_tp_pct(cfg, 70) == 1.0
+
+
+# ── US-003: ADV confidence 조정 테스트 ──────────────────
+
+def test_adv_confidence_mega_cap():
+    """ADV 5000억+ → cap 68."""
+    assert apply_adv_confidence_adjustment(85, 600_000_000_000) == 68
+    assert apply_adv_confidence_adjustment(60, 600_000_000_000) == 60  # 이미 68 미만
+
+
+def test_adv_confidence_large_cap():
+    """ADV 2000~5000억 → -5."""
+    assert apply_adv_confidence_adjustment(80, 300_000_000_000) == 75
+
+
+def test_adv_confidence_mid_cap():
+    """ADV 500~2000억 → 조정 없음."""
+    assert apply_adv_confidence_adjustment(80, 100_000_000_000) == 80
+
+
+# ── US-004: 포지션 사이징 테스트 ──────────────────
+
+def test_position_size_hint_only():
+    """제약 없을 때 hint size 반환."""
+    cfg = _cfg(order_size=5_000_000)
+    assert calculate_position_size(cfg, "M") == 5_000_000
+
+
+def test_position_size_minute_volume_cap():
+    """1분 거래대금 5% 제약."""
+    cfg = _cfg(order_size=5_000_000, minute_volume_cap_pct=5.0)
+    size = calculate_position_size(cfg, "M", minute_volume=50_000_000)
+    assert size == 2_500_000  # 50M * 5% = 2.5M < 5M
+
+
+def test_position_size_ask_depth_cap():
+    """매도 호가 잔량 10% 제약."""
+    cfg = _cfg(order_size=5_000_000, ask_depth_cap_pct=10.0)
+    size = calculate_position_size(cfg, "M", ask_depth_notional=30_000_000)
+    assert size == 3_000_000  # 30M * 10% = 3M < 5M
+
+
+def test_position_size_min_of_all():
+    """모든 제약 중 최소값 선택."""
+    cfg = _cfg(order_size=5_000_000, minute_volume_cap_pct=5.0, ask_depth_cap_pct=10.0)
+    size = calculate_position_size(
+        cfg, "M",
+        minute_volume=50_000_000,  # 2.5M
+        ask_depth_notional=20_000_000,  # 2M
+    )
+    assert size == 2_000_000  # min(5M, 2.5M, 2M)
+
+
+# ── US-005: 일일 손실 % 제한 테스트 ──────────────────
+
+def test_daily_loss_limit_pct():
+    """계좌 대비 -1% 도달 시 차단."""
+    cfg = _cfg(daily_loss_limit=10_000_000, daily_loss_limit_pct=-1.0)
+    state = GuardrailState(cfg, account_balance=10_000_000)
+    state.record_pnl(-100_000)  # -1% of 10M
+    r = check_guardrails("005930", cfg, state=state, **_base_args())
+    assert r.passed is False
+    assert r.reason == "DAILY_LOSS_LIMIT_PCT"
+
+
+def test_daily_loss_limit_pct_passes_under():
+    """-0.5%는 통과."""
+    cfg = _cfg(daily_loss_limit=10_000_000, daily_loss_limit_pct=-1.0)
+    state = GuardrailState(cfg, account_balance=10_000_000)
+    state.record_pnl(-50_000)  # -0.5%
+    r = check_guardrails("005930", cfg, state=state, **_base_args())
+    assert r.passed is True
+
+
+# ── US-006: 시간대별 confidence 문턱 테스트 ──────────────────
+
+def test_opening_low_confidence_blocked():
+    """09:00-09:30: conf<80 → 차단."""
+    from unittest.mock import patch
+    from datetime import datetime, timedelta, timezone
+    _KST = timezone(timedelta(hours=9))
+    opening = datetime(2026, 3, 24, 9, 15, 0, tzinfo=_KST)
+    cfg = _cfg(no_buy_after_kst_hour=15, opening_min_confidence=80)
+    with patch("kindshot.guardrails.datetime") as mock_dt:
+        mock_dt.now.return_value = opening
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        r = check_guardrails(
+            "005930", cfg, spread_bps=10.0, adv_value_20d=10e9, ret_today=1.0,
+            decision_action=Action.BUY, decision_confidence=75,
+        )
+    assert r.passed is False
+    assert r.reason == "OPENING_LOW_CONFIDENCE"
+
+
+def test_opening_high_confidence_passes():
+    """09:00-09:30: conf>=80 → 통과."""
+    from unittest.mock import patch
+    from datetime import datetime, timedelta, timezone
+    _KST = timezone(timedelta(hours=9))
+    opening = datetime(2026, 3, 24, 9, 15, 0, tzinfo=_KST)
+    cfg = _cfg(no_buy_after_kst_hour=15, opening_min_confidence=80)
+    with patch("kindshot.guardrails.datetime") as mock_dt:
+        mock_dt.now.return_value = opening
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        r = check_guardrails(
+            "005930", cfg, spread_bps=10.0, adv_value_20d=10e9, ret_today=1.0,
+            decision_action=Action.BUY, decision_confidence=82,
+        )
+    assert r.passed is True
+
+
+def test_closing_low_confidence_blocked():
+    """14:30-15:00: conf<85 → 차단."""
+    from unittest.mock import patch
+    from datetime import datetime, timedelta, timezone
+    _KST = timezone(timedelta(hours=9))
+    closing = datetime(2026, 3, 24, 14, 40, 0, tzinfo=_KST)
+    cfg = _cfg(no_buy_after_kst_hour=15, closing_min_confidence=85)
+    with patch("kindshot.guardrails.datetime") as mock_dt:
+        mock_dt.now.return_value = closing
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        r = check_guardrails(
+            "005930", cfg, spread_bps=10.0, adv_value_20d=10e9, ret_today=1.0,
+            decision_action=Action.BUY, decision_confidence=80,
+        )
+    assert r.passed is False
+    assert r.reason == "CLOSING_LOW_CONFIDENCE"

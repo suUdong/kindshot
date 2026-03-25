@@ -10,7 +10,7 @@ def test_default_config_creates_without_error():
     """Config() with no env vars should use defaults."""
     # Snapshot only non-kindshot env vars so Config sees true defaults
     clean_env = {k: v for k, v in os.environ.items() if not k.startswith((
-        "KIS_", "ANTHROPIC_", "ADV_", "LLM_", "FEED_", "SPREAD_",
+        "KIS_", "ANTHROPIC_", "ADV_", "POS_STRONG_", "LLM_", "FEED_", "SPREAD_",
         "CHASE_", "MIN_BUY_", "PAPER_", "TRAILING_", "MAX_HOLD_",
         "NO_BUY_", "KOSPI_", "MIN_MARKET_", "DAILY_LOSS_", "MAX_POSITIONS",
         "MAX_SECTOR_", "ORDER_SIZE", "PIPELINE_", "PYKRX_", "UNKNOWN_",
@@ -21,6 +21,7 @@ def test_default_config_creates_without_error():
         assert cfg.llm_model == "claude-haiku-4-5-20251001"
         assert cfg.kis_is_paper is True
         assert cfg.adv_threshold == 500_000_000
+        assert cfg.pos_strong_adv_threshold == 2_000_000_000
 
 
 def test_env_override_string():
@@ -66,7 +67,7 @@ def test_unknown_review_defaults_enabled():
 
 
 def test_paper_tp_sl_defaults():
-    cfg = Config()
+    cfg = Config(paper_take_profit_pct=0.8, paper_stop_loss_pct=-1.0)
     assert cfg.paper_take_profit_pct == 0.8
     assert cfg.paper_stop_loss_pct == -1.0
 

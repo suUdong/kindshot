@@ -20,6 +20,14 @@ from typing import Optional
 from urllib.request import Request, urlopen
 from urllib.parse import quote
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from kindshot.config import Config
+from kindshot.strategy_observability import collect_strategy_summary
+
 
 # ── 데이터 수집 ──
 
@@ -74,13 +82,24 @@ def _collect(log_path: Path) -> dict:
             except (ValueError, TypeError):
                 pass
 
+    cfg = Config()
+    strategy_summary = collect_strategy_summary(events, decisions, snapshots, cfg)
+
     return {
         "events": events,
         "decisions": decisions,
         "snapshots": snapshots,
         "bucket_counts": bucket_counts,
         "hour_dist": hour_dist,
+        "strategy_summary": strategy_summary,
     }
+
+
+def _hold_profile_text(summary: dict) -> str:
+    parts = []
+    for label, count in sorted(summary["hold_profile_breakdown"].items()):
+        parts.append(f"{label}:{count}")
+    return ", ".join(parts) if parts else "-"
 
 
 def _ret_pct(snaps: dict, horizon: str, key: str = "ret_long_vs_t0") -> Optional[float]:
@@ -127,6 +146,7 @@ def format_txt(log_path: Path, data: dict) -> str:
     snapshots = data["snapshots"]
     bucket_counts = data["bucket_counts"]
     hour_dist = data["hour_dist"]
+    strategy_summary = data["strategy_summary"]
 
     lines = []
     w = lines.append
@@ -225,6 +245,25 @@ def format_txt(log_path: Path, data: dict) -> str:
             w(f"  {h:02d}시  {bar} {hour_dist[h]}")
         w("")
 
+    w(f"  {'─' * 70}")
+    w("  전략 동작 현황")
+    w(f"  {'─' * 70}")
+    hold_text = _hold_profile_text(strategy_summary)
+    w(f"  Trailing Stop 발동: {strategy_summary['trailing_stop_hits']}회")
+    w(f"  Take Profit 발동: {strategy_summary['take_profit_hits']}회")
+    w(f"  Stop Loss 발동: {strategy_summary['stop_loss_hits']}회")
+    w(f"  Max Hold 발동: {strategy_summary['max_hold_hits']}회")
+    w(f"  보유시간 차등 적용: {strategy_summary['hold_profile_applied']}건 ({hold_text})")
+    w(f"  킬스위치 halt: {strategy_summary['kill_switch_halts']}회")
+    w(
+        "  시간대별 guardrail: "
+        f"midday_spread={strategy_summary['midday_spread_blocks']}, "
+        f"market_close_cutoff={strategy_summary['market_close_cutoffs']}"
+    )
+    w(f"  체결/해지 NEG 재분류: {strategy_summary['contract_cancellation_negs']}건")
+    w(f"  SKIP 추적 스케줄: {strategy_summary['skip_tracking_scheduled']}건")
+    w("")
+
     w(f"{'=' * 72}")
     return "\n".join(lines)
 
@@ -268,6 +307,7 @@ def format_telegram(log_path: Path, data: dict) -> str:
     snapshots = data["snapshots"]
     bucket_counts = data["bucket_counts"]
     hour_dist = data["hour_dist"]
+    strategy_summary = data["strategy_summary"]
 
     lines = []
     w = lines.append
@@ -396,6 +436,37 @@ def format_telegram(log_path: Path, data: dict) -> str:
         top3 = sorted(hour_dist.items(), key=lambda x: -x[1])[:3]
         peak = " ".join(f"{h:02d}시({c})" for h, c in top3)
         w(f"\n⏰ 피크: {peak}")
+
+    hold_text = _hold_profile_text(strategy_summary)
+    w("")
+    w("🧠 <b>전략 현황</b>")
+    w(
+        "TS:{trailing} TP:{tp} SL:{sl} HoldExit:{hold_exit}".format(
+            trailing=strategy_summary["trailing_stop_hits"],
+            tp=strategy_summary["take_profit_hits"],
+            sl=strategy_summary["stop_loss_hits"],
+            hold_exit=strategy_summary["max_hold_hits"],
+        )
+    )
+    w(
+        "HoldProfile:{applied} ({hold_text})".format(
+            applied=strategy_summary["hold_profile_applied"],
+            hold_text=hold_text,
+        )
+    )
+    w(
+        "KillSwitch:{halt} Midday:{midday} CloseCut:{close_cut}".format(
+            halt=strategy_summary["kill_switch_halts"],
+            midday=strategy_summary["midday_spread_blocks"],
+            close_cut=strategy_summary["market_close_cutoffs"],
+        )
+    )
+    w(
+        "CancelNEG:{cancel_neg} SkipTrack:{skip_track}".format(
+            cancel_neg=strategy_summary["contract_cancellation_negs"],
+            skip_track=strategy_summary["skip_tracking_scheduled"],
+        )
+    )
 
     return "\n".join(lines)
 

@@ -1,23 +1,41 @@
-Hypothesis: no-news trading day를 `daily_index_missing` backlog에서 제외하고 서버 메모리 압박을 swap으로 완화하면, auto backfill을 반복 실행해도 historical backlog를 안정적으로 계속 밀 수 있다.
+Hypothesis: recent zero-BUY pressure is primarily caused by an overly strict ADV filter, not by a kill switch. Relaxing ADV only for `POS_STRONG` should reopen strong-catalyst flow without weakening `POS_WEAK` risk control.
 
 Changed files:
-- `docs/plans/2026-03-13-data-collection-infra.md`
-- `src/kindshot/collector.py`
-- `tests/test_collector.py`
+- `.env.example`
+- `deploy/daily_report.py`
+- `docs/daily-check-20260325.md`
+- `src/kindshot/config.py`
+- `src/kindshot/guardrails.py`
+- `src/kindshot/hold_profile.py`
+- `src/kindshot/pipeline.py`
+- `src/kindshot/quant.py`
+- `src/kindshot/strategy_observability.py`
+- `tests/test_config.py`
+- `tests/test_daily_report.py`
+- `tests/test_guardrails.py`
+- `tests/test_hold_profile.py`
+- `tests/test_pipeline.py`
+- `tests/test_quant.py`
+- `tests/test_strategy_observability.py`
 - `memory/codex-loop/latest.md`
 - `memory/codex-loop/session.md`
 
 Validation:
-- `source .venv/bin/activate && python -m pytest tests/test_collector.py -q` passed (`40 passed`).
-- `source .venv/bin/activate && python -m pytest -q` passed (`329 passed`).
-- Server memory check confirmed `swapfile 2G` active with `swappiness=10`, `vfs_cache_pressure=50`.
-- Server auto backfill: `python scripts/collect_backfill_auto.py --max-days 3 --oldest-date 20260301` returned `processed=0 complete=0 partial=0 skipped=2` for `20260302->20260301`, with both dates correctly marked `non_trading_day`.
-- Server status after rerun: `health=healthy`, `partial_count=0`, `error_count=0`, `cursor_date=20260228`, `last_completed_date=20260303`.
-- Server auto backfill expansion: `python scripts/collect_backfill_auto.py --max-days 5 --oldest-date 20260201` returned `processed=4 complete=4 partial=0 skipped=1` for `20260228->20260224`, advancing cursor to `20260223`.
-- Server cron registered successfully and `cron` service is active:
-  - `40 2 * * * cd /opt/kindshot && . /opt/kindshot/.venv/bin/activate && TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... /usr/bin/timeout 3h python scripts/collect_backfill_auto.py --max-days 5 --oldest-date 20260201 >> /opt/kindshot/logs/backfill_auto.log 2>&1`
+- Local artifact audit:
+  - `logs/kindshot_20260325.jsonl` is missing.
+  - `data/runtime/context_cards/20260325.jsonl` is test-generated (`65 rows`, `run_id=test_run`, single event id).
+  - `data/runtime/price_snapshots/20260325.jsonl` is test-generated (`115 rows`, `run_id=run1`, single event id).
+- Recent real-log analysis:
+  - `2026-03-19`: `232` events, `66` `POS_STRONG`, `21` LLM decisions, `2` BUY, `19` SKIP, `45` `ADV_TOO_LOW`, `0` `CONSECUTIVE_STOP_LOSS`.
+  - Recent 7 logged days: `50` LLM decisions total, `23` BUY, `27` SKIP.
+  - Recent 7 logged days: `ADV_TOO_LOW=240`; with `POS_STRONG_ADV_THRESHOLD=20억`, `42` prior `POS_STRONG` ADV skips would re-enter the candidate set.
+  - Recent 7 logged days strategy summary: `TP=2`, `Trailing Stop=2`, `Stop Loss=4`, `Max Hold=4`, `Hold Profile Applied=18`, `Kill Switch Halt=0`, `Market Close Cutoff=7`, `Contract-cancellation NEG=9`.
+- Test commands:
+  - `source .venv/bin/activate && python -m pytest tests/test_hold_profile.py tests/test_strategy_observability.py tests/test_daily_report.py tests/test_config.py tests/test_quant.py tests/test_guardrails.py tests/test_pipeline.py -q` passed (`117 passed`).
+  - `source .venv/bin/activate && python -m pytest -q` passed (`501 passed, 1 warning`).
 
 Risk and rollback note:
-- Risk is now concentrated in long-running server throughput rather than collector backlog semantics; the server is still a small Lightsail instance, so larger windows should continue to use modest `--max-days` values even with swap enabled.
-- Old stray copies at `/opt/kindshot/backfill_auto.py`, `/opt/kindshot/collect_backfill_auto.py`, and `/opt/kindshot/2026-03-16-backfill-automation.md` remain on the server root and can confuse ad hoc operator checks if invoked by mistake.
-- Roll back by removing the cron line with `crontab -e` or reinstalling a filtered crontab, and by reverting `docs/plans/2026-03-13-data-collection-infra.md`, `src/kindshot/collector.py`, `tests/test_collector.py`, `memory/codex-loop/latest.md`, and `memory/codex-loop/session.md`, then re-syncing the reverted collector file to the server if needed.
+- Today's operational path is still unverifiable from this workspace until `2026-03-25` runtime logs are synced locally or inspected on the runtime host.
+- The new logic intentionally changes only `POS_STRONG`; `POS_WEAK` remains under the stricter general ADV floor.
+- Strategy activity is now visible in `deploy/daily_report.py` output and Telegram summaries, but historical backfill remains limited to what existing JSONL logs recorded.
+- Roll back by reverting the config/quant/guardrail/pipeline changes and removing `POS_STRONG`-specific ADV handling.
