@@ -334,10 +334,10 @@ def get_dynamic_tp_pct(config: Config, confidence: int) -> float:
 
 def apply_adv_confidence_adjustment(confidence: int, adv_value_20d: float) -> int:
     """ADV 기반 confidence 캡/페널티. 소형주 집중 전략."""
-    if adv_value_20d >= 500_000_000_000:  # 5000억+: 초대형주 → cap 68
-        return min(confidence, 68)
-    if adv_value_20d >= 200_000_000_000:  # 2000~5000억: 대형주 → -5
-        return max(0, confidence - 5)
+    if adv_value_20d >= 500_000_000_000:  # 5000억+: 초대형주 → cap 65 (sell the news)
+        return min(confidence, 65)
+    if adv_value_20d >= 200_000_000_000:  # 2000~5000억: 대형주 → -5, cap 72
+        return min(max(0, confidence - 5), 72)
     # 500~2000억: 최적 구간, 조정 없음
     return confidence
 
