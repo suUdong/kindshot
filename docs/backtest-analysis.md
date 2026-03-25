@@ -113,8 +113,8 @@ Implemented:
 
 - added config-backed fast-profile cutoff defaults: `15m` profiles blocked from `14:00` KST
 - time-based guardrails now accept injected decision time instead of relying only on `datetime.now()`
-- live pipeline passes detected event time and resolved hold-profile minutes into guardrails
-- replay path does the same so analysis and runtime evaluate the same rule surface
+- live pipeline uses `decision_time` for generic time safety gates and `event_time` for the fast-profile late-entry rule
+- replay passes detected event time into both fields so the offline guardrail surface stays deterministic and inspectable
 
 Changed code:
 
@@ -125,14 +125,15 @@ Changed code:
 - `tests/test_config.py`
 - `tests/test_guardrails.py`
 - `tests/test_pipeline.py`
+- `tests/test_replay.py`
 
 ## Rollout, Observability, Validation, Rollback
 
 - Rollout: direct code path change only; no deploy or secret handling changes.
 - Observability: blocked trades should surface as a dedicated guardrail reason in runtime logs.
 - Validation:
-  - `pytest tests/test_config.py tests/test_guardrails.py tests/test_pipeline.py -q` -> `110 passed`
-  - `pytest -q` -> `551 passed, 1 warning`
+  - `pytest tests/test_config.py tests/test_guardrails.py tests/test_pipeline.py tests/test_replay.py -q` -> `142 passed`
+  - `pytest -q` -> `553 passed, 1 warning`
   - LSP diagnostics on affected source/test files -> `0` errors
 - Rollback:
   - revert the fast-profile cutoff config and guardrail branch

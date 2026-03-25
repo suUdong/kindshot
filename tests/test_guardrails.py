@@ -916,6 +916,26 @@ def test_non_fast_profile_not_blocked_by_fast_profile_cutoff():
     assert r.passed is True
 
 
+def test_fast_profile_uses_event_time_when_decision_arrives_later():
+    cfg = _cfg(
+        no_buy_after_kst_hour=15,
+        fast_profile_hold_minutes=15,
+        fast_profile_no_buy_after_kst_hour=14,
+        fast_profile_no_buy_after_kst_minute=0,
+    )
+    r = check_guardrails(
+        "005930",
+        cfg,
+        decision_action=Action.BUY,
+        decision_confidence=90,
+        decision_hold_minutes=15,
+        decision_time_kst=_kst_dt(14, 5),
+        event_time_kst=_kst_dt(13, 55),
+        **_base_args(),
+    )
+    assert r.passed is True
+
+
 def test_midday_spread_uses_injected_time_without_datetime_patch():
     cfg = _cfg(spread_check_enabled=True, spread_bps_limit=50.0, no_buy_after_kst_hour=15)
     r = check_guardrails(
@@ -929,3 +949,20 @@ def test_midday_spread_uses_injected_time_without_datetime_patch():
     )
     assert r.passed is False
     assert r.reason == "MIDDAY_SPREAD_TOO_WIDE"
+
+
+def test_closing_confidence_uses_decision_time_even_if_event_arrived_earlier():
+    cfg = _cfg(no_buy_after_kst_hour=15, closing_min_confidence=85)
+    r = check_guardrails(
+        "005930",
+        cfg,
+        spread_bps=10.0,
+        adv_value_20d=10e9,
+        ret_today=1.0,
+        decision_action=Action.BUY,
+        decision_confidence=80,
+        decision_time_kst=_kst_dt(14, 40),
+        event_time_kst=_kst_dt(13, 55),
+    )
+    assert r.passed is False
+    assert r.reason == "CLOSING_LOW_CONFIDENCE"

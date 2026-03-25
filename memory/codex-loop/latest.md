@@ -1,4 +1,4 @@
-Hypothesis: fast-decay `15m` hold-profile headlines (`공급계약`, `수주`, `납품계약`) lose edge after `14:00` KST. Blocking late-session BUYs for that profile should improve risk-adjusted returns, and the rule must use injected event time so runtime and replay evaluate the same window.
+Hypothesis: fast-decay `15m` hold-profile headlines (`공급계약`, `수주`, `납품계약`) lose edge after `14:00` KST. Blocking late-session BUYs for that profile should improve risk-adjusted returns, while generic time safety gates should continue to use actual decision time and the profile-specific rule should use event time for deterministic analysis.
 
 Changed files:
 - `docs/backtest-analysis.md`
@@ -9,6 +9,7 @@ Changed files:
 - `tests/test_config.py`
 - `tests/test_guardrails.py`
 - `tests/test_pipeline.py`
+- `tests/test_replay.py`
 - `memory/codex-loop/latest.md`
 - `memory/codex-loop/session.md`
 
@@ -20,8 +21,8 @@ Validation:
   - late `15m` cohort (`14:00+`): `5` trades, `0` wins, avg `-0.796%`, sum `-3.979%`, approx `-198,934 KRW`
   - what-if blocked late `15m` cohort: `18` trades, `61.1%` win rate, sum return `+4.128%`, approx `+206,421 KRW`
 - Test commands:
-  - `source .venv/bin/activate && python -m pytest tests/test_config.py tests/test_guardrails.py tests/test_pipeline.py -q` passed (`110 passed`)
-  - `source .venv/bin/activate && python -m pytest -q` passed (`551 passed, 1 warning`)
+  - `source .venv/bin/activate && python -m pytest tests/test_config.py tests/test_guardrails.py tests/test_pipeline.py tests/test_replay.py -q` passed (`142 passed`)
+  - `source .venv/bin/activate && python -m pytest -q` passed (`553 passed, 1 warning`)
 - Diagnostics:
   - affected files in `src/` and `tests/` returned `0` LSP diagnostic errors
 

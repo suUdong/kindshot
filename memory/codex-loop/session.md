@@ -5,7 +5,7 @@
 - Branch: `main`
 - Phase: `Backtest Analysis`
 - Focus: use the latest 7 logged trading days to isolate one underperforming strategy slice and land a reversible guardrail backed by tests.
-- Active hypothesis: fast-decay `15m` hold profiles should not open new BUYs after `14:00` KST, and time-based guardrails should evaluate against the event time instead of wall-clock `now()`.
+- Active hypothesis: fast-decay `15m` hold profiles should not open new BUYs after `14:00` KST; generic time safety gates should use decision time, while the fast-profile cutoff uses event time for deterministic replay and runtime analysis.
 
 ## Environment
 
@@ -13,8 +13,8 @@
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
-  - `source .venv/bin/activate && python -m pytest tests/test_config.py tests/test_guardrails.py tests/test_pipeline.py -q` passed (`110 passed`)
-  - `source .venv/bin/activate && python -m pytest -q` passed (`551 passed, 1 warning`)
+  - `source .venv/bin/activate && python -m pytest tests/test_config.py tests/test_guardrails.py tests/test_pipeline.py tests/test_replay.py -q` passed (`142 passed`)
+  - `source .venv/bin/activate && python -m pytest -q` passed (`553 passed, 1 warning`)
 - Tooling note: local `.venv` remains the default runner for follow-up verification.
 
 ## Last Completed Step
@@ -27,8 +27,8 @@
 - Implemented one bounded change:
   - added config-backed `FAST_PROFILE_*` cutoff defaults
   - added `FAST_PROFILE_LATE_ENTRY` guardrail
-  - made time-based guardrails consume injected event time in both runtime pipeline and replay
-- Added regression coverage for fast-profile cutoff and guardrail argument propagation.
+  - split time inputs so generic runtime gates use `decision_time` and the fast-profile cutoff uses `event_time`
+- Added regression coverage for fast-profile cutoff, replay wiring, and guardrail argument propagation.
 
 ## Next Intended Step
 
