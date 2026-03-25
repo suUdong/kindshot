@@ -398,7 +398,6 @@ async def execute_bucket_path(
         decision_action=decision.action,
         decision_confidence=decision.confidence,
         decision_time_kst=decision.decided_at,
-        event_time_kst=detected_at,
         decision_hold_minutes=hold_minutes,
         adv_threshold=config.adv_threshold_for_bucket(bucket.value),
     )

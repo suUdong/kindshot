@@ -936,7 +936,7 @@ def test_non_fast_profile_not_blocked_by_fast_profile_cutoff():
     assert r.passed is True
 
 
-def test_fast_profile_uses_event_time_when_decision_arrives_later():
+def test_fast_profile_uses_decision_time_even_if_event_arrived_earlier():
     cfg = _cfg(
         no_buy_after_kst_hour=15,
         fast_profile_hold_minutes=15,
@@ -950,10 +950,10 @@ def test_fast_profile_uses_event_time_when_decision_arrives_later():
         decision_confidence=90,
         decision_hold_minutes=15,
         decision_time_kst=_kst_dt(14, 5),
-        event_time_kst=_kst_dt(13, 55),
         **_base_args(),
     )
-    assert r.passed is True
+    assert r.passed is False
+    assert r.reason == "FAST_PROFILE_LATE_ENTRY"
 
 
 def test_midday_spread_uses_injected_time_without_datetime_patch():
@@ -982,7 +982,6 @@ def test_closing_confidence_uses_decision_time_even_if_event_arrived_earlier():
         decision_action=Action.BUY,
         decision_confidence=80,
         decision_time_kst=_kst_dt(14, 40),
-        event_time_kst=_kst_dt(13, 55),
     )
     assert r.passed is False
     assert r.reason == "CLOSING_LOW_CONFIDENCE"

@@ -13,8 +13,8 @@
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
-  - `source .venv/bin/activate && python -m pytest tests/test_config.py tests/test_guardrails.py tests/test_pipeline.py tests/test_replay.py -q` passed (`142 passed`)
-  - `source .venv/bin/activate && python -m pytest -q` passed (`553 passed, 1 warning`)
+  - `source .venv/bin/activate && python -m pytest tests/test_config.py tests/test_guardrails.py tests/test_pipeline.py tests/test_replay.py -q` passed (`143 passed`)
+  - `source .venv/bin/activate && python -m pytest -q` passed (`554 passed, 1 warning`)
 - Tooling note: local `.venv` remains the default runner for follow-up verification.
 
 ## Last Completed Step
@@ -27,7 +27,7 @@
 - Implemented one bounded change:
   - added config-backed `FAST_PROFILE_*` cutoff defaults
   - added `FAST_PROFILE_LATE_ENTRY` guardrail
-  - split time inputs so generic runtime gates use `decision_time` and the fast-profile cutoff uses `event_time`
+  - standardized time-based guardrail evaluation on decision time; replay uses logged `detected_at` as the deterministic proxy
 - Added regression coverage for fast-profile cutoff, replay wiring, and guardrail argument propagation.
 
 ## Next Intended Step

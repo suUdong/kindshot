@@ -195,7 +195,6 @@ def check_guardrails(
     decision_action: Optional[Action] = None,
     decision_confidence: Optional[int] = None,
     decision_time_kst: Optional[datetime] = None,
-    event_time_kst: Optional[datetime] = None,
     decision_hold_minutes: Optional[int] = None,
     adv_threshold: Optional[float] = None,
     **kwargs: object,
@@ -242,7 +241,7 @@ def check_guardrails(
         and decision_hold_minutes == config.fast_profile_hold_minutes
         and config.fast_profile_no_buy_after_kst_hour < 24
     ):
-        now_kst = _resolve_decision_time_kst(event_time_kst or decision_time_kst)
+        now_kst = _resolve_decision_time_kst(decision_time_kst)
         fast_cutoff = now_kst.replace(
             hour=config.fast_profile_no_buy_after_kst_hour,
             minute=config.fast_profile_no_buy_after_kst_minute,

@@ -834,7 +834,6 @@ async def _run_replay(
             decision_action=Action(decision.action.value),
             decision_confidence=decision.confidence,
             decision_time_kst=detected_at_dt,
-            event_time_kst=detected_at_dt,
             decision_hold_minutes=get_max_hold_minutes(headline, rec.get("keyword_hits") or [], config)
             if decision.action.value == "BUY" else 0,
         )

@@ -228,7 +228,6 @@ async def test_pipeline_passes_time_and_hold_profile_to_guardrails(tmp_path):
     assert len(guardrail_calls) == 1
     kwargs = guardrail_calls[0].kwargs
     assert kwargs["decision_time_kst"] == decided_at
-    assert kwargs["event_time_kst"] == detected_at
     assert kwargs["decision_hold_minutes"] == 15
 
 
