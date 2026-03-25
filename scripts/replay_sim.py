@@ -110,15 +110,23 @@ def replay_from_logs(log_dir: Path, snapshot_dir: Path, date_filter: str = "") -
             if r is not None:
                 rets[h] = r * 100
 
-        # TP/SL/Trailing Stop/30분 룰 판정 (실제 config 기반)
-        # Dynamic TP: conf>=85→1.5%, conf>=75→1.0%, else 0.8%
+        # TP/SL/Trailing Stop/30분 룰 판정 (동적 config 기반)
+        # Dynamic TP: conf>=85→1.5%, conf>=80→1.0%, conf>=75→0.5%, else 1.0%
         if conf >= 85:
             tp_pct = 1.5
-        elif conf >= 75:
+        elif conf >= 80:
             tp_pct = 1.0
+        elif conf >= 75:
+            tp_pct = 0.5
         else:
-            tp_pct = 0.8
-        sl_pct = -0.7
+            tp_pct = 1.0
+        # Dynamic SL: conf>=85→-1.05%, conf>=80→-0.7%, conf>=75→-0.5%
+        if conf >= 85:
+            sl_pct = -1.05
+        elif conf >= 80:
+            sl_pct = -0.7
+        else:
+            sl_pct = -0.5
         trail_activation = 0.3   # 0.3% 이상 수익 시 trailing 활성화
         # 시간대별 trailing stop 폭
         trail_pct_by_horizon = {
@@ -127,7 +135,7 @@ def replay_from_logs(log_dir: Path, snapshot_dir: Path, date_filter: str = "") -
             "t+30m": 0.7,                               # late (30분+)
             "close": 0.7,
         }
-        max_hold_horizon = "t+30m"  # 30분 룰
+        max_hold_horizon = "t+20m"  # 20분 룰 (기본값 단축)
         exit_type = None
         exit_horizon = None
         exit_ret = None

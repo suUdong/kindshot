@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from urllib.request import Request, urlopen
 
 from kindshot.collector import BackfillResult, CollectionLogSummary, CollectorState
+
+logger = logging.getLogger(__name__)
 
 
 def _format_reason_pairs(dates: list[str], summary: CollectionLogSummary) -> str:
@@ -79,3 +83,78 @@ def format_backfill_notification(
         lines.append(f"error={type(error).__name__}: {error}")
 
     return "\n".join(lines)
+
+
+def format_buy_signal(
+    *,
+    ticker: str,
+    corp_name: str,
+    headline: str,
+    bucket: str,
+    confidence: int,
+    size_hint: str,
+    reason: str,
+    keyword_hits: list[str] | None = None,
+    hold_minutes: int = 0,
+    ret_today: float | None = None,
+    spread_bps: float | None = None,
+    adv_display: str = "",
+    mode: str = "paper",
+) -> str:
+    """Format a real-time BUY signal notification for Telegram."""
+    hold_label = "EOD" if hold_minutes == 0 else f"{hold_minutes}m"
+    lines = [
+        f"[{mode.upper()}] BUY {corp_name}({ticker})",
+        f"conf={confidence} size={size_hint} hold={hold_label}",
+        f"bucket={bucket}",
+    ]
+    if reason:
+        lines.append(f"why: {reason}")
+    if keyword_hits:
+        lines.append(f"keywords: {', '.join(keyword_hits[:5])}")
+    ctx_parts = []
+    if ret_today is not None:
+        ctx_parts.append(f"ret={ret_today:+.1f}%")
+    if spread_bps is not None:
+        ctx_parts.append(f"spread={spread_bps:.0f}bp")
+    if adv_display:
+        ctx_parts.append(f"adv={adv_display}")
+    if ctx_parts:
+        lines.append(" ".join(ctx_parts))
+    lines.append(headline[:60])
+    return "\n".join(lines)
+
+
+def try_send_buy_signal(
+    *,
+    ticker: str,
+    corp_name: str,
+    headline: str,
+    bucket: str,
+    confidence: int,
+    size_hint: str,
+    reason: str,
+    keyword_hits: list[str] | None = None,
+    hold_minutes: int = 0,
+    ret_today: float | None = None,
+    spread_bps: float | None = None,
+    adv_display: str = "",
+    mode: str = "paper",
+) -> bool:
+    """Best-effort BUY signal telegram notification. Never raises."""
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not bot_token or not chat_id:
+        return False
+    try:
+        text = format_buy_signal(
+            ticker=ticker, corp_name=corp_name, headline=headline,
+            bucket=bucket, confidence=confidence, size_hint=size_hint,
+            reason=reason, keyword_hits=keyword_hits,
+            hold_minutes=hold_minutes, ret_today=ret_today,
+            spread_bps=spread_bps, adv_display=adv_display, mode=mode,
+        )
+        return send_telegram_message(text, bot_token, chat_id)
+    except Exception:
+        logger.debug("BUY signal telegram send failed", exc_info=True)
+        return False

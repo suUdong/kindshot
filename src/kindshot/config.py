@@ -83,7 +83,7 @@ class Config:
     trailing_stop_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_EARLY_PCT", 0.3))  # 0~5분: 타이트
     trailing_stop_mid_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_MID_PCT", 0.5))  # 5~30분: 보통
     trailing_stop_late_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_LATE_PCT", 0.7))  # 30분+: 완화
-    max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 30))  # 최대 보유 30분 (0=비활성)
+    max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 20))  # 최대 보유 20분 (0=비활성)
     quant_fail_sample_rate: float = 0.10
     daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 3_000_000))  # won
     daily_loss_limit_pct: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT_PCT", -1.0))  # 계좌 대비 -1% 도달 시 당일 BUY 중단

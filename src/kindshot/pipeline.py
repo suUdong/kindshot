@@ -431,6 +431,7 @@ async def execute_bucket_path(
         mode=mode,
         is_buy_decision=is_buy,
         max_hold_minutes=hold_minutes,
+        confidence=decision.confidence if is_buy else 0,
     )
 
     # SKIP 종목 후속 추적: false negative 식별을 위해 가격 스냅샷 스케줄
@@ -462,6 +463,27 @@ async def execute_bucket_path(
             decision.size_hint.value,
             decision.reason,
         )
+
+    # 실시간 텔레그램 BUY 알림 (best-effort, 실패해도 파이프라인 중단 안 함)
+    if decision.action == Action.BUY:
+        from kindshot.telegram_ops import try_send_buy_signal
+        adv_display = f"{raw_data.adv_value_20d/1e8:.0f}억" if raw_data.adv_value_20d else ""
+        try_send_buy_signal(
+            ticker=raw.ticker,
+            corp_name=raw.corp_name,
+            headline=raw.title,
+            bucket=bucket.value,
+            confidence=decision.confidence,
+            size_hint=decision.size_hint.value,
+            reason=decision.reason,
+            keyword_hits=keyword_hits,
+            hold_minutes=hold_minutes,
+            ret_today=raw_data.ret_today,
+            spread_bps=raw_data.spread_bps,
+            adv_display=adv_display,
+            mode=mode,
+        )
+
     return ProcessOutcome(event_id=processed.event_id, action=decision.action)
 
 

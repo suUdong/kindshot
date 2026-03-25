@@ -348,18 +348,23 @@ def check_guardrails(
 
 
 def get_dynamic_stop_loss_pct(config: Config, confidence: int) -> float:
-    """confidence 기반 동적 손절 비율. 고확신 포지션은 SL 완화."""
+    """confidence 기반 동적 손절 비율. 고확신 → SL 완화, 저확신 → 타이트."""
     if confidence >= 85:
         return min(config.paper_stop_loss_pct * 1.5, -1.5)  # -0.7 * 1.5 = -1.05%
-    return config.paper_stop_loss_pct
+    if confidence >= 80:
+        return config.paper_stop_loss_pct  # -0.7%
+    # 75-79: 저확신 BUY는 타이트한 SL
+    return max(config.paper_stop_loss_pct * 0.7, -0.5)  # -0.5%
 
 
 def get_dynamic_tp_pct(config: Config, confidence: int) -> float:
-    """confidence 기반 동적 익절 비율. 고확신 → 더 넓은 TP."""
+    """confidence 기반 동적 익절 비율. 고확신 → 더 넓은 TP, 저확신 → 빠른 익절."""
     if confidence >= 85:
         return 1.5
-    if confidence >= 75:
+    if confidence >= 80:
         return 1.0
+    if confidence >= 75:
+        return 0.5  # 저확신 BUY는 빠른 익절 (MAX_HOLD 비율 감소)
     return config.paper_take_profit_pct
 
 

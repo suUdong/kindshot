@@ -25,14 +25,14 @@ _CONTRACT_CANCEL_TERMS = (
 class StrategyReportConfig:
     """Pinned strategy parameters for deterministic report reconstruction."""
 
-    paper_take_profit_pct: float = 0.8
-    paper_stop_loss_pct: float = -1.0
+    paper_take_profit_pct: float = 1.0
+    paper_stop_loss_pct: float = -0.7
     trailing_stop_enabled: bool = True
     trailing_stop_activation_pct: float = 0.3
     trailing_stop_early_pct: float = 0.3
     trailing_stop_mid_pct: float = 0.5
     trailing_stop_late_pct: float = 0.7
-    max_hold_minutes: int = 30
+    max_hold_minutes: int = 20
 
 
 def _ret_pct(snapshots: dict[str, dict[str, Any]], horizon: str) -> float | None:

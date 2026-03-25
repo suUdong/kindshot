@@ -129,24 +129,39 @@ def _exit_tag(event: dict, snaps: dict, report_config: StrategyReportConfig) -> 
 
 
 def _tp_sl_stats(events: dict, buy_eids: list[str], snapshots: dict, report_config: StrategyReportConfig) -> dict:
-    """BUY 이벤트들의 exit-type 통계."""
+    """BUY 이벤트들의 exit-type 통계 + exit type별 수익률."""
     tp_count = 0
     sl_count = 0
     trailing_count = 0
     hold_count = 0
     neither = 0
+    exit_rets: dict[str, list[float]] = {"tp": [], "sl": [], "trail": [], "hold": [], "neither": []}
     for eid in buy_eids:
-        exit_type, _horizon = classify_buy_exit(events.get(eid, {}), snapshots.get(eid, {}), config=report_config)
+        ev = events.get(eid, {})
+        snaps = snapshots.get(eid, {})
+        exit_type, exit_horizon = classify_buy_exit(ev, snaps, config=report_config)
+        # exit 시점 수익률
+        exit_ret = _ret_pct(snaps, exit_horizon) if exit_horizon else _ret_pct(snaps, "close")
         if exit_type == "take_profit":
             tp_count += 1
+            if exit_ret is not None:
+                exit_rets["tp"].append(exit_ret)
         elif exit_type == "stop_loss":
             sl_count += 1
+            if exit_ret is not None:
+                exit_rets["sl"].append(exit_ret)
         elif exit_type == "trailing_stop":
             trailing_count += 1
+            if exit_ret is not None:
+                exit_rets["trail"].append(exit_ret)
         elif exit_type == "max_hold":
             hold_count += 1
+            if exit_ret is not None:
+                exit_rets["hold"].append(exit_ret)
         else:
             neither += 1
+            if exit_ret is not None:
+                exit_rets["neither"].append(exit_ret)
     return {
         "tp": tp_count,
         "sl": sl_count,
@@ -154,7 +169,31 @@ def _tp_sl_stats(events: dict, buy_eids: list[str], snapshots: dict, report_conf
         "hold": hold_count,
         "neither": neither,
         "total": len(buy_eids),
+        "exit_rets": exit_rets,
     }
+
+
+def _false_negative_summary(snapshots: dict) -> list[dict]:
+    """SKIP 종목 중 수익이 발생한 false negative 식별."""
+    false_negs = []
+    for eid, snaps in snapshots.items():
+        if not eid.startswith("skip_"):
+            continue
+        close_ret = _ret_pct(snaps, "close")
+        t5m_ret = _ret_pct(snaps, "t+5m")
+        best_ret = max(
+            (r for r in [_ret_pct(snaps, h) for h in ["t+1m", "t+2m", "t+5m", "t+30m", "close"]] if r is not None),
+            default=None,
+        )
+        if best_ret is not None and best_ret > 0.5:
+            false_negs.append({
+                "event_id": eid.replace("skip_", ""),
+                "best_ret": best_ret,
+                "close_ret": close_ret,
+                "t5m_ret": t5m_ret,
+            })
+    false_negs.sort(key=lambda x: -(x["best_ret"] or 0))
+    return false_negs
 
 
 # ── TXT 포맷 (파일/터미널용) ──
@@ -380,20 +419,26 @@ def format_telegram(log_path: Path, data: dict) -> str:
         if close_rets:
             wins = [r for r in close_rets if r > 0]
             avg = sum(close_rets) / len(close_rets)
-            w(f"\n📈 승률 {len(wins)}/{len(close_rets)} ({len(wins)/len(close_rets)*100:.0f}%) 평균 {avg:+.2f}%")
+            gross_win = sum(r for r in close_rets if r > 0)
+            gross_loss = abs(sum(r for r in close_rets if r < 0))
+            pf = gross_win / gross_loss if gross_loss > 0 else float("inf") if gross_win > 0 else 0.0
+            w(f"\n📈 승률 {len(wins)}/{len(close_rets)} ({len(wins)/len(close_rets)*100:.0f}%) 평균 {avg:+.2f}% PF={pf:.2f}")
 
-        # TP/SL 통계
+        # TP/SL 통계 + exit type별 평균 수익률
         tpsl = _tp_sl_stats(events, list(buy_decisions.keys()), snapshots, report_config)
         if tpsl["total"] > 0:
-            w(
-                "🎯 TP:{tp} SL:{sl} TRAIL:{trail} HOLD:{hold} 미도달:{neither}".format(
-                    tp=tpsl["tp"],
-                    sl=tpsl["sl"],
-                    trail=tpsl["trail"],
-                    hold=tpsl["hold"],
-                    neither=tpsl["neither"],
-                )
-            )
+            exit_parts = []
+            for label, key in [("TP", "tp"), ("SL", "sl"), ("TS", "trail"), ("HOLD", "hold")]:
+                cnt = tpsl[key]
+                rets = tpsl["exit_rets"][key]
+                if cnt > 0 and rets:
+                    avg_r = sum(rets) / len(rets)
+                    exit_parts.append(f"{label}:{cnt}({avg_r:+.1f}%)")
+                elif cnt > 0:
+                    exit_parts.append(f"{label}:{cnt}")
+            if tpsl["neither"] > 0:
+                exit_parts.append(f"?:{tpsl['neither']}")
+            w("🎯 " + " ".join(exit_parts))
 
         # confidence 구간별 승률
         conf_buckets: dict[str, list[float]] = {"90+": [], "80-89": [], "70-79": [], "65-69": []}
@@ -498,6 +543,19 @@ def format_telegram(log_path: Path, data: dict) -> str:
             skip_track=strategy_summary["skip_tracking_scheduled"],
         )
     )
+
+    # False Negative 분석: SKIP했지만 수익이 발생한 종목
+    false_negs = _false_negative_summary(snapshots)
+    if false_negs:
+        w("")
+        w(f"⚠️ <b>False Negative</b> ({len(false_negs)}건)")
+        for fn in false_negs[:5]:
+            orig_eid = fn["event_id"]
+            ev = events.get(orig_eid, {})
+            ticker = ev.get("ticker", "?")
+            headline = ev.get("headline", "")[:20]
+            best = fn["best_ret"]
+            w(f"  {ticker} +{best:.1f}% {headline}")
 
     return "\n".join(lines)
 

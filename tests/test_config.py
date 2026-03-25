@@ -49,17 +49,25 @@ def test_env_override_int():
 
 
 def test_trailing_stop_defaults():
-    cfg = Config()
-    assert cfg.trailing_stop_enabled is True
-    assert cfg.trailing_stop_pct == 0.5
-    assert cfg.trailing_stop_activation_pct == 0.3
-    assert cfg.trailing_stop_early_pct == 0.3
-    assert cfg.trailing_stop_mid_pct == 0.5
-    assert cfg.trailing_stop_late_pct == 0.7
-    assert cfg.max_hold_minutes == 30
-    assert cfg.fast_profile_hold_minutes == 15
-    assert cfg.fast_profile_no_buy_after_kst_hour == 14
-    assert cfg.fast_profile_no_buy_after_kst_minute == 0
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith((
+        "KIS_", "ANTHROPIC_", "ADV_", "POS_STRONG_", "LLM_", "FEED_", "SPREAD_",
+        "CHASE_", "MIN_BUY_", "PAPER_", "TRAILING_", "MAX_HOLD_",
+        "NO_BUY_", "KOSPI_", "MIN_MARKET_", "DAILY_LOSS_", "MAX_POSITIONS",
+        "MAX_SECTOR_", "ORDER_SIZE", "PIPELINE_", "PYKRX_", "UNKNOWN_",
+        "FINALIZE_", "COLLECTOR_", "LOG_DIR", "DATA_DIR", "FAST_PROFILE_",
+    ))}
+    with patch.dict(os.environ, clean_env, clear=True):
+        cfg = Config()
+        assert cfg.trailing_stop_enabled is True
+        assert cfg.trailing_stop_pct == 0.5
+        assert cfg.trailing_stop_activation_pct == 0.3
+        assert cfg.trailing_stop_early_pct == 0.3
+        assert cfg.trailing_stop_mid_pct == 0.5
+        assert cfg.trailing_stop_late_pct == 0.7
+        assert cfg.max_hold_minutes == 20
+        assert cfg.fast_profile_hold_minutes == 15
+        assert cfg.fast_profile_no_buy_after_kst_hour == 14
+        assert cfg.fast_profile_no_buy_after_kst_minute == 0
 
 
 def test_unknown_review_defaults_enabled():

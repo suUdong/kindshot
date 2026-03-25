@@ -99,6 +99,8 @@ class SnapshotScheduler:
         self._entry_times: dict[str, float] = {}
         # 이벤트별 max_hold_minutes (0=EOD까지)
         self._max_hold_minutes: dict[str, int] = {}
+        # 이벤트별 confidence (동적 TP/SL용)
+        self._event_confidence: dict[str, int] = {}
 
     def _get_trailing_stop_pct(self, event_id: str) -> float:
         """시간대별 trailing stop 폭 반환: 0~5분 early, 5~30분 mid, 30분+ late."""
@@ -151,6 +153,7 @@ class SnapshotScheduler:
         mode: str = "live",
         is_buy_decision: bool = False,
         max_hold_minutes: int = 0,
+        confidence: int = 0,
     ) -> None:
         """Schedule t0 snapshot immediately + future horizons."""
         now = time.monotonic()
@@ -158,6 +161,8 @@ class SnapshotScheduler:
         self._event_tickers[event_id] = ticker
         if max_hold_minutes > 0:
             self._max_hold_minutes[event_id] = max_hold_minutes
+        if confidence > 0:
+            self._event_confidence[event_id] = confidence
 
         # t0: fire immediately (will be fetched in the run loop)
         heapq.heappush(self._heap, ScheduledSnapshot(
@@ -253,6 +258,7 @@ class SnapshotScheduler:
                 self._event_tickers.pop(snap.event_id, None)
                 self._entry_times.pop(snap.event_id, None)
                 self._max_hold_minutes.pop(snap.event_id, None)
+                self._event_confidence.pop(snap.event_id, None)
                 # Report close P&L to guardrail state (BUY decisions only)
                 if snap.is_buy_decision and ret_long is not None and self._pnl_callback and t0_px:
                     pnl_won = ret_long * self._config.order_size
@@ -288,8 +294,13 @@ class SnapshotScheduler:
             and snap.event_id not in self._virtual_exits
         ):
             ret_pct = ret_long * 100
-            tp_active = self._config.paper_take_profit_pct > 0
-            sl_active = self._config.paper_stop_loss_pct < 0
+            # 동적 TP/SL: confidence별 차별화
+            from kindshot.guardrails import get_dynamic_tp_pct, get_dynamic_stop_loss_pct
+            evt_conf = self._event_confidence.get(snap.event_id, 0)
+            effective_tp = get_dynamic_tp_pct(self._config, evt_conf) if evt_conf > 0 else self._config.paper_take_profit_pct
+            effective_sl = get_dynamic_stop_loss_pct(self._config, evt_conf) if evt_conf > 0 else self._config.paper_stop_loss_pct
+            tp_active = effective_tp > 0
+            sl_active = effective_sl < 0
 
             # Track peak for trailing stop
             if self._config.trailing_stop_enabled:
@@ -297,19 +308,19 @@ class SnapshotScheduler:
                 self._peak_returns[snap.event_id] = max(prev_peak, ret_pct)
                 peak = self._peak_returns[snap.event_id]
 
-            if tp_active and ret_pct >= self._config.paper_take_profit_pct:
+            if tp_active and ret_pct >= effective_tp:
                 self._virtual_exits[snap.event_id] = snap.horizon
                 logger.info(
-                    "PAPER TP hit [%s] %s: +%.2f%% at %s (target %.1f%%)",
+                    "PAPER TP hit [%s] %s: +%.2f%% at %s (target %.1f%%, conf=%d)",
                     snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
-                    self._config.paper_take_profit_pct,
+                    effective_tp, evt_conf,
                 )
-            elif sl_active and ret_pct <= self._config.paper_stop_loss_pct:
+            elif sl_active and ret_pct <= effective_sl:
                 self._virtual_exits[snap.event_id] = snap.horizon
                 logger.info(
-                    "PAPER SL hit [%s] %s: %.2f%% at %s (stop %.1f%%)",
+                    "PAPER SL hit [%s] %s: %.2f%% at %s (stop %.1f%%, conf=%d)",
                     snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
-                    self._config.paper_stop_loss_pct,
+                    effective_sl, evt_conf,
                 )
             elif (
                 self._config.trailing_stop_enabled

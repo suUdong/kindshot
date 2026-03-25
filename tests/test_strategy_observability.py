@@ -2,6 +2,19 @@ from kindshot.config import Config
 from kindshot.strategy_observability import StrategyReportConfig, collect_strategy_summary
 
 
+def test_strategy_report_config_defaults_align_with_runtime_config():
+    runtime_cfg = Config()
+    report_cfg = StrategyReportConfig()
+
+    assert report_cfg.paper_take_profit_pct == runtime_cfg.paper_take_profit_pct
+    assert report_cfg.paper_stop_loss_pct == runtime_cfg.paper_stop_loss_pct
+    assert report_cfg.trailing_stop_activation_pct == runtime_cfg.trailing_stop_activation_pct
+    assert report_cfg.trailing_stop_early_pct == runtime_cfg.trailing_stop_early_pct
+    assert report_cfg.trailing_stop_mid_pct == runtime_cfg.trailing_stop_mid_pct
+    assert report_cfg.trailing_stop_late_pct == runtime_cfg.trailing_stop_late_pct
+    assert report_cfg.max_hold_minutes == runtime_cfg.max_hold_minutes
+
+
 def test_collect_strategy_summary_counts_key_strategies():
     cfg = StrategyReportConfig()
 
@@ -62,7 +75,7 @@ def test_collect_strategy_summary_counts_key_strategies():
 
     snapshots = {
         "buy_tp": {
-            "t+30s": {"ret_long_vs_t0": 0.009},
+            "t+30s": {"ret_long_vs_t0": 0.011},
         },
         "buy_trail": {
             "t+30s": {"ret_long_vs_t0": 0.005},

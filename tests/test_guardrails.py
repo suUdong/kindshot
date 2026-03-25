@@ -507,10 +507,10 @@ def test_dynamic_stop_loss_high_confidence():
 
 
 def test_dynamic_stop_loss_normal_confidence():
-    """confidence<85 시 기본 SL."""
+    """conf 75-79 → 타이트한 SL floor -0.5%."""
     cfg = _cfg(paper_stop_loss_pct=-1.5)
     sl = get_dynamic_stop_loss_pct(cfg, confidence=75)
-    assert sl == -1.5
+    assert sl == -0.5
 
 
 def test_consecutive_stop_loss_does_not_block_skip():
@@ -698,10 +698,10 @@ def test_dynamic_tp_high_confidence():
 
 
 def test_dynamic_tp_mid_confidence():
-    """conf 75-84 → TP 1.0%."""
+    """conf 80-84 → TP 1.0%, conf 75-79 → TP 0.5%."""
     cfg = _cfg()
     assert get_dynamic_tp_pct(cfg, 80) == 1.0
-    assert get_dynamic_tp_pct(cfg, 75) == 1.0
+    assert get_dynamic_tp_pct(cfg, 75) == 0.5
 
 
 def test_dynamic_tp_low_confidence():
