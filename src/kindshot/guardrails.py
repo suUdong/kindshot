@@ -284,6 +284,9 @@ def check_guardrails(
         # 09:00~09:30: 변동성 최고, 높은 확신만 진입
         if h == 9 and m < 30 and decision_confidence < config.opening_min_confidence:
             return GuardrailResult(passed=False, reason="OPENING_LOW_CONFIDENCE")
+        # 13:00~14:30: 오후 회복기, 승률 저조 구간 — 높은 확신만
+        if (h == 13 or (h == 14 and m < 30)) and decision_confidence < config.afternoon_min_confidence:
+            return GuardrailResult(passed=False, reason="AFTERNOON_LOW_CONFIDENCE")
         # 14:30~15:00: 마감 임박, 확실한 촉매만
         if (h == 14 and m >= 30) and decision_confidence < config.closing_min_confidence:
             return GuardrailResult(passed=False, reason="CLOSING_LOW_CONFIDENCE")

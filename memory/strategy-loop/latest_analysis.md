@@ -1,33 +1,43 @@
 # Strategy Performance Analysis
-Generated: 2026-03-18 14:30
+Generated: 2026-03-26 06:02
 
-## 실전 데이터 기반 전략 분석 (6건 BUY)
+## Summary
+- Total events: 4938
+- Trades executed: 23
+- Signals skipped: 4915
+- Profitable: 0
+- Losing: 0
+- Avg return (close): 0.00%
 
-### BUY 실적
-| 종목 | 이벤트 | t+5m | t+30m | close |
-|------|--------|------|-------|-------|
-| 알테오젠 | 특허 등록 | **+3.68%** | N/A | +3.68% |
-| 한국카본 | 430억 공급계약 | -0.36% | +0.99% | +0.99% |
-| 와이제이링크 | 41억 공급계약 | +0.30% | +0.78% | +0.78% |
-| 효성중공업 | ESS 수주 | -0.23% | N/A | -0.16% |
-| 삼성물산 | 공급계약 | N/A | N/A | -0.09% |
-| 엔씨소프트 | 저스트플레이 인수 | -0.47% | -0.70% | **-2.33%** |
+## Bucket Distribution
+- UNKNOWN: 2639
+- IGNORE: 1173
+- POS_STRONG: 502
+- POS_WEAK: 349
+- NEG_STRONG: 241
+- NEG_WEAK: 34
 
-### Exit 전략 시뮬레이션
-- **SL only (-0.5%, TP 없음)**: +4.70% 총 수익 (**+1.83%p 개선**)
-- 뉴스 트레이딩 = 상승 제한 금물, 하락만 빠르게 컷
-- TP를 두면 빅 히터(알테오젠 +3.68%)를 제한하므로 역효과
+## Top Skip Reasons
+- UNKNOWN_BUCKET: 1844
+- IGNORE_BUCKET: 1173
+- CORRECTION_EVENT: 542
+- POS_WEAK_BUCKET: 335
+- DUPLICATE: 253
+- ADV_TOO_LOW: 247
+- NEG_BUCKET: 241
+- LLM_PARSE: 75
+- SPREAD_TOO_WIDE: 48
+- NEG_WEAK_BUCKET: 34
 
-### 이벤트 유형별 수익률
-- **바이오/특허**: +3.68% (최고) → 높은 confidence, 대형 포지션
-- **대형 공급계약(100억+)**: +0.99% (양호)
-- **소형 공급계약(<50억)**: +0.78% (보통)
-- **대형주 인수**: -2.33% (최악) → SKIP 또는 낮은 confidence
-- **수주**: -0.16% (보합)
+## Potential Missed Opportunities (POS skipped by QUANT/GUARDRAIL)
+- 002210 (ADV_TOO_LOW): [마켓인]동성제약 회생계획안 결국 부결…태광 인수 가도 ‘빨간불’
+- 474610 (INTRADAY_VALUE_TOO_THIN): RF시스템즈, 글로벌 방산 수요 확대 속 '구조적 성장'…대규모 수주로 턴어라운드 '본격화'
+- 474610 (INTRADAY_VALUE_TOO_THIN): [클릭 e종목]"RF시스템즈, 167억 대형 수주…실적 가시성 확보"
+- 204840 (ADV_TOO_LOW): '개량신약' 지엘팜텍, "작년 역대 최대 매출, 흑자 전환 일궈"
+- 474610 (INTRADAY_VALUE_TOO_THIN): RF시스템즈, 대형 수주에 실적 가시성↑…사업 체질 전환 본격화-하나
 
-### 적용된 전략 개선
-1. LLM 전략 가이드 (바이오→높은 conf, 대형주 인수→보수적)
-2. 추격 매수 방지 (ret_today > 5%)
-3. BUY 최소 confidence 70
-4. 15:00 KST 이후 BUY 차단
-5. 가상 SL -0.5% (TP 비활성)
+## Insights
+- Win rate: 0% (0/23)
+- Avg return at close: 0.00%
+- UNKNOWN bucket is 53% of events. Bucket keywords need expansion.
+- 1 LLM errors in replay reports. API retry logic or context card robustness needs work.

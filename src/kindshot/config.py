@@ -101,6 +101,7 @@ class Config:
     ask_depth_cap_pct: float = field(default_factory=lambda: _env_float("ASK_DEPTH_CAP_PCT", 10.0))  # 매도 5호가 잔량의 10%
     # 시간대별 confidence 문턱
     opening_min_confidence: int = field(default_factory=lambda: _env_int("OPENING_MIN_CONFIDENCE", 80))  # 09:00-09:30 BUY 최소 confidence
+    afternoon_min_confidence: int = field(default_factory=lambda: _env_int("AFTERNOON_MIN_CONFIDENCE", 80))  # 13:00-14:30 BUY 최소 confidence (오후 승률 저조)
     closing_min_confidence: int = field(default_factory=lambda: _env_int("CLOSING_MIN_CONFIDENCE", 85))  # 14:30-15:00 BUY 최소 confidence
     fast_profile_hold_minutes: int = field(default_factory=lambda: _env_int("FAST_PROFILE_HOLD_MINUTES", 15))  # fast-decay hold profile 기준값
     fast_profile_no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("FAST_PROFILE_NO_BUY_AFTER_KST_HOUR", 14))  # 14:00+ fast profile BUY 차단
