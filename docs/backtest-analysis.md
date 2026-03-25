@@ -138,3 +138,56 @@ Changed code:
 - Rollback:
   - revert the fast-profile cutoff config and guardrail branch
   - remove the new guardrail reason wiring if it proves too aggressive
+
+## Follow-up Slice
+
+After removing the late `15m` cohort, the residual trade set becomes:
+
+- `18` trades
+- `11` wins / `7` losses
+- sum return `+4.128%`
+
+In that reduced set, the weakest keyword-specific cohort is now M&A:
+
+| Keyword | Count | Win rate | Avg return | Sum return |
+|---|---:|---:|---:|---:|
+| `인수` / `합병` | 2 | 50.0% | `-1.068%` | `-2.136%` |
+
+Observed path:
+
+- `2026-03-11` 엔씨 `인수` headline: `t+30m -0.698%`, `close -2.326%`
+- `2026-03-19` 보스턴다이내믹스 `인수` headline: `t+30m +0.189%`, `close +0.189%`
+
+Interpretation:
+
+- current `EOD` mapping for M&A is too permissive
+- the downside mostly comes from carrying the weaker case from `t+30m` into `close`
+- unlike shareholder-return headlines, M&A headlines in this sample do not justify an all-day hold
+
+Selected follow-up hypothesis:
+
+- move `인수` / `합병` from `EOD` to `30m`
+- keep shareholder-return keywords (`자사주 소각`, `자사주 취득`, `배당`, `주주환원`) at `EOD`
+
+What-if impact after the late `15m` filter:
+
+- trade count unchanged: `18`
+- win rate unchanged: `61.1%`
+- sum return: `+4.128% -> +5.756%`
+
+Planned code touchpoints for this slice:
+
+- `src/kindshot/hold_profile.py`
+- `tests/test_hold_profile.py`
+- `docs/backtest-analysis.md`
+
+Implementation result:
+
+- moved `인수` / `합병` hold profiles from `EOD` to `30m`
+- left shareholder-return keywords on `EOD`
+
+Validation for this slice:
+
+- `pytest tests/test_hold_profile.py tests/test_strategy_observability.py tests/test_daily_report.py -q` -> `16 passed`
+- `pytest -q` -> `569 passed, 1 warning`
+- LSP diagnostics on affected files -> `0` errors

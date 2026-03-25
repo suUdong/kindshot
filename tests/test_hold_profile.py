@@ -46,6 +46,18 @@ def test_treasury_acquisition_eod():
     assert get_max_hold_minutes("자사주취득 결정", ["자사주취득"], cfg) == 0
 
 
+def test_mna_acquisition_30min():
+    """인수 → 30분."""
+    cfg = Config()
+    assert get_max_hold_minutes("엔씨, 저스트플레이 인수", ["인수"], cfg) == 30
+
+
+def test_merger_30min():
+    """합병 → 30분."""
+    cfg = Config()
+    assert get_max_hold_minutes("합병 결정 공시", ["합병"], cfg) == 30
+
+
 def test_default_uses_config():
     """매칭 없으면 config.max_hold_minutes 사용."""
     cfg = Config(max_hold_minutes=30)

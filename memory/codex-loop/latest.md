@@ -1,32 +1,24 @@
-Hypothesis: fast-decay `15m` hold-profile headlines (`공급계약`, `수주`, `납품계약`) lose edge after `14:00` KST. Blocking late-session BUYs for that profile should improve risk-adjusted returns, and all time-based guardrails should evaluate against the actual decision timestamp (or a replay proxy for it).
+Hypothesis: after blocking late `15m` fast-decay entries, the weakest remaining keyword-specific cohort is M&A. `인수` / `합병` should not keep the shareholder-return `EOD` hold profile; shortening them to `30m` should keep the initial reaction while reducing close-time giveback.
 
 Changed files:
 - `docs/backtest-analysis.md`
-- `src/kindshot/config.py`
-- `src/kindshot/guardrails.py`
-- `src/kindshot/pipeline.py`
-- `src/kindshot/replay.py`
-- `tests/test_config.py`
-- `tests/test_guardrails.py`
-- `tests/test_pipeline.py`
-- `tests/test_replay.py`
+- `src/kindshot/hold_profile.py`
+- `tests/test_hold_profile.py`
 - `memory/codex-loop/latest.md`
 - `memory/codex-loop/session.md`
 
 Validation:
-- Analysis window used: `2026-03-11`, `2026-03-12`, `2026-03-13`, `2026-03-16`, `2026-03-17`, `2026-03-18`, `2026-03-19` (latest 7 logged trading days available locally).
-- Historical cohort evidence:
-  - total BUYs: `23`
-  - realized result: `11` wins / `12` losses, sum return `+0.150%`, approx `+7,487 KRW`
-  - late `15m` cohort (`14:00+`): `5` trades, `0` wins, avg `-0.796%`, sum `-3.979%`, approx `-198,934 KRW`
-  - what-if blocked late `15m` cohort: `18` trades, `61.1%` win rate, sum return `+4.128%`, approx `+206,421 KRW`
+- Follow-up analysis after the late `15m` cutoff:
+  - remaining trades: `18`
+  - remaining result: `11` wins / `7` losses, sum return `+4.128%`
+  - M&A cohort (`인수` / `합병`): `2` trades, `50.0%` win rate, avg `-1.068%`, sum `-2.136%`
+  - what-if with `30m` M&A hold: sum return `+4.128% -> +5.756%`
 - Test commands:
-  - `source .venv/bin/activate && python -m pytest tests/test_config.py tests/test_guardrails.py tests/test_pipeline.py tests/test_replay.py -q` passed (`143 passed`)
-  - `source .venv/bin/activate && python -m pytest -q` passed (`554 passed, 1 warning`)
+  - `source .venv/bin/activate && python -m pytest tests/test_hold_profile.py tests/test_strategy_observability.py tests/test_daily_report.py -q` passed (`16 passed`)
+  - `source .venv/bin/activate && python -m pytest -q` passed (`569 passed, 1 warning`)
 - Diagnostics:
-  - affected files in `src/` and `tests/` returned `0` LSP diagnostic errors
+  - affected files returned `0` LSP diagnostic errors
 
 Risk and rollback note:
-- The 7-day evidence window is limited by missing local logs after `2026-03-19`; the analysis explicitly uses the latest seven logged days rather than calendar-recent dates.
-- Some historical late losers were also below today's confidence floor, so the new guardrail is additive risk control, not the sole explanation for those past losses.
-- Roll back by reverting the fast-profile config fields and the `FAST_PROFILE_LATE_ENTRY` guardrail path in `guardrails.py`, `pipeline.py`, and `replay.py`.
+- The M&A sample is small (`2` trades), so this is a narrow evidence-backed tweak, not a broad behavioral rewrite.
+- Roll back by restoring `인수` / `합병` to `0` in `hold_profile.py` and reverting the accompanying doc/test updates.

@@ -4,8 +4,8 @@
 
 - Branch: `main`
 - Phase: `Backtest Analysis`
-- Focus: use the latest 7 logged trading days to isolate one underperforming strategy slice and land a reversible guardrail backed by tests.
-- Active hypothesis: fast-decay `15m` hold profiles should not open new BUYs after `14:00` KST; generic time safety gates should use decision time, while the fast-profile cutoff uses event time for deterministic replay and runtime analysis.
+- Focus: continue the post-cutoff analysis with one more reversible strategy slice drawn from the same 7-log window.
+- Active hypothesis: `인수` / `합병` headlines should use `30m` max hold instead of `EOD`; shareholder-return headlines remain the only EOD hold cohort.
 
 ## Environment
 
@@ -13,29 +13,28 @@
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
-  - `source .venv/bin/activate && python -m pytest tests/test_config.py tests/test_guardrails.py tests/test_pipeline.py tests/test_replay.py -q` passed (`143 passed`)
-  - `source .venv/bin/activate && python -m pytest -q` passed (`554 passed, 1 warning`)
+  - `source .venv/bin/activate && python -m pytest tests/test_hold_profile.py tests/test_strategy_observability.py tests/test_daily_report.py -q` passed (`16 passed`)
+  - `source .venv/bin/activate && python -m pytest -q` passed (`569 passed, 1 warning`)
 - Tooling note: local `.venv` remains the default runner for follow-up verification.
 
 ## Last Completed Step
 
-- Read `SESSION_HANDOFF.md` and reconstructed the most recent locally available 7-log window: `2026-03-11`, `2026-03-12`, `2026-03-13`, `2026-03-16`, `2026-03-17`, `2026-03-18`, `2026-03-19`.
-- Wrote `docs/backtest-analysis.md` with per-strategy counts, win rates, and approximate PnL.
-- Identified the worst repeatable cohort:
-  - `15m` hold profile after `14:00` KST
-  - `5` trades, `0` wins, avg `-0.796%`, sum `-3.979%`
+- Re-ran the cohort breakdown after the late `15m` cutoff.
+- Found the next weakest keyword-specific residual cohort:
+  - `인수` / `합병`
+  - `2` trades, `50.0%` win rate, avg `-1.068%`, sum `-2.136%`
+- Verified that `t+30m` outperformed `close` for the weaker M&A case in the sample.
 - Implemented one bounded change:
-  - added config-backed `FAST_PROFILE_*` cutoff defaults
-  - added `FAST_PROFILE_LATE_ENTRY` guardrail
-  - standardized time-based guardrail evaluation on decision time; replay uses logged `detected_at` as the deterministic proxy
-- Added regression coverage for fast-profile cutoff, replay wiring, and guardrail argument propagation.
+  - moved `인수` / `합병` from `EOD` to `30m` in `hold_profile.py`
+  - kept shareholder-return keywords at `EOD`
+- Updated `docs/backtest-analysis.md` and added hold-profile regression tests.
 
 ## Next Intended Step
 
-- Observe the next real runtime logs to confirm whether `FAST_PROFILE_LATE_ENTRY` appears on late-session contract/suju headlines and whether the blocked cohort stays net-negative.
-- If sufficient new runtime logs accumulate, re-run the same 7-day analysis on post-change data before considering any further strategy tuning.
+- Wait for the next real runtime logs to see whether the shorter M&A hold reduces close-time giveback without cutting too many extended winners.
+- If more real logs arrive, recompute the same residual-cohort table before attempting another strategy change.
 
 ## Notes
 
-- Local workspace still lacks `logs/kindshot_*.jsonl` after `2026-03-19`; do not describe later dates as verified runtime evidence from this machine.
+- Local workspace still lacks runtime logs after `2026-03-19`; this run remains based on the latest 7 logged trading days available locally.
 - Untracked workspace items under `.omc/`, `.omx/`, `data/`, `docs/superpowers/plans/`, `IMPROVEMENT_ANALYSIS.md`, and `scripts/auto-improve.sh` were left untouched.
