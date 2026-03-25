@@ -156,6 +156,12 @@ def _parse_llm_response(raw: str) -> Optional[dict]:
     if not isinstance(confidence, (int, float)) or not (0 <= confidence <= 100):
         return None
 
+    # Hard safety net: BUY with confidence < 75 is auto-converted to SKIP.
+    # The LLM sometimes outputs BUY(72) despite prompt instructions forbidding it.
+    if action == "BUY" and int(confidence) < 75:
+        logger.warning("LLM returned BUY with confidence %d < 75, forcing SKIP", int(confidence))
+        data["action"] = "SKIP"
+
     size_hint = data.get("size_hint")
     if size_hint not in ("S", "M", "L"):
         # size_hint 누락/잘못된 경우 confidence 기반 기본값 적용 (파싱 실패 방지)

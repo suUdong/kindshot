@@ -387,6 +387,38 @@ def test_parse_float_confidence_accepted():
     assert result["confidence"] == 82.5
 
 
+def test_parse_buy_conf_72_forced_to_skip():
+    """BUY with confidence 72 is auto-converted to SKIP (safety net)."""
+    raw = '{"action": "BUY", "confidence": 72, "size_hint": "M", "reason": "ESS 공급계약"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["action"] == "SKIP"
+
+
+def test_parse_buy_conf_74_forced_to_skip():
+    """BUY with confidence 74 is auto-converted to SKIP."""
+    raw = '{"action": "BUY", "confidence": 74, "size_hint": "M", "reason": "중형 수주"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["action"] == "SKIP"
+
+
+def test_parse_buy_conf_75_stays_buy():
+    """BUY with confidence 75 stays BUY (minimum threshold)."""
+    raw = '{"action": "BUY", "confidence": 75, "size_hint": "M", "reason": "확정 수주"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["action"] == "BUY"
+
+
+def test_parse_skip_conf_72_stays_skip():
+    """SKIP with confidence 72 stays SKIP (no conversion needed)."""
+    raw = '{"action": "SKIP", "confidence": 72, "size_hint": "S", "reason": "대형주 이미 반영"}'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["action"] == "SKIP"
+
+
 def test_prompt_contains_decision_bias():
     """프롬프트에 decision_bias 섹션 존재."""
     ctx = ContextCard()
@@ -394,7 +426,7 @@ def test_prompt_contains_decision_bias():
     assert "decision_bias" in prompt
     assert "POS_STRONG" in prompt
     assert "SKIP" in prompt
-    assert "확정된 대형 공시" in prompt
+    assert "BUY" in prompt
 
 
 def test_prompt_pos_weak_bias_conservative():

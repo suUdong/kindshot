@@ -231,9 +231,11 @@ def test_neg_weak_major_shareholder_change_no_space():
     assert "최대주주변경" in result.keyword_hits
 
 
-def test_existing_unknown_major_shareholder_news_phrase_stays_unknown():
+def test_major_shareholder_change_variant_neg_weak():
+    """'최대주주가 X로 변경' 패턴도 NEG_WEAK로 분류."""
     result = classify("셀레믹스, 최대주주가 박종갑 외 1인으로 변경")
-    assert result.bucket == Bucket.UNKNOWN
+    assert result.bucket == Bucket.NEG_WEAK
+    assert "최대주주가" in result.keyword_hits
 
 
 def test_ignore_etf_disparity_notice():
@@ -563,3 +565,107 @@ def test_neg_contract_release():
     result = classify("C사, 주요 거래처 계약 해제 공시")
     assert result.bucket == Bucket.NEG_STRONG
     assert "계약 해제" in result.keyword_hits
+
+
+# ── 기사 노이즈 IGNORE 테스트 ──────────────────
+
+def test_ignore_card_news_bracket():
+    """[종합] 기사 → IGNORE."""
+    result = classify("[종합] 삼성SDS 자사주 매입·소각, 상황 맞춰 추진…주주가치 제고")
+    assert result.bucket == Bucket.IGNORE
+    assert "[종합]" in result.keyword_hits
+
+
+def test_ignore_tops_pick():
+    """[TOP's Pick] 기사 → IGNORE."""
+    result = classify("[TOP's Pick] 엔씨소프트, 저스트플레이 인수로 웹보드 시장 진출")
+    assert result.bucket == Bucket.IGNORE
+    assert "[TOP's Pick]" in result.keyword_hits
+
+
+def test_ignore_market_insight():
+    """[마켓인사이트] 기사 → IGNORE."""
+    result = classify("[마켓인사이트] A사, 대규모 투자유치 임박 관측")
+    assert result.bucket == Bucket.IGNORE
+    assert "[마켓인사이트]" in result.keyword_hits
+
+
+def test_ignore_production_line_conversion():
+    """생산라인 전환 → IGNORE."""
+    result = classify("LG엔솔·GM 합작법인 생산라인 전환…북미 ESS 거점 5곳 확보")
+    assert result.bucket == Bucket.IGNORE
+    assert "생산라인 전환" in result.keyword_hits
+
+
+def test_ignore_contract_extension():
+    """계약 연장 → IGNORE."""
+    result = classify("A사, B사와 공급 계약 연장 체결")
+    assert result.bucket == Bucket.IGNORE
+    assert "계약 연장" in result.keyword_hits
+
+
+def test_ignore_salary_disclosure():
+    """평균연봉 공개 → IGNORE."""
+    result = classify("삼성전자 평균연봉 1.3억 돌파…10년 연속 상승")
+    assert result.bucket == Bucket.IGNORE
+    assert "평균연봉" in result.keyword_hits
+
+
+def test_ignore_broker_rating():
+    """증권사 리포트(매수-유안타) → IGNORE."""
+    result = classify("삼성전자 매수-유안타 목표가 95000원")
+    assert result.bucket == Bucket.IGNORE
+    assert "매수-유안타" in result.keyword_hits
+
+
+def test_ignore_target_price_maintained():
+    """목표가 유지 → IGNORE."""
+    result = classify("현대차, 투자의견 및 목표가 유지")
+    assert result.bucket == Bucket.IGNORE
+    assert "목표가 유지" in result.keyword_hits
+
+
+# ── POS_STRONG 방산/해외수주 테스트 ──────────────────
+
+def test_pos_strong_defense_order():
+    """방산 수주 → POS_STRONG."""
+    result = classify("한화에어로스페이스, 폴란드 K9 추가 방산 수주 확정")
+    assert result.bucket == Bucket.POS_STRONG
+    assert "방산 수주" in result.keyword_hits
+
+
+def test_pos_strong_overseas_order():
+    """해외 수주 → POS_STRONG."""
+    result = classify("HD현대건설기계, 중동 대규모 해외 수주 체결")
+    assert result.bucket == Bucket.POS_STRONG
+    assert "해외 수주" in result.keyword_hits
+
+
+def test_pos_strong_export_contract():
+    """수출 계약 → POS_STRONG."""
+    result = classify("A사, 미국 대상 5000억 규모 수출 계약 체결")
+    assert result.bucket == Bucket.POS_STRONG
+    assert "수출 계약" in result.keyword_hits
+
+
+def test_pos_strong_exclusive_contract():
+    """독점 계약 → POS_STRONG."""
+    result = classify("B사, 글로벌 빅파마와 독점 계약 체결")
+    assert result.bucket == Bucket.POS_STRONG
+    assert "독점 계약" in result.keyword_hits
+
+
+def test_pos_strong_record_order_backlog():
+    """역대 최대 수주 → POS_STRONG."""
+    result = classify("현대중공업, 역대 최대 수주 달성 공시")
+    assert result.bucket == Bucket.POS_STRONG
+    assert "역대 최대 수주" in result.keyword_hits
+
+
+# ── IGNORE_OVERRIDE 확장 테스트 ──────────────────
+
+def test_ignore_override_lp_contract_conclusion():
+    """유동성공급계약 체결은 IGNORE (POS 공급계약 오매칭 방지)."""
+    result = classify("삼성증권 ETF 유동성공급계약 체결")
+    assert result.bucket == Bucket.IGNORE
+    assert "유동성공급계약 체결" in result.keyword_hits

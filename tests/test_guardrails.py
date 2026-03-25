@@ -707,14 +707,14 @@ def test_dynamic_tp_low_confidence():
 # ── US-003: ADV confidence 조정 테스트 ──────────────────
 
 def test_adv_confidence_mega_cap():
-    """ADV 5000억+ → cap 68."""
-    assert apply_adv_confidence_adjustment(85, 600_000_000_000) == 68
-    assert apply_adv_confidence_adjustment(60, 600_000_000_000) == 60  # 이미 68 미만
+    """ADV 5000억+ → cap 65 (sell the news)."""
+    assert apply_adv_confidence_adjustment(85, 600_000_000_000) == 65
+    assert apply_adv_confidence_adjustment(60, 600_000_000_000) == 60  # 이미 65 미만
 
 
 def test_adv_confidence_large_cap():
-    """ADV 2000~5000억 → -5."""
-    assert apply_adv_confidence_adjustment(80, 300_000_000_000) == 75
+    """ADV 2000~5000억 → -5, cap 72."""
+    assert apply_adv_confidence_adjustment(80, 300_000_000_000) == 72
 
 
 def test_adv_confidence_mid_cap():
