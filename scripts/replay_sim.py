@@ -104,7 +104,7 @@ def replay_from_logs(log_dir: Path, snapshot_dir: Path, date_filter: str = "") -
         bucket = ev.get("bucket", "?")
 
         rets = {}
-        for h in ["t+30s", "t+1m", "t+2m", "t+5m", "t+30m", "close"]:
+        for h in ["t+30s", "t+1m", "t+2m", "t+5m", "t+15m", "t+20m", "t+30m", "close"]:
             snap = snaps.get(h, {})
             r = snap.get("ret_long_vs_t0")
             if r is not None:
@@ -131,7 +131,7 @@ def replay_from_logs(log_dir: Path, snapshot_dir: Path, date_filter: str = "") -
         # 시간대별 trailing stop 폭
         trail_pct_by_horizon = {
             "t+30s": 0.3, "t+1m": 0.3, "t+2m": 0.3,  # early (0~5분)
-            "t+5m": 0.5,                                # mid (5~30분)
+            "t+5m": 0.5, "t+15m": 0.5, "t+20m": 0.5,  # mid (5~30분)
             "t+30m": 0.7,                               # late (30분+)
             "close": 0.7,
         }
@@ -140,7 +140,7 @@ def replay_from_logs(log_dir: Path, snapshot_dir: Path, date_filter: str = "") -
         exit_horizon = None
         exit_ret = None
         peak = 0.0
-        for h in ["t+30s", "t+1m", "t+2m", "t+5m", "t+30m", "close"]:
+        for h in ["t+30s", "t+1m", "t+2m", "t+5m", "t+15m", "t+20m", "t+30m", "close"]:
             r = rets.get(h)
             if r is None:
                 continue
