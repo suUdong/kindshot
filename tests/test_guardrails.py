@@ -876,6 +876,26 @@ def test_fast_profile_before_cutoff_passes():
     assert r.passed is True
 
 
+def test_fast_profile_exact_cutoff_blocked():
+    cfg = _cfg(
+        no_buy_after_kst_hour=15,
+        fast_profile_hold_minutes=15,
+        fast_profile_no_buy_after_kst_hour=14,
+        fast_profile_no_buy_after_kst_minute=0,
+    )
+    r = check_guardrails(
+        "005930",
+        cfg,
+        decision_action=Action.BUY,
+        decision_confidence=82,
+        decision_hold_minutes=15,
+        decision_time_kst=_kst_dt(14, 0),
+        **_base_args(),
+    )
+    assert r.passed is False
+    assert r.reason == "FAST_PROFILE_LATE_ENTRY"
+
+
 def test_fast_profile_reason_wins_over_low_confidence():
     cfg = _cfg(
         no_buy_after_kst_hour=15,
