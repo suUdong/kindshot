@@ -191,3 +191,47 @@ Validation for this slice:
 - `pytest tests/test_hold_profile.py tests/test_strategy_observability.py tests/test_daily_report.py -q` -> `16 passed`
 - `pytest -q` -> `569 passed, 1 warning`
 - LSP diagnostics on affected files -> `0` errors
+
+## Analysis Tooling Gap
+
+The next bounded improvement is analysis correctness rather than another trading-rule change.
+
+Current issue:
+
+- `scripts/strategy_comparison.py` still hardcodes stale exit assumptions:
+  - TP `1.5%`
+  - SL `-1.0%`
+  - trailing activation/drop `0.8%`
+  - uniform `30m` max hold
+- current runtime/backtest logic has already diverged from that:
+  - runtime paper TP default `1.0%`
+  - runtime paper SL default `-0.7%`
+  - time-tiered trailing stop
+  - keyword-based hold profiles (`15m`, `20m`, `30m`, `EOD`)
+
+Why it matters:
+
+- future improvement decisions would be made from a stale comparison report
+- comparison output would disagree with `deploy/daily_report.py` and `strategy_observability`
+
+Selected tooling hypothesis:
+
+- make `scripts/strategy_comparison.py` reuse the same current exit reconstruction primitives as `strategy_observability` so comparison output stays aligned with the live/reporting strategy surface
+
+Planned code touchpoints:
+
+- `scripts/strategy_comparison.py`
+- `tests/test_strategy_comparison.py`
+- `docs/backtest-analysis.md`
+
+Implementation result:
+
+- made `scripts/strategy_comparison.py` reuse `classify_buy_exit()` and the full hold-profile-aware horizon set
+- added script-level regression coverage for current SL and short-hold behavior
+- kept the change bounded to the comparison layer; runtime strategy code stays untouched in this slice
+
+Validation for this slice:
+
+- `pytest tests/test_daily_report.py tests/test_strategy_comparison.py -q` -> `3 passed`
+- `pytest -q` -> `572 passed, 1 warning`
+- LSP diagnostics on affected files -> `0` errors

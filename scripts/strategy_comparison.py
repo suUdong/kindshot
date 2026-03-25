@@ -25,15 +25,18 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from kindshot.strategy_observability import StrategyReportConfig, classify_buy_exit
+
 
 # ── 상수 ──
 
-TP_PCT = 1.5
-SL_PCT = -1.0
-TRAIL_ACTIVATION = 0.8
-TRAIL_DROP = 0.8
-MAX_HOLD_HORIZON = "t+30m"
-HORIZONS = ["t+30s", "t+1m", "t+2m", "t+5m", "t+30m", "close"]
+REPORT_CONFIG = StrategyReportConfig()
+HORIZONS = ["t+30s", "t+1m", "t+2m", "t+5m", "t+15m", "t+20m", "t+30m", "close"]
 
 KEYWORD_CATEGORIES: dict[str, list[str]] = {
     "supply_contract": ["공급계약", "수주", "납품", "계약 체결", "공급 계약"],
@@ -65,37 +68,36 @@ def find_log_files(log_dir: Path, date_filter: str = "") -> list[Path]:
     return sorted(log_dir.glob(pattern))
 
 
-# ── TP/SL/Trailing 판정 (replay_sim.py 동일 로직) ──
+# ── Exit reconstruction (runtime observability와 동일 로직) ──
 
-def compute_exit(rets: dict[str, float]) -> tuple[Optional[str], Optional[str], Optional[float]]:
+def compute_exit(
+    event: dict,
+    snapshots: dict[str, dict],
+    *,
+    config: StrategyReportConfig = REPORT_CONFIG,
+) -> tuple[Optional[str], Optional[str], Optional[float]]:
     """exit_type, exit_horizon, exit_ret 반환."""
-    exit_type: Optional[str] = None
-    exit_horizon: Optional[str] = None
+    exit_type, exit_horizon = classify_buy_exit(event, snapshots, config=config)
     exit_ret: Optional[float] = None
-    peak = 0.0
 
-    for h in HORIZONS:
-        r = rets.get(h)
-        if r is None:
-            continue
-        peak = max(peak, r)
-        if exit_type is not None:
-            continue
-        if r >= TP_PCT:
-            exit_type, exit_horizon, exit_ret = "TP", h, TP_PCT
-        elif r <= SL_PCT:
-            exit_type, exit_horizon, exit_ret = "SL", h, SL_PCT
-        elif peak >= TRAIL_ACTIVATION and r <= peak - TRAIL_DROP:
-            exit_type, exit_horizon, exit_ret = "TRAIL", h, r
-        elif h == MAX_HOLD_HORIZON:
-            exit_type, exit_horizon, exit_ret = "MAX_HOLD", h, r
+    if exit_horizon is not None:
+        row = snapshots.get(exit_horizon, {})
+        ret = row.get("ret_long_vs_t0")
+        if ret is not None:
+            exit_ret = ret * 100
 
     if exit_ret is None:
-        close = rets.get("close")
+        close = snapshots.get("close", {}).get("ret_long_vs_t0")
         if close is not None:
-            exit_ret = close
+            exit_ret = close * 100
 
-    return exit_type, exit_horizon, exit_ret
+    label = {
+        "take_profit": "TP",
+        "stop_loss": "SL",
+        "trailing_stop": "TRAIL",
+        "max_hold": "MAX_HOLD",
+    }.get(exit_type)
+    return label, exit_horizon, exit_ret
 
 
 # ── 시간대 분류 ──
@@ -213,7 +215,7 @@ def load_all_data(log_dir: Path, date_filter: str = "") -> dict:
             if r is not None:
                 rets[h] = r * 100
 
-        exit_type, exit_horizon, exit_ret = compute_exit(rets)
+        exit_type, exit_horizon, exit_ret = compute_exit(ev, snaps)
 
         keyword_hits = ev.get("keyword_hits") or []
         detected_at = ev.get("detected_at", "")

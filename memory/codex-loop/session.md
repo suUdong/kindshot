@@ -4,8 +4,8 @@
 
 - Branch: `main`
 - Phase: `Backtest Analysis`
-- Focus: continue the post-cutoff analysis with one more reversible strategy slice drawn from the same 7-log window.
-- Active hypothesis: `인수` / `합병` headlines should use `30m` max hold instead of `EOD`; shareholder-return headlines remain the only EOD hold cohort.
+- Focus: align the comparison/reporting script with the current exit-reconstruction rules before using it to choose the next trading-rule hypothesis.
+- Active hypothesis: `scripts/strategy_comparison.py` should reuse `strategy_observability` exit classification and full hold-profile-aware horizons instead of stale hardcoded TP/SL/trailing/max-hold assumptions.
 
 ## Environment
 
@@ -13,28 +13,21 @@
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
-  - `source .venv/bin/activate && python -m pytest tests/test_hold_profile.py tests/test_strategy_observability.py tests/test_daily_report.py -q` passed (`16 passed`)
-  - `source .venv/bin/activate && python -m pytest -q` passed (`569 passed, 1 warning`)
-- Tooling note: local `.venv` remains the default runner for follow-up verification.
+  - `source .venv/bin/activate && python -m pytest tests/test_daily_report.py tests/test_strategy_comparison.py -q` passed (`3 passed`)
+  - `source .venv/bin/activate && python -m pytest -q` passed (`572 passed, 1 warning`)
 
 ## Last Completed Step
 
-- Re-ran the cohort breakdown after the late `15m` cutoff.
-- Found the next weakest keyword-specific residual cohort:
-  - `인수` / `합병`
-  - `2` trades, `50.0%` win rate, avg `-1.068%`, sum `-2.136%`
-- Verified that `t+30m` outperformed `close` for the weaker M&A case in the sample.
-- Implemented one bounded change:
-  - moved `인수` / `합병` from `EOD` to `30m` in `hold_profile.py`
-  - kept shareholder-return keywords at `EOD`
-- Updated `docs/backtest-analysis.md` and added hold-profile regression tests.
+- Documented the remaining comparison-tooling drift in `docs/backtest-analysis.md`.
+- Reworked `scripts/strategy_comparison.py` to use the shared `classify_buy_exit()` path and the full hold-profile-aware horizon set.
+- Added script-level regression coverage for the current SL default and short-hold-profile max-hold behavior.
 
 ## Next Intended Step
 
-- Wait for the next real runtime logs to see whether the shorter M&A hold reduces close-time giveback without cutting too many extended winners.
-- If more real logs arrive, recompute the same residual-cohort table before attempting another strategy change.
+- Run the now-aligned comparison report on the next real log window before selecting another trading-rule slice.
+- Prefer the next bounded hypothesis from fresh residual-cohort evidence rather than from stale pre-alignment comparison output.
 
 ## Notes
 
-- Local workspace still lacks runtime logs after `2026-03-19`; this run remains based on the latest 7 logged trading days available locally.
-- Untracked workspace items under `.omc/`, `.omx/`, `data/`, `docs/superpowers/plans/`, `IMPROVEMENT_ANALYSIS.md`, and `scripts/auto-improve.sh` were left untouched.
+- This slice intentionally stays in the analysis layer; live execution logic was not changed here.
+- The working tree still contains unrelated pre-existing untracked paths that were not part of this slice.
