@@ -112,7 +112,7 @@ class SnapshotScheduler:
         """시간대 + hold profile별 trailing stop 폭 반환.
 
         EOD hold(자사주소각 등): 기본 trailing × 1.5 (장기 트렌드 보호)
-        수주/공급계약(hold≤15): 기본 trailing × 0.7 (빠른 반전 대비)
+        수주/공급계약(hold≤20): 기본 trailing × 0.85 (반전 대비)
         """
         entry_time = self._entry_times.get(event_id)
         if entry_time is None:
@@ -129,8 +129,8 @@ class SnapshotScheduler:
         hold = self._max_hold_minutes.get(event_id, self._config.max_hold_minutes)
         if hold == 0:
             return base * 1.5  # EOD hold: 넓은 trailing (트렌드 보호)
-        if hold <= 15:
-            return base * 0.7  # 수주/공급계약: 타이트 trailing (빠른 반전)
+        if hold <= 20:
+            return base * 0.85  # 수주/공급계약: trailing (반전 대비, TP와 일관)
         return base
 
     def _runtime_snapshot_path(self, ts: datetime) -> Path:
