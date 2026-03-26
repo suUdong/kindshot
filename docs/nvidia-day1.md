@@ -4,10 +4,10 @@ Date: 2026-03-27
 
 ## Scope
 
-- Analysis time: `2026-03-27 04:18:21 KST`
+- Analysis time: `2026-03-27 04:20:23 KST`
 - Current-day status:
   - `kindshot-server:/opt/kindshot/logs/kindshot_20260327.jsonl` does not exist yet
-  - `kindshot-server:/opt/kindshot/logs/polling_trace_20260327.jsonl` exists and was last updated at `2026-03-27 04:18:21 KST`
+  - `kindshot-server:/opt/kindshot/logs/polling_trace_20260327.jsonl` exists and was last updated at `2026-03-27 04:20:23 KST`
   - `2026-03-27` journal shows `0` successful NVIDIA `200 OK` calls so far
 - Day 1 closeout source:
   - `kindshot-server:/opt/kindshot/logs/kindshot_20260326.jsonl`
@@ -19,7 +19,7 @@ Date: 2026-03-27
 
 ## Date Clarification
 
-As of `2026-03-27 04:18 KST`, "today" has not produced a structured runtime log yet. The meaningful NVIDIA LLM "day 1" closeout is therefore the latest completed session, `2026-03-26`.
+As of `2026-03-27 04:20 KST`, "today" has not produced a structured runtime log yet. The meaningful NVIDIA LLM "day 1" closeout is therefore the latest completed session, `2026-03-26`.
 
 ## Executive Summary
 
@@ -149,11 +149,11 @@ This is still narrow behavior. The model is not selectively approving stronger l
 - `2026-03-26` timeout-driven failures: `53`
 - `2026-03-26` service starts: `73`
 - `2026-03-27` so far:
-  - journal lines: `665`
+  - journal lines: `687`
   - NVIDIA endpoint `200 OK`: `0`
-  - service starts: `8`
+  - service starts: `9`
   - timeout-driven failures: `0`
 
 ## Bottom Line
 
-The exact current-day answer is simple: as of `2026-03-27 04:18 KST`, there is no new NVIDIA trading result yet. The latest completed real runtime day is `2026-03-26`, and that day closed at `0 BUY / 51 SKIP` overall, with the NVIDIA-backed LLM path at `0 BUY / 30 SKIP`. Inline BUY appetite existed, but every candidate died in guardrails before execution.
+The exact current-day answer is simple: as of `2026-03-27 04:20 KST`, there is no new NVIDIA trading result yet. The latest completed real runtime day is `2026-03-26`, and that day closed at `0 BUY / 51 SKIP` overall, with the NVIDIA-backed LLM path at `0 BUY / 30 SKIP`. Inline BUY appetite existed, but every candidate died in guardrails before execution.
