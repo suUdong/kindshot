@@ -4,8 +4,8 @@
 
 - Branch: `main`
 - Phase: `Weekly Performance Review`
-- Focus: summarize the latest 7 logged trading days with `deploy/daily_report.py` reconstruction so the next hypothesis can start from a current bucket-level evidence snapshot.
-- Active hypothesis: recent BUY performance is concentrated in a narrow subset of keyword buckets rather than broadly healthy across the `POS_STRONG` surface.
+- Focus: publish a fresh weekly report at `docs/weekly-perf.md` that uses only verifiable real trading logs and explicitly excludes polluted runtime test fixtures.
+- Active hypothesis: the latest verifiable BUY performance is narrow, with most bucket-level edge still negative even inside the `POS_STRONG` surface.
 
 ## Environment
 
@@ -13,19 +13,19 @@
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
-  - `source .venv/bin/activate && python -m pytest tests/test_daily_report.py tests/test_strategy_observability.py tests/test_strategy_comparison.py tests/test_hold_profile.py -q` passed (`19 passed`)
-  - `source .venv/bin/activate && python -m pytest -q` passed (`585 passed, 1 warning`)
+  - `source .venv/bin/activate && python - <<'PY' ... PY` recomputed the report from `logs/kindshot_20260311.jsonl` through `logs/kindshot_20260319.jsonl`
+  - `source .venv/bin/activate && python - <<'PY' ... PY` confirmed `data/runtime/*/20260322-20260326.jsonl` are synthetic fixture outputs (`run_id=test_run`, synthetic `event_id`)
 
 ## Last Completed Step
 
-- Reconstructed the latest 7 logged trading days directly from `deploy/daily_report.py` primitives.
-- Wrote `docs/weekly-performance.md` with realized-return coverage, daily breakdown, runtime bucket summary, and keyword-bucket Top 5.
-- Recorded the data-coverage caveat that only `16` of `23` BUY decisions currently have reconstructable realized returns in the local workspace.
+- Recomputed the latest 7 real logged trading days directly from local operator logs using `classify_buy_exit()` reconstruction.
+- Wrote `docs/weekly-perf.md` with coverage caveats, daily realized returns, runtime bucket returns, keyword bucket returns, and exit bucket returns.
+- Recorded that only `16` of `23` BUY decisions currently have reconstructable realized returns and that `20260322` to `20260326` runtime artifacts are test-fixture pollution.
 
 ## Next Intended Step
 
-- Re-run the report after fresh runtime logs are synced beyond `2026-03-19`.
-- Use the refreshed bucket evidence to choose the next bounded trading-rule hypothesis, likely starting from the still-negative `공급계약` cohort.
+- Re-run the report after real runtime logs are synced beyond `2026-03-19`.
+- Use the refreshed bucket evidence to choose the next bounded trading-rule hypothesis, likely starting from the still-negative `수주` or `공급계약` cohorts.
 
 ## Notes
 
