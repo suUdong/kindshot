@@ -6,7 +6,8 @@ from kindshot.config import Config
 from kindshot.guardrails import (
     check_guardrails, GuardrailResult, GuardrailState,
     get_dynamic_stop_loss_pct, get_dynamic_tp_pct,
-    apply_adv_confidence_adjustment, calculate_position_size,
+    apply_adv_confidence_adjustment, apply_market_confidence_adjustment,
+    calculate_position_size,
     downgrade_size_hint, get_kill_switch_size_hint,
 )
 from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
@@ -726,6 +727,37 @@ def test_adv_confidence_large_cap():
 def test_adv_confidence_mid_cap():
     """ADV 500~2000억 → 조정 없음."""
     assert apply_adv_confidence_adjustment(80, 100_000_000_000) == 80
+
+
+# ── Market confidence adjustment 테스트 ──────────────────
+
+def test_market_confidence_flat():
+    """지수 보합 → 조정 없음."""
+    assert apply_market_confidence_adjustment(80, 0.1, 0.2) == 80
+
+def test_market_confidence_mild_down():
+    """지수 -0.5~-1% → -2."""
+    assert apply_market_confidence_adjustment(80, -0.7, 0.1) == 78
+
+def test_market_confidence_moderate_down():
+    """지수 -1~-2% → -5."""
+    assert apply_market_confidence_adjustment(80, -1.5, -0.3) == 75
+
+def test_market_confidence_severe_down():
+    """지수 -2% 이하 → -8."""
+    assert apply_market_confidence_adjustment(80, -2.5, -1.8) == 72
+
+def test_market_confidence_worst_of_both():
+    """두 지수 중 더 나쁜 쪽 기준."""
+    assert apply_market_confidence_adjustment(80, -0.3, -1.5) == 75
+
+def test_market_confidence_none_values():
+    """지수 데이터 없으면 조정 없음."""
+    assert apply_market_confidence_adjustment(80, None, None) == 80
+
+def test_market_confidence_one_none():
+    """한쪽만 있으면 해당 값 기준."""
+    assert apply_market_confidence_adjustment(80, -1.5, None) == 75
 
 
 # ── US-004: 포지션 사이징 테스트 ──────────────────

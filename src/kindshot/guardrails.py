@@ -368,6 +368,25 @@ def get_dynamic_tp_pct(config: Config, confidence: int) -> float:
     return config.paper_take_profit_pct
 
 
+def apply_market_confidence_adjustment(confidence: int, kospi_change_pct: float | None, kosdaq_change_pct: float | None) -> int:
+    """하락장 confidence 감점. 지수 하락폭에 비례해 BUY 문턱을 높임."""
+    if kospi_change_pct is None and kosdaq_change_pct is None:
+        return confidence
+    # 두 지수 중 더 나쁜 쪽 기준
+    worst = min(
+        kospi_change_pct if kospi_change_pct is not None else 0.0,
+        kosdaq_change_pct if kosdaq_change_pct is not None else 0.0,
+    )
+    if worst >= -0.5:
+        return confidence
+    if worst >= -1.0:
+        return max(0, confidence - 2)
+    if worst >= -2.0:
+        return max(0, confidence - 5)
+    # -2% 이하: 강한 하락장
+    return max(0, confidence - 8)
+
+
 def apply_adv_confidence_adjustment(confidence: int, adv_value_20d: float) -> int:
     """ADV 기반 confidence 캡/페널티. 소형주 집중 전략."""
     if adv_value_20d >= 500_000_000_000:  # 5000억+: 초대형주 → cap 65 (sell the news)

@@ -22,7 +22,7 @@ from kindshot.context_card import (
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -374,6 +374,25 @@ async def execute_bucket_path(
                 "ADV confidence adj [%s]: %d → %d (adv=%.0f억)",
                 raw.ticker, original_conf, decision.confidence,
                 raw_data.adv_value_20d / 1e8,
+            )
+
+    # 하락장 confidence 감점 (지수 하락폭에 비례)
+    if decision.action == Action.BUY:
+        market_snapshot = market.snapshot
+        original_conf = decision.confidence
+        decision.confidence = apply_market_confidence_adjustment(
+            decision.confidence,
+            market_snapshot.kospi_change_pct,
+            market_snapshot.kosdaq_change_pct,
+        )
+        if decision.confidence != original_conf:
+            worst = min(
+                market_snapshot.kospi_change_pct or 0.0,
+                market_snapshot.kosdaq_change_pct or 0.0,
+            )
+            logger.info(
+                "Market confidence adj [%s]: %d → %d (worst_idx=%.1f%%)",
+                raw.ticker, original_conf, decision.confidence, worst,
             )
 
     # 킬 스위치: 연패 시 size_hint 다운그레이드
