@@ -175,6 +175,11 @@ async def run() -> None:
         if config.kis_enabled:
             kis = KisClient(config, session)
             logger.info("KIS client enabled")
+            if config.kis_is_paper and not config.kis_real_app_key:
+                logger.warning(
+                    "⚠ Paper mode WITHOUT real API keys — price snapshots will use VTS (stale prices). "
+                    "Set KIS_REAL_APP_KEY and KIS_REAL_APP_SECRET for real-time market data."
+                )
         else:
             logger.warning("KIS client disabled — market monitor will block trading (fail-close), price snapshots UNAVAILABLE")
 
