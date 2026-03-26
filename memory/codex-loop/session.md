@@ -3,9 +3,9 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `Contract Preflight Guard`
-- Focus: enforce a narrow deterministic preflight for weak `수주`/contract headlines before the LLM path so recent repeat losers are cut upstream.
-- Active hypothesis: article-style, incremental, chase, downtrend, and large-cap contract headlines are weak enough to skip without LLM review.
+- Phase: `Server Monitoring Improvement`
+- Focus: replace repeated manual SSH/journal/polling inspection with a single monitor summary command for current-day runtime state.
+- Active hypothesis: a unified monitor view will make it much easier to verify the next real paper/live log window and interpret "polling active but no structured log yet" states correctly.
 
 ## Environment
 
@@ -18,16 +18,20 @@
 
 ## Last Completed Step
 
-- Wrote `docs/plans/2026-03-26-contract-preflight-guard.md` for a narrow contract/order preflight strategy change.
-- Added `RULE_PREFLIGHT` contract-family SKIP logic in `src/kindshot/decision.py` and threaded `keyword_hits` into live/replay decision calls.
-- Locked the new behavior with `tests/test_decision.py` and verified the broader suite still passes.
+- Wrote `docs/plans/2026-03-27-server-monitoring-improvement.md` and the Ralph context snapshot for the monitoring slice.
+- Added `deploy/server_monitor.py` to summarize runtime-log existence, structured BUY/SKIP counts, polling-trace activity, heartbeat progress, and NVIDIA journal counts.
+- Wired the monitor into `deploy/logs.sh monitor [날짜]` and `deploy/status.sh`.
+- Added `tests/test_server_monitor.py` and verified the related report suite passes.
 
 ## Next Intended Step
 
-- Verify `RULE_PREFLIGHT` decisions on the next real paper/live log window and confirm that weak `수주` headlines stop reaching BUY.
-- If contract losers persist after that evidence arrives, split the next hypothesis between `ESS` contract handling and `공급계약` hold/entry tightening.
+- Run the new monitor on the next real paper/live window and verify it correctly distinguishes:
+  - no runtime log yet
+  - polling active but no structured decisions
+  - structured decision flow active
+- After that operator evidence is in hand, return to the pending contract-preflight verification task and confirm whether weak `수주` headlines still reach BUY.
 
 ## Notes
 
-- This slice changes decision behavior but keeps deployment paths and live-order boundaries untouched.
+- This slice changes operator tooling only; strategy and live-order boundaries remain untouched.
 - The working tree still contains unrelated pre-existing untracked paths that were not part of this slice.
