@@ -279,6 +279,16 @@ _HIGH_CONVICTION_KEYWORDS: list[tuple[str, int]] = [
 ]
 
 
+def has_high_conviction_keyword(headline: str, keyword_hits: list[str], *, min_conf: int = 82) -> bool:
+    """고확신 키워드(conf >= min_conf) 포함 여부. 하락장 바이패스 판단용."""
+    for kw, conf in _HIGH_CONVICTION_KEYWORDS:
+        if conf < min_conf:
+            continue
+        if kw in headline or any(kw in hit for hit in keyword_hits):
+            return True
+    return False
+
+
 def _has_large_contract_signal(headline: str, keyword_hits: list[str]) -> tuple[bool, int]:
     """공급계약/수주/개발계약 + 금액 규모가 매출액 대비 큰 경우만 BUY.
 

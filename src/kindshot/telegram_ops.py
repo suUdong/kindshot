@@ -128,6 +128,53 @@ def format_buy_signal(
     return "\n".join(lines)
 
 
+def format_high_conf_skip_signal(
+    *,
+    ticker: str,
+    corp_name: str,
+    headline: str,
+    confidence: int,
+    skip_reason: str,
+    decision_source: str = "LLM",
+    mode: str = "paper",
+) -> str:
+    """Format a high-confidence SKIP notification for monitoring false negatives."""
+    source_tag = f" [{decision_source}]" if decision_source != "LLM" else ""
+    lines = [
+        f"⚠️ [{mode.upper()}] HIGH-CONF SKIP {corp_name}({ticker}){source_tag}",
+        f"conf={confidence} blocked={skip_reason}",
+        headline[:120],
+    ]
+    return "\n".join(lines)
+
+
+def try_send_high_conf_skip(
+    *,
+    ticker: str,
+    corp_name: str,
+    headline: str,
+    confidence: int,
+    skip_reason: str,
+    decision_source: str = "LLM",
+    mode: str = "paper",
+) -> bool:
+    """Best-effort high-confidence SKIP telegram notification. Never raises."""
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not bot_token or not chat_id:
+        return False
+    try:
+        text = format_high_conf_skip_signal(
+            ticker=ticker, corp_name=corp_name, headline=headline,
+            confidence=confidence, skip_reason=skip_reason,
+            decision_source=decision_source, mode=mode,
+        )
+        return send_telegram_message(text, bot_token, chat_id)
+    except Exception:
+        logger.debug("High-conf SKIP telegram send failed", exc_info=True)
+        return False
+
+
 def try_send_buy_signal(
     *,
     ticker: str,

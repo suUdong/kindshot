@@ -19,7 +19,7 @@ from kindshot.context_card import (
     append_runtime_context_card,
     build_context_card,
 )
-from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError
+from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError, has_high_conviction_keyword
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
 from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment
@@ -307,15 +307,22 @@ async def execute_bucket_path(
         and market_snapshot.kospi_breadth_ratio < config.min_market_breadth_ratio
         and market_snapshot.kosdaq_breadth_ratio < config.min_market_breadth_ratio
     ):
-        event_rec.skip_stage = SkipStage.GUARDRAIL
-        event_rec.skip_reason = "MARKET_BREADTH_RISK_OFF"
-        await log.write(event_rec)
-        _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MARKET_BREADTH_RISK_OFF")
-        return ProcessOutcome(
-            event_id=processed.event_id,
-            skip_stage=SkipStage.GUARDRAIL,
-            skip_reason="MARKET_BREADTH_RISK_OFF",
-        )
+        # 고확신 촉매(conf>=82 키워드)는 하락장에서도 LLM 판단 허용
+        if has_high_conviction_keyword(raw.title, keyword_hits, min_conf=82):
+            logger.info(
+                "MARKET_BREADTH_RISK_OFF bypassed for high-conviction catalyst [%s]: %s",
+                raw.ticker, raw.title[:80],
+            )
+        else:
+            event_rec.skip_stage = SkipStage.GUARDRAIL
+            event_rec.skip_reason = "MARKET_BREADTH_RISK_OFF"
+            await log.write(event_rec)
+            _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MARKET_BREADTH_RISK_OFF")
+            return ProcessOutcome(
+                event_id=processed.event_id,
+                skip_stage=SkipStage.GUARDRAIL,
+                skip_reason="MARKET_BREADTH_RISK_OFF",
+            )
 
     if config.dry_run:
         event_rec.skip_stage = SkipStage.GUARDRAIL
@@ -440,6 +447,18 @@ async def execute_bucket_path(
         event_rec.guardrail_result = gr.reason
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason=gr.reason)
+        # 고확신 BUY가 guardrail에서 차단되면 텔레그램 알림 (false negative 모니터링)
+        if decision.action == Action.BUY and decision.confidence >= 75:
+            from kindshot.telegram_ops import try_send_high_conf_skip
+            try_send_high_conf_skip(
+                ticker=raw.ticker,
+                corp_name=raw.corp_name,
+                headline=raw.title,
+                confidence=decision.confidence,
+                skip_reason=gr.reason or "UNKNOWN",
+                decision_source=decision.decision_source,
+                mode=mode,
+            )
         return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason=gr.reason)
 
     await log.write(event_rec)
