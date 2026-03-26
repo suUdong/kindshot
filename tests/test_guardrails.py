@@ -1,5 +1,6 @@
 """Tests for guardrails including portfolio-level controls."""
 
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from kindshot.config import Config
@@ -501,24 +502,35 @@ def test_consecutive_stop_loss_resets_daily():
 
 
 def test_dynamic_stop_loss_high_confidence():
-    """confidence>=85 시 기본 SL의 1.7배로 완화 (V자 반등 대응)."""
+    """confidence>=85 시 기본 SL의 1.7배로 완화 (V자 반등 대응). hold=20 (표준)."""
     cfg = _cfg(paper_stop_loss_pct=-1.5)
-    sl = get_dynamic_stop_loss_pct(cfg, confidence=90)
+    sl = get_dynamic_stop_loss_pct(cfg, confidence=90, hold_minutes=20)
     assert sl == -1.5 * 1.7  # -2.55
 
 
 def test_dynamic_stop_loss_mid_confidence():
-    """conf 80-84 → 기본 SL 그대로."""
+    """conf 80-84 → 기본 SL 그대로. hold=20 (표준)."""
     cfg = _cfg(paper_stop_loss_pct=-1.5)
-    sl = get_dynamic_stop_loss_pct(cfg, confidence=82)
+    sl = get_dynamic_stop_loss_pct(cfg, confidence=82, hold_minutes=20)
     assert sl == -1.5
 
 
 def test_dynamic_stop_loss_normal_confidence():
-    """conf 75-79 → 타이트한 SL floor -1.0%."""
+    """conf 75-79 → 타이트한 SL floor -1.0%. hold=20 (표준)."""
     cfg = _cfg(paper_stop_loss_pct=-1.5)
-    sl = get_dynamic_stop_loss_pct(cfg, confidence=75)
+    sl = get_dynamic_stop_loss_pct(cfg, confidence=75, hold_minutes=20)
     assert sl == -1.0  # max(-1.5 * 0.67, -1.0) = -1.0
+
+
+def test_dynamic_stop_loss_eod_hold():
+    """hold_minutes=0 (EOD, 자사주소각 등): SL 1.3배 완화."""
+    cfg = _cfg(paper_stop_loss_pct=-1.5)
+    # conf=85, hold=0 → base=-2.55 * 1.3 = -3.315
+    sl = get_dynamic_stop_loss_pct(cfg, confidence=85, hold_minutes=0)
+    assert sl == pytest.approx(-1.5 * 1.7 * 1.3)
+    # conf=80, hold=0 → base=-1.5 * 1.3 = -1.95
+    sl_mid = get_dynamic_stop_loss_pct(cfg, confidence=80, hold_minutes=0)
+    assert sl_mid == pytest.approx(-1.5 * 1.3)
 
 
 def test_consecutive_stop_loss_does_not_block_skip():
@@ -699,23 +711,37 @@ def test_kill_switch_configurable_halt_at_2():
 # ── US-001: 동적 TP 테스트 ──────────────────
 
 def test_dynamic_tp_high_confidence():
-    """conf>=85 → TP 1.5%."""
+    """conf>=85, hold=20 (표준) → TP 1.5%."""
     cfg = _cfg()
-    assert get_dynamic_tp_pct(cfg, 90) == 1.5
-    assert get_dynamic_tp_pct(cfg, 85) == 1.5
+    assert get_dynamic_tp_pct(cfg, 90, hold_minutes=20) == 1.5
+    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=20) == 1.5
 
 
 def test_dynamic_tp_mid_confidence():
-    """conf 80-84 → TP 1.0%, conf 75-79 → TP 0.5%."""
+    """conf 80-84 → TP 1.0%, conf 75-79 → TP 0.5%. hold=20 (표준)."""
     cfg = _cfg()
-    assert get_dynamic_tp_pct(cfg, 80) == 1.0
-    assert get_dynamic_tp_pct(cfg, 75) == 0.5
+    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=20) == 1.0
+    assert get_dynamic_tp_pct(cfg, 75, hold_minutes=20) == 0.5
+
+
+def test_dynamic_tp_eod_hold():
+    """hold_minutes=0 (EOD, 자사주소각): TP 1.5배 — 트렌드 수익 극대화."""
+    cfg = _cfg()
+    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=0) == 1.5 * 1.5  # 2.25
+    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=0) == 1.0 * 1.5  # 1.5
+
+
+def test_dynamic_tp_short_hold():
+    """hold_minutes=15 (수주/공급계약): TP 0.7배 — 빠른 반전 전 익절."""
+    cfg = _cfg()
+    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=15) == pytest.approx(1.5 * 0.7)  # 1.05
+    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=15) == pytest.approx(1.0 * 0.7)  # 0.7
 
 
 def test_dynamic_tp_low_confidence():
-    """conf<75 → config 기본값."""
+    """conf<75 → config 기본값. hold=20 (표준)."""
     cfg = _cfg(paper_take_profit_pct=1.0)
-    assert get_dynamic_tp_pct(cfg, 70) == 1.0
+    assert get_dynamic_tp_pct(cfg, 70, hold_minutes=20) == 1.0
 
 
 # ── US-003: ADV confidence 조정 테스트 ──────────────────

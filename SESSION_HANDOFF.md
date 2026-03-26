@@ -1,67 +1,61 @@
-# Session Handoff — 2026-03-26 (9차, 파이어모드)
+# Session Handoff — 2026-03-26 (10차, 파이어모드)
 
 ## 이번 세션 완료 작업
 
-### 수익성 개선 v5 — SKIP 편향 해소
+### 수익성 개선 v7 — Hold Profile 연동 TP/SL + Stale Position Exit
 
 | # | 커밋 | 분류 | 내용 |
 |---|------|------|------|
-| 1 | `da51250` | feat | SKIP 편향 해소 — 프롬프트 리밸런싱 + rule_fallback 키워드 확대 + circuit breaker 강화 |
+| 1 | (pending) | feat | hold profile 연동 TP/SL + stale position exit |
 
 ### 변경 상세
 
-**핵심 진단: BUY 시그널 0건 (3/24~3/26)**
-- Anthropic 크레딧 소진 → LLM fallback 불가
-- NVIDIA LLM 작동하지만 conf=50 반환 (극단적 SKIP 편향 프롬프트)
-- Rule fallback conf=72 → min_buy_confidence=75 미달 → 전부 SKIP
-- 결과: 시스템이 며칠째 사실상 정지
+**핵심 진단: 승률 25.8%, 누적 -24.31%의 원인**
+- TP/SL이 confidence만 반영, 촉매 유형(hold profile)을 무시
+- 수주(빠른 반전)와 자사주소각(장기 트렌드)에 동일한 TP/SL 적용
+- 모멘텀 소멸 포지션에 대한 탈출 전략 부재
 
-**1. LLM 프롬프트 리밸런싱 (`decision_strategy.txt`)**
-- "72는 죽음의 숫자", "시스템 장애" 등 공포 언어 제거
-- LOSS 10개 vs WIN 6개 불균형 → WIN 5 / LOSS 6 균형
-- 소형 확정 수주(100~500억) + 소/중형주 → BUY(75,S) 경로 추가
-- decision_bias: "의심→SKIP" → "조건 충족→적극 BUY" 전환
+**1. Hold Profile 연동 TP/SL (`guardrails.py`)**
+- `get_dynamic_tp_pct()`, `get_dynamic_stop_loss_pct()`에 `hold_minutes` 파라미터 추가
+- EOD hold (자사주소각, 공개매수): TP ×1.5, SL ×1.3 — 장기 트렌드 수익 극대화
+- 수주/공급계약 (hold≤15분): TP ×0.7 — 빠른 반전 전 이익 확보
+- 표준 (특허/임상, hold>15분): 기존 confidence 기반 유지
 
-**2. Rule fallback 키워드 확대 (`decision.py`)**
-- `_HIGH_CONVICTION_KEYWORDS`에 15개+ 추가:
-  - 단일판매/규모공급계약 (KIND 정규공시), 해외수주, 방산수주, 독점공급, 장기공급
-  - 기술수출/라이선스아웃, 임상2상 완료/성공, 특허 등록/취득/확보
-  - 인수 완료/결정, 역대 최대 실적
-- POS_STRONG 최소 confidence: 77→76
+**2. Stale Position Exit (`price.py`)**
+- 진입 후 5분 경과 + 수익률 ±0.2% 미만 → 모멘텀 소멸 판단, 자동 탈출
+- EOD hold (hold_minutes=0)는 stale 판정 제외 (장기 촉매)
+- 불필요한 보유 시간 감소 → 기회비용 절감
 
-**3. Circuit breaker 쿨다운 강화 (`llm_client.py`)**
-- 영구 에러(크레딧 부족 등) 쿨다운: 5분→1시간
-- 불필요한 Anthropic API 재시도 대폭 감소
+**3. Price Tracker hold_minutes 연동 (`price.py`)**
+- TP/SL 계산 시 이벤트별 hold_minutes를 guardrails 함수에 전달
+- 촉매 유형별 맞춤형 출구 전략 완성
 
-**4. 텔레그램 BUY 알림 개선 (`telegram_ops.py`)**
-- BUY 이유(`reason`) ">> " 강조 표시
-- 헤드라인 표시: 60→120자 확대
-- bucket 표시 제거, kw 표시 추가
+## 이전 세션 완료 작업
+
+### 수익성 개선 v6 — 하락장 고확신 촉매 바이패스 + hold_profile 확대 + SKIP 알림
+- `285c95a` feat: 하락장에서도 고확신 촉매(conf>=82) LLM 판단 허용
+- 텔레그램 high-conf SKIP 알림 추가 (false negative 모니터링)
+
+### 수익성 개선 v5 — SKIP 편향 해소
+- `da51250` feat: 프롬프트 리밸런싱 + rule_fallback 키워드 확대 + circuit breaker 강화
 
 ## 현재 상태
 - **브랜치:** main
-- **테스트:** 634 passed, 0 failed
-- **마지막 커밋:** `da51250` feat: SKIP 편향 해소
-- **서버:** active (running), 16:28 재시작 완료
+- **테스트:** 637 passed, 0 failed (+3 신규 테스트)
+- **서버:** active (running) — 배포 필요
 
 ## 잔여 기술 부채
 
 ### P1 — 긴급
-1. **Anthropic 크레딧 충전 또는 제거** — fallback 불가 상태 (circuit breaker 1시간으로 완화)
-2. **3/27 장중 모니터링** — BUY 시그널 발생 여부 확인 (프롬프트 변경 효과 검증)
-
-### P1 — 전략 검증
-3. ~~SL -0.7% 재검토~~ → **완료** (v4에서 -1.5%로 완화)
-4. ~~장전 이벤트 재평가~~ → **완료** (pending 큐 + 09:01 재주입)
-5. ~~SKIP 편향 해소~~ → **완료** (v5 프롬프트 리밸런싱)
-6. **2주 룰 freeze + 데이터 수집** — 새 전략으로 100건+ 거래 필요
+1. **Anthropic 크레딧 충전 또는 제거** — fallback 불가 상태
+2. **3/27 장중 모니터링** — BUY 시그널 발생 + hold profile TP/SL 효과 확인
+3. **2주 룰 freeze + 데이터 수집** — 새 전략으로 100건+ 거래 필요
 
 ### P2 — 기능/전략
-7. **Paper → 소액 Live 전환 준비** — KIS live API 키 설정, 주문 실행 모듈
-8. ~~텔레그램 알림 품질 개선~~ → **완료** (BUY 이유 강조)
-9. ~~소형주 집중~~ → **완료** (ADV 500~2000억 +3 보너스)
-10. **확률 기반 진입** — 뉴스 후 2~5분 관찰 후 진입 (구현 복잡)
+4. **Paper → 소액 Live 전환 준비** — KIS live API 키 설정, 주문 실행 모듈
+5. **확률 기반 진입** — 뉴스 후 2~5분 관찰 후 진입 (구현 복잡)
+6. **Volume 확인 게이트** — 진입 시 거래량 급증 확인
 
 ### P3 — 제품 방향
-11. **외부 사용자 확보** — 텔레그램 채널에 지인 1~3명 초대
-12. **정보 서비스 pivot 검토** — AI 공시 분석 알림 서비스
+7. **외부 사용자 확보** — 텔레그램 채널에 지인 1~3명 초대
+8. **정보 서비스 pivot 검토** — AI 공시 분석 알림 서비스

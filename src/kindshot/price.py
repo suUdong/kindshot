@@ -101,6 +101,9 @@ class SnapshotScheduler:
         self._max_hold_minutes: dict[str, int] = {}
         # 이벤트별 confidence (동적 TP/SL용)
         self._event_confidence: dict[str, int] = {}
+        # Stale position 감지: 5분 경과 후 ±0.2% 미만이면 모멘텀 소멸
+        self._stale_threshold_pct: float = 0.2
+        self._stale_min_elapsed_s: float = 300.0  # 5분
 
     def _get_trailing_stop_pct(self, event_id: str) -> float:
         """시간대별 trailing stop 폭 반환: 0~5분 early, 5~30분 mid, 30분+ late."""
@@ -294,11 +297,12 @@ class SnapshotScheduler:
             and snap.event_id not in self._virtual_exits
         ):
             ret_pct = ret_long * 100
-            # 동적 TP/SL: confidence별 차별화
+            # 동적 TP/SL: confidence + hold_profile 차별화
             from kindshot.guardrails import get_dynamic_tp_pct, get_dynamic_stop_loss_pct
             evt_conf = self._event_confidence.get(snap.event_id, 0)
-            effective_tp = get_dynamic_tp_pct(self._config, evt_conf) if evt_conf > 0 else self._config.paper_take_profit_pct
-            effective_sl = get_dynamic_stop_loss_pct(self._config, evt_conf) if evt_conf > 0 else self._config.paper_stop_loss_pct
+            evt_hold = self._max_hold_minutes.get(snap.event_id, self._config.max_hold_minutes)
+            effective_tp = get_dynamic_tp_pct(self._config, evt_conf, evt_hold) if evt_conf > 0 else self._config.paper_take_profit_pct
+            effective_sl = get_dynamic_stop_loss_pct(self._config, evt_conf, evt_hold) if evt_conf > 0 else self._config.paper_stop_loss_pct
             tp_active = effective_tp > 0
             sl_active = effective_sl < 0
 
@@ -344,6 +348,21 @@ class SnapshotScheduler:
                         snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
                         event_max,
                     )
+                # Stale position exit: 5분+ 경과 후 ±0.2% 미만 → 모멘텀 소멸
+                elif event_max != 0:  # EOD hold는 stale 판정 제외
+                    entry_time = self._entry_times.get(snap.event_id)
+                    if entry_time is not None:
+                        elapsed_s = time.monotonic() - entry_time
+                        if (
+                            elapsed_s >= self._stale_min_elapsed_s
+                            and abs(ret_pct) < self._stale_threshold_pct
+                        ):
+                            self._virtual_exits[snap.event_id] = snap.horizon
+                            logger.info(
+                                "PAPER STALE EXIT [%s] %s: %.2f%% at %s (%.0fs elapsed, no momentum)",
+                                snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
+                                elapsed_s,
+                            )
 
     async def flush_close_on_shutdown(self) -> int:
         """Fire pending close snapshots if shutdown happens after close fetch time."""

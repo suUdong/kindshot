@@ -347,31 +347,58 @@ def check_guardrails(
     return GuardrailResult(passed=True)
 
 
-def get_dynamic_stop_loss_pct(config: Config, confidence: int) -> float:
-    """confidence 기반 동적 손절 비율. 고확신 → SL 완화 (V자 반등 대응), 저확신 → 타이트.
+def get_dynamic_stop_loss_pct(config: Config, confidence: int, hold_minutes: int = 0) -> float:
+    """confidence + hold_profile 기반 동적 손절 비율.
 
-    V자 반등 패턴(t+5m -1~-3% → close +2~+10%) 조기손절 방지를 위해
-    기존 대비 전 구간 SL 완화. base=-1.5% 기준:
+    hold_minutes=0 (EOD, 자사주소각 등 장기 촉매): SL 넓게 (-3.0%)
+    hold_minutes<=15 (수주/공급계약, 빠른 반전 리스크): SL 표준
+    hold_minutes>15 (특허/임상 등): confidence 기반 표준
+
+    base=-1.5% 기준:
       conf>=85: -2.5%  /  80-84: -1.5%  /  75-79: -1.0%
+      EOD hold: 위 값 * 1.3 (추가 여유)
     """
     base = config.paper_stop_loss_pct  # default: -1.5
     if confidence >= 85:
-        return base * 1.7  # -1.5 * 1.7 = -2.55% — 고확신 촉매는 큰 폭 허용
-    if confidence >= 80:
-        return base  # -1.5%
-    # 75-79: 저확신 BUY는 상대적 타이트
-    return max(base * 0.67, -1.0)  # -1.0%
+        sl = base * 1.7  # -2.55%
+    elif confidence >= 80:
+        sl = base  # -1.5%
+    else:
+        sl = max(base * 0.67, -1.0)  # -1.0%
+
+    # EOD hold (자사주소각, 공개매수 등): 장기 트렌드이므로 SL 넓게
+    if hold_minutes == 0:
+        sl = min(sl * 1.3, -1.5)  # 최소 -1.5%, 최대 약 -3.3%
+
+    return sl
 
 
-def get_dynamic_tp_pct(config: Config, confidence: int) -> float:
-    """confidence 기반 동적 익절 비율. 고확신 → 더 넓은 TP, 저확신 → 빠른 익절."""
+def get_dynamic_tp_pct(config: Config, confidence: int, hold_minutes: int = 0) -> float:
+    """confidence + hold_profile 기반 동적 익절 비율.
+
+    hold_minutes=0 (EOD, 자사주소각 등): TP 넓게 — 장기 트렌드 수익 극대화
+    hold_minutes<=15 (수주/공급계약): TP 타이트 — 빠른 반전 전 이익 확보
+    hold_minutes>15 (특허/임상 등): 표준
+    """
+    # 기본 confidence 기반 TP
     if confidence >= 85:
-        return 1.5
-    if confidence >= 80:
-        return 1.0
-    if confidence >= 75:
-        return 0.5  # 저확신 BUY는 빠른 익절 (MAX_HOLD 비율 감소)
-    return config.paper_take_profit_pct
+        tp = 1.5
+    elif confidence >= 80:
+        tp = 1.0
+    elif confidence >= 75:
+        tp = 0.5
+    else:
+        tp = config.paper_take_profit_pct
+
+    # Hold profile 보정
+    if hold_minutes == 0:
+        # EOD hold: 트렌드 수익 극대화 — TP 1.5배
+        tp = tp * 1.5
+    elif hold_minutes <= 15:
+        # 수주/공급계약: 빠른 반전 리스크 — TP 0.7배 (빠른 익절)
+        tp = tp * 0.7
+
+    return tp
 
 
 def apply_market_confidence_adjustment(confidence: int, kospi_change_pct: float | None, kosdaq_change_pct: float | None) -> int:
