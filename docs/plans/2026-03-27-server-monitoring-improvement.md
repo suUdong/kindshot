@@ -32,7 +32,7 @@ Implement a bounded monitoring slice:
    - decision BUY/SKIP totals and decision-source split when runtime log exists
    - polling trace recency, positive-poll count, raw-item total, and latest positive poll details
    - journal NVIDIA `200 OK` count, service starts, timeout failures, and latest heartbeat
-3. Wire it into shell entrypoints so operators can run one command.
+3. Provide a standalone operator script outside `deploy/`.
 4. Add tests for the parsing/aggregation logic.
 
 ## Non-Goals
@@ -46,12 +46,13 @@ Implement a bounded monitoring slice:
 
 ### Primary entrypoint
 
-Create `deploy/server_monitor.py`.
+Create `scripts/server_monitor.py`.
 
 Why:
 
 - JSONL parsing and summary formatting are easier to test in Python than in shell.
-- It can be used directly from server shells and wrapped by existing scripts.
+- The workspace safety rules prohibit automated `deploy/` edits, so the monitor must live outside `deploy/`.
+- It can still be used directly from server shells as a standalone operator script.
 
 ### Input model
 
@@ -89,12 +90,10 @@ For a given date:
      - polling active but no structured decisions yet
      - structured runtime active
 
-### Shell integration
+### Invocation model
 
-- Add `monitor` subcommand to `deploy/logs.sh`
-- Have `deploy/status.sh` invoke the Python monitor script instead of bespoke partial summaries
-
-This preserves the existing operator entrypoints while consolidating logic in one testable module.
+- Operators run `python3 scripts/server_monitor.py <YYYYMMDD>`
+- No `deploy/` integration is added in this slice because automated `deploy/` edits are disallowed
 
 ## Validation
 
@@ -108,6 +107,5 @@ This preserves the existing operator entrypoints while consolidating logic in on
 
 ## Rollback
 
-- Revert `deploy/server_monitor.py`
-- Revert the wrapper changes in `deploy/status.sh` and `deploy/logs.sh`
+- Revert `scripts/server_monitor.py`
 - Revert tests/docs tied to the new monitor

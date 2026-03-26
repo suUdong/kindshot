@@ -19,8 +19,8 @@
 ## Last Completed Step
 
 - Wrote `docs/plans/2026-03-27-server-monitoring-improvement.md` and the Ralph context snapshot for the monitoring slice.
-- Added `deploy/server_monitor.py` to summarize runtime-log existence, structured BUY/SKIP counts, polling-trace activity, heartbeat progress, and NVIDIA journal counts.
-- Wired the monitor into `deploy/logs.sh monitor [날짜]` and `deploy/status.sh`.
+- Added `scripts/server_monitor.py` to summarize runtime-log existence, structured BUY/SKIP counts, polling-trace activity, heartbeat progress, and NVIDIA journal counts.
+- Reverted attempted `deploy/` wrapper edits after re-checking the workspace safety rule that forbids automated `deploy/` changes.
 - Added `tests/test_server_monitor.py` and verified the related report suite passes.
 
 ## Next Intended Step

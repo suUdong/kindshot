@@ -6,7 +6,6 @@ set -euo pipefail
 #   bash deploy/logs.sh              # 오늘 로그 tail -f
 #   bash deploy/logs.sh journal      # journalctl 실시간
 #   bash deploy/logs.sh summary      # 오늘 로그 요약 (log_summary.py)
-#   bash deploy/logs.sh monitor      # 오늘 서버 모니터 요약
 #   bash deploy/logs.sh report       # 오늘 daily report
 #   bash deploy/logs.sh poll         # 오늘 polling trace 최근 20줄
 #   bash deploy/logs.sh poll live    # polling trace 실시간
@@ -14,11 +13,7 @@ set -euo pipefail
 #   bash deploy/logs.sh unknown      # 오늘 UNKNOWN 헤드라인
 #   bash deploy/logs.sh 20260310     # 특정 날짜 로그 tail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="/opt/kindshot"
-if [ ! -d "$APP_DIR" ]; then
-    APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-fi
 TODAY=$(TZ=Asia/Seoul date +%Y%m%d)
 MODE="${1:-}"
 SUB="${2:-}"
@@ -35,9 +30,6 @@ case "$MODE" in
         else
             echo "로그 파일 없음: $LOG_FILE"
         fi
-        ;;
-    monitor)
-        python3 "$APP_DIR/deploy/server_monitor.py" "${SUB:-$TODAY}"
         ;;
     report)
         source "$APP_DIR/.venv/bin/activate"
@@ -170,7 +162,6 @@ for line in sys.stdin:
         echo "  (없음)          오늘 로그 tail -f"
         echo "  journal         systemd journalctl 실시간"
         echo "  summary [날짜]  로그 요약 (기본: 오늘)"
-        echo "  monitor [날짜]  서버 상태 + polling/journal 요약"
         echo "  report [날짜]   daily report (기본: 오늘)"
         echo "  poll            polling trace 최근 20건"
         echo "  poll live       polling trace 실시간 모니터링"

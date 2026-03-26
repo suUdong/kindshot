@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 def _load_server_monitor_module():
-    path = Path(__file__).resolve().parents[1] / "deploy" / "server_monitor.py"
+    path = Path(__file__).resolve().parents[1] / "scripts" / "server_monitor.py"
     spec = spec_from_file_location("server_monitor", path)
     assert spec is not None
     assert spec.loader is not None
