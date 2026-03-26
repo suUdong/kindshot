@@ -50,7 +50,11 @@ _CONTRACT_ARTICLE_MARKERS = (
     "파죽지세", "보인다", "전망", "목표",
     "추진", "검토", "계획", "예정", "Preview",
 )
-_INCREMENTAL_ORDER_MARKERS = ("1척 추가", "추가 수주", "추가 공급", "추가 계약")
+_INCREMENTAL_ORDER_MARKERS = (
+    "1척 추가", "추가 수주", "추가 공급", "추가 계약",
+    "추가 납품", "추가 발주", "연장 계약", "계약 연장",
+    "옵션 행사", "후속 수주", "후속 계약",
+)
 
 
 def _build_prompt(
