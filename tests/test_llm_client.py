@@ -153,3 +153,59 @@ async def test_lazy_client_init():
     client._client = mock_anthropic
     await client.call("test")
     mock_anthropic.messages.create.assert_awaited_once()
+
+
+# ── Circuit breaker tests ──
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_opens_on_credit_error():
+    """크레딧 부족 에러 시 circuit breaker가 열리고 즉시 실패."""
+    client, mock = _make_client(errors=[
+        RuntimeError("Your credit balance is too low to access the Anthropic API"),
+    ])
+    with pytest.raises(LlmCallError, match="credit balance"):
+        await client.call("test", max_retries=3)
+    # 재시도 없이 1회만 호출
+    assert mock.messages.create.await_count == 1
+    assert client.circuit_open
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_fast_fails_subsequent():
+    """Circuit open 상태에서 후속 호출은 API 호출 없이 즉시 실패."""
+    client, mock = _make_client(errors=[
+        RuntimeError("credit balance is too low"),
+    ])
+    with pytest.raises(LlmCallError):
+        await client.call("first", max_retries=3)
+    # 두 번째 호출: API 호출 없이 즉시 실패
+    with pytest.raises(LlmCallError, match="circuit breaker open"):
+        await client.call("second", max_retries=3)
+    # API는 첫 번째 호출 1회만
+    assert mock.messages.create.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_resets_on_success():
+    """Circuit이 열려도 cooldown 후 성공하면 리셋."""
+    client, mock = _make_client()
+    # 수동으로 circuit open 설정 (과거 시간으로 이미 만료)
+    client._circuit_open_until = 0.0  # 이미 만료
+    client._circuit_reason = "test"
+    text, _ = await client.call("test")
+    assert text == '{"action":"BUY"}'
+    assert not client.circuit_open
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_ignores_transient_errors():
+    """일반 에러(rate limit 등)는 circuit breaker를 열지 않음."""
+    client, mock = _make_client(errors=[
+        RuntimeError("api down"), RuntimeError("api down"), RuntimeError("api down"),
+    ])
+    with patch("kindshot.llm_client.asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(LlmCallError):
+            await client.call("test", max_retries=3)
+    assert not client.circuit_open
+    assert mock.messages.create.await_count == 3
