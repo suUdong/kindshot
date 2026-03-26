@@ -497,6 +497,19 @@ async def execute_bucket_path(
             )
             decision.size_hint = SizeHint(adjusted)
 
+    # spread > 30bps → size_hint 한 단계 다운 (유동성 리스크)
+    if decision.action == Action.BUY and raw_data.spread_bps is not None and raw_data.spread_bps > 30:
+        from kindshot.guardrails import downgrade_size_hint
+        from kindshot.models import SizeHint
+        old_hint = decision.size_hint.value
+        new_hint = downgrade_size_hint(old_hint)
+        if new_hint != old_hint:
+            logger.info(
+                "Spread size down [%s]: %s → %s (spread=%.1f bps)",
+                raw.ticker, old_hint, new_hint, raw_data.spread_bps,
+            )
+            decision.size_hint = SizeHint(new_hint)
+
     # 09:00~09:30 장 초반 변동성 구간: size_hint 최대 M (L → M 다운그레이드)
     if decision.action == Action.BUY:
         now_kst = detected_at.astimezone(_KST) if detected_at.tzinfo else detected_at.replace(tzinfo=_KST)
