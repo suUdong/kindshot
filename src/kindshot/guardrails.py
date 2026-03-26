@@ -348,13 +348,19 @@ def check_guardrails(
 
 
 def get_dynamic_stop_loss_pct(config: Config, confidence: int) -> float:
-    """confidence 기반 동적 손절 비율. 고확신 → SL 완화, 저확신 → 타이트."""
+    """confidence 기반 동적 손절 비율. 고확신 → SL 완화 (V자 반등 대응), 저확신 → 타이트.
+
+    V자 반등 패턴(t+5m -1~-3% → close +2~+10%) 조기손절 방지를 위해
+    기존 대비 전 구간 SL 완화. base=-1.5% 기준:
+      conf>=85: -2.5%  /  80-84: -1.5%  /  75-79: -1.0%
+    """
+    base = config.paper_stop_loss_pct  # default: -1.5
     if confidence >= 85:
-        return min(config.paper_stop_loss_pct * 1.5, -1.5)  # -0.7 * 1.5 = -1.05%
+        return base * 1.7  # -1.5 * 1.7 = -2.55% — 고확신 촉매는 큰 폭 허용
     if confidence >= 80:
-        return config.paper_stop_loss_pct  # -0.7%
-    # 75-79: 저확신 BUY는 타이트한 SL
-    return max(config.paper_stop_loss_pct * 0.7, -0.5)  # -0.5%
+        return base  # -1.5%
+    # 75-79: 저확신 BUY는 상대적 타이트
+    return max(base * 0.67, -1.0)  # -1.0%
 
 
 def get_dynamic_tp_pct(config: Config, confidence: int) -> float:
@@ -394,12 +400,14 @@ def apply_market_confidence_adjustment(confidence: int, kospi_change_pct: float 
 
 
 def apply_adv_confidence_adjustment(confidence: int, adv_value_20d: float) -> int:
-    """ADV 기반 confidence 캡/페널티. 소형주 집중 전략."""
+    """ADV 기반 confidence 캡/페널티/보너스. 소형주 집중 전략."""
     if adv_value_20d >= 500_000_000_000:  # 5000억+: 초대형주 → cap 65 (sell the news)
         return min(confidence, 65)
     if adv_value_20d >= 200_000_000_000:  # 2000~5000억: 대형주 → -5, cap 72
         return min(max(0, confidence - 5), 72)
-    # 500~2000억: 최적 구간, 조정 없음
+    if adv_value_20d >= 50_000_000_000:  # 500~2000억: 소형주 최적 구간 → +3 보너스
+        return min(confidence + 3, 100)
+    # <500억: 초소형주, 조정 없음 (ADV 필터에서 대부분 걸림)
     return confidence
 
 

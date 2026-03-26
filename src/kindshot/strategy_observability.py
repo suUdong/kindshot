@@ -26,7 +26,7 @@ class StrategyReportConfig:
     """Pinned strategy parameters for deterministic report reconstruction."""
 
     paper_take_profit_pct: float = 1.0
-    paper_stop_loss_pct: float = -0.7
+    paper_stop_loss_pct: float = -1.5
     trailing_stop_enabled: bool = True
     trailing_stop_activation_pct: float = 0.3
     trailing_stop_early_pct: float = 0.3

@@ -501,17 +501,24 @@ def test_consecutive_stop_loss_resets_daily():
 
 
 def test_dynamic_stop_loss_high_confidence():
-    """confidence>=85 시 기본 SL의 1.5배로 완화."""
+    """confidence>=85 시 기본 SL의 1.7배로 완화 (V자 반등 대응)."""
     cfg = _cfg(paper_stop_loss_pct=-1.5)
     sl = get_dynamic_stop_loss_pct(cfg, confidence=90)
-    assert sl == -2.25
+    assert sl == -1.5 * 1.7  # -2.55
+
+
+def test_dynamic_stop_loss_mid_confidence():
+    """conf 80-84 → 기본 SL 그대로."""
+    cfg = _cfg(paper_stop_loss_pct=-1.5)
+    sl = get_dynamic_stop_loss_pct(cfg, confidence=82)
+    assert sl == -1.5
 
 
 def test_dynamic_stop_loss_normal_confidence():
-    """conf 75-79 → 타이트한 SL floor -0.5%."""
+    """conf 75-79 → 타이트한 SL floor -1.0%."""
     cfg = _cfg(paper_stop_loss_pct=-1.5)
     sl = get_dynamic_stop_loss_pct(cfg, confidence=75)
-    assert sl == -0.5
+    assert sl == -1.0  # max(-1.5 * 0.67, -1.0) = -1.0
 
 
 def test_consecutive_stop_loss_does_not_block_skip():
@@ -725,8 +732,18 @@ def test_adv_confidence_large_cap():
 
 
 def test_adv_confidence_mid_cap():
-    """ADV 500~2000억 → 조정 없음."""
-    assert apply_adv_confidence_adjustment(80, 100_000_000_000) == 80
+    """ADV 500~2000억 → +3 보너스 (소형주 최적 구간)."""
+    assert apply_adv_confidence_adjustment(80, 100_000_000_000) == 83
+
+
+def test_adv_confidence_mid_cap_cap_at_100():
+    """ADV 500~2000억 보너스: confidence 98 + 3 = 100 (cap)."""
+    assert apply_adv_confidence_adjustment(98, 100_000_000_000) == 100
+
+
+def test_adv_confidence_micro_cap():
+    """ADV <500억 → 조정 없음."""
+    assert apply_adv_confidence_adjustment(80, 30_000_000_000) == 80
 
 
 # ── Market confidence adjustment 테스트 ──────────────────

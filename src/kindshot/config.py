@@ -80,7 +80,7 @@ class Config:
     no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_MINUTE", 0))  # 15:00 이후 차단
     # 가상 익절/손절 (paper mode 추적용)
     paper_take_profit_pct: float = field(default_factory=lambda: _env_float("PAPER_TAKE_PROFIT_PCT", 1.0))  # 1.0% 기본 익절 (confidence별 동적 TP와 병행)
-    paper_stop_loss_pct: float = field(default_factory=lambda: _env_float("PAPER_STOP_LOSS_PCT", -0.7))  # -0.7% 손절 (단기 트레이딩에 맞게 타이트)
+    paper_stop_loss_pct: float = field(default_factory=lambda: _env_float("PAPER_STOP_LOSS_PCT", -1.5))  # -1.5% 손절 (V자 반등 대응, 기존 -0.7%에서 완화)
     # Trailing stop + 30분 룰
     trailing_stop_enabled: bool = field(default_factory=lambda: _env_bool("TRAILING_STOP_ENABLED", True))
     trailing_stop_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_PCT", 0.5))  # 기본 trailing (5분 이후)

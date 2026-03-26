@@ -16,7 +16,7 @@ def test_compute_exit_uses_current_stop_loss_default():
     mod = _load_strategy_comparison_module()
     event = {"headline": "일반 공시", "keyword_hits": []}
     snapshots = {
-        "t+1m": {"ret_long_vs_t0": -0.0075},
+        "t+1m": {"ret_long_vs_t0": -0.016},  # -1.6% < SL -1.5%
         "close": {"ret_long_vs_t0": -0.002},
     }
 
@@ -24,7 +24,7 @@ def test_compute_exit_uses_current_stop_loss_default():
 
     assert exit_type == "SL"
     assert exit_horizon == "t+1m"
-    assert exit_ret == -0.75
+    assert exit_ret == -1.6
 
 
 def test_compute_exit_respects_short_hold_profile():
