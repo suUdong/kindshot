@@ -24,11 +24,31 @@ class TestRuleFallbackBucket:
 
 
 class TestRuleFallbackPosStrong:
-    def test_high_conviction_supply_contract(self):
+    def test_small_supply_contract_skips(self):
+        """금액 없는 단독 공급계약은 SKIP (false positive 방지)."""
         result = _rule_based_decide(Bucket.POS_STRONG, "공급계약 체결", ["공급계약"], _ctx())
+        assert result["action"] == "SKIP"
+        assert "no_high_conviction" in result["reason"]
+
+    def test_large_supply_contract_buys(self):
+        """매출액대비 10%+ 대형 공급계약은 BUY."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "삼성물산, 2.89조원 규모 공급계약(매출액대비 10.5%)",
+            ["공급계약"], _ctx(),
+        )
         assert result["action"] == "BUY"
-        assert result["confidence"] >= 75
-        assert "공급계약" in result["reason"]
+        assert result["confidence"] >= 78
+
+    def test_large_amount_contract_buys(self):
+        """1000억+ 금액 수주는 BUY."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "LNG운반선 수주 3,779억원 규모",
+            ["수주"], _ctx(),
+        )
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 77
 
     def test_high_conviction_buyback(self):
         result = _rule_based_decide(Bucket.POS_STRONG, "자사주 소각 결정", ["자사주 소각"], _ctx())
@@ -52,9 +72,9 @@ class TestRuleFallbackPosStrong:
         assert "no_high_conviction" in result["reason"]
 
     def test_chase_buy_blocked(self):
-        """당일 3%+ 상승 시 추격매수 차단."""
+        """당일 2%+ 상승 시 추격매수 차단."""
         result = _rule_based_decide(
-            Bucket.POS_STRONG, "공급계약 체결", ["공급계약"],
+            Bucket.POS_STRONG, "자사주 소각 결정", ["자사주 소각"],
             _ctx(ret_today=5.0),
         )
         assert result["action"] == "SKIP"
@@ -62,8 +82,8 @@ class TestRuleFallbackPosStrong:
 
     def test_no_chase_block_under_threshold(self):
         result = _rule_based_decide(
-            Bucket.POS_STRONG, "공급계약 체결", ["공급계약"],
-            _ctx(ret_today=2.0),
+            Bucket.POS_STRONG, "자사주 소각 결정", ["자사주 소각"],
+            _ctx(ret_today=1.5),
         )
         assert result["action"] == "BUY"
 
@@ -73,12 +93,32 @@ class TestRuleFallbackPosStrong:
         assert result["action"] == "BUY"
         assert result["size_hint"] in ("S", "M")
 
-    def test_order_keyword(self):
+    def test_standalone_order_skips(self):
+        """단독 '수주'는 금액 없으면 SKIP."""
         result = _rule_based_decide(Bucket.POS_STRONG, "수주 공시", ["수주"], _ctx())
-        assert result["action"] == "BUY"
-        assert result["confidence"] >= 77
+        assert result["action"] == "SKIP"
 
-    def test_patent(self):
+    def test_standalone_patent_skips(self):
+        """단독 '특허'는 SKIP (너무 일반적)."""
         result = _rule_based_decide(Bucket.POS_STRONG, "특허 등록", ["특허"], _ctx())
+        assert result["action"] == "SKIP"
+
+    def test_fda_approval_buys(self):
+        result = _rule_based_decide(Bucket.POS_STRONG, "FDA 승인 획득", ["FDA 승인"], _ctx())
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 80
+
+    def test_record_earnings_buys(self):
+        result = _rule_based_decide(Bucket.POS_STRONG, "사상최대 실적 달성", ["사상최대 실적"], _ctx())
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 78
+
+    def test_medium_contract_500_buys(self):
+        """500억+ 수주는 BUY."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "방위사업용 수출엔진 공급계약 500억원",
+            ["공급계약"], _ctx(),
+        )
         assert result["action"] == "BUY"
         assert result["confidence"] >= 77

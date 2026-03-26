@@ -199,18 +199,53 @@ _HIGH_CONVICTION_KEYWORDS: list[tuple[str, int]] = [
     # 실적 서프라이즈
     ("어닝 서프라이즈", 79), ("어닝서프라이즈", 79),
     ("사상최대 실적", 78), ("사상 최대 실적", 78), ("사상최대 영업이익", 78), ("사상 최대 영업이익", 78),
+    ("사상최대 매출", 78), ("사상 최대 매출", 78),
     ("흑자전환", 78), ("흑자 전환", 78),
     ("깜짝 실적", 78),
-    # 계약/수주
-    ("대형 계약", 78), ("대형계약", 78),
-    ("수주", 77), ("공급계약", 77), ("공급 계약", 77),
+    # 계약/수주 — 금액 규모가 큰 것만 (단독 '수주'/'공급계약'은 너무 일반적)
+    ("대형 계약", 78), ("대형계약", 78), ("대규모 수주", 78), ("대규모수주", 78),
     # 바이오
     ("임상 3상 성공", 79), ("임상3상 성공", 79), ("FDA 승인", 80), ("FDA승인", 80),
-    ("품목허가 승인", 78), ("식약처 허가", 78),
-    ("특허", 77),
-    # M&A
-    ("인수", 77), ("지분 취득", 77), ("지분취득", 77),
+    ("품목허가 승인", 78), ("품목허가 획득", 78), ("식약처 허가", 78),
+    # M&A — 구체적 표현만
+    ("지분 취득", 78), ("지분취득", 78),
 ]
+
+
+def _has_large_contract_signal(headline: str, keyword_hits: list[str]) -> tuple[bool, int]:
+    """공급계약/수주 + 금액 규모가 매출액 대비 큰 경우만 BUY.
+
+    Returns (is_large, confidence).
+    """
+    has_contract = any(
+        kw in headline for kw in ("공급계약", "공급 계약", "수주")
+    ) or any(
+        kw in hit for hit in keyword_hits for kw in ("공급계약", "수주")
+    )
+    if not has_contract:
+        return False, 0
+
+    # 매출액대비 N% — 높은 비율이면 고신뢰
+    import re
+    pct_match = re.search(r"매출액[대]?비\s*(\d+(?:\.\d+)?)\s*%", headline)
+    if pct_match:
+        pct = float(pct_match.group(1))
+        if pct >= 10.0:
+            return True, 80
+        if pct >= 5.0:
+            return True, 78
+        # 5% 미만은 무시
+
+    # 금액이 1000억 이상이면 대형 계약
+    amt_match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*억", headline)
+    if amt_match:
+        amt = float(amt_match.group(1).replace(",", ""))
+        if amt >= 1000:
+            return True, 79
+        if amt >= 500:
+            return True, 77
+
+    return False, 0
 
 
 def _rule_based_decide(
@@ -236,12 +271,18 @@ def _rule_based_decide(
                 best_conf = conf
                 matched_kw = kw
 
-    if best_conf < 75:
+    # 대형 계약/수주: 금액 규모 기반 판단
+    is_large, contract_conf = _has_large_contract_signal(headline, keyword_hits)
+    if is_large and contract_conf > best_conf:
+        best_conf = contract_conf
+        matched_kw = "대형계약"
+
+    if best_conf < 77:
         return {"action": "SKIP", "confidence": 72, "size_hint": "S",
                 "reason": "rule_fallback:no_high_conviction_kw"}
 
-    # Quant 보정: 당일 이미 3%+ 상승이면 추격매수 방지
-    if ctx.ret_today is not None and ctx.ret_today > 3.0:
+    # Quant 보정: 당일 이미 2%+ 상승이면 추격매수 방지 (기존 3% → 2%로 강화)
+    if ctx.ret_today is not None and ctx.ret_today > 2.0:
         return {"action": "SKIP", "confidence": best_conf - 10, "size_hint": "S",
                 "reason": f"rule_fallback:chase_buy ret={ctx.ret_today:.1f}%"}
 
