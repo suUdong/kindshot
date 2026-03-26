@@ -274,9 +274,11 @@ def _rule_based_decide(
 ) -> dict:
     """LLM 없이 키워드 + quant context로 BUY/SKIP 결정.
 
-    보수적 전략: POS_STRONG 중 고확신 키워드만 BUY, 나머지 SKIP.
+    POS_STRONG: 고확신 키워드 → BUY
+    POS_WEAK: 매우 고확신(conf>=80) 키워드만 BUY (보수적)
+    기타: SKIP
     """
-    if bucket != Bucket.POS_STRONG:
+    if bucket not in (Bucket.POS_STRONG, Bucket.POS_WEAK):
         return {"action": "SKIP", "confidence": 70, "size_hint": "S",
                 "reason": "rule_fallback:weak_bucket"}
 
@@ -295,20 +297,26 @@ def _rule_based_decide(
         best_conf = contract_conf
         matched_kw = "대형계약"
 
-    if best_conf < 77:
-        return {"action": "SKIP", "confidence": 72, "size_hint": "S",
-                "reason": "rule_fallback:no_high_conviction_kw"}
+    # POS_WEAK은 매우 고확신(80+)만 BUY, POS_STRONG은 77+
+    min_conf = 80 if bucket == Bucket.POS_WEAK else 77
 
-    # Quant 보정: 당일 이미 2%+ 상승이면 추격매수 방지 (기존 3% → 2%로 강화)
+    if best_conf < min_conf:
+        reason = "rule_fallback:no_high_conviction_kw"
+        if bucket == Bucket.POS_WEAK and best_conf >= 77:
+            reason = "rule_fallback:pos_weak_below_80"
+        return {"action": "SKIP", "confidence": 72, "size_hint": "S",
+                "reason": reason}
+
+    # Quant 보정: 당일 이미 2%+ 상승이면 추격매수 방지
     if ctx.ret_today is not None and ctx.ret_today > 2.0:
         return {"action": "SKIP", "confidence": best_conf - 10, "size_hint": "S",
                 "reason": f"rule_fallback:chase_buy ret={ctx.ret_today:.1f}%"}
 
-    # Size hint
-    if best_conf >= 80:
-        size = "M"  # fallback에서는 L 안 줌 (보수적)
-    elif best_conf >= 77:
+    # Size hint — POS_WEAK은 한단계 보수적
+    if bucket == Bucket.POS_WEAK:
         size = "S"
+    elif best_conf >= 80:
+        size = "M"  # fallback에서는 L 안 줌 (보수적)
     else:
         size = "S"
 

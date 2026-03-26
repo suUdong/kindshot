@@ -10,8 +10,21 @@ def _ctx(**kw):
 
 
 class TestRuleFallbackBucket:
-    def test_pos_weak_always_skip(self):
+    def test_pos_weak_high_conviction_buys(self):
+        """POS_WEAK도 매우 고확신(80+) 키워드면 BUY."""
         result = _rule_based_decide(Bucket.POS_WEAK, "자사주 소각 결정", ["자사주 소각"], _ctx())
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 80
+        assert result["size_hint"] == "S"  # POS_WEAK은 항상 S
+
+    def test_pos_weak_medium_conviction_skips(self):
+        """POS_WEAK에서 conf 78 키워드는 SKIP (80 미만)."""
+        result = _rule_based_decide(Bucket.POS_WEAK, "흑자전환 달성", ["흑자전환"], _ctx())
+        assert result["action"] == "SKIP"
+        assert "pos_weak_below_80" in result["reason"]
+
+    def test_pos_weak_no_keyword_skips(self):
+        result = _rule_based_decide(Bucket.POS_WEAK, "일반 공시", [], _ctx())
         assert result["action"] == "SKIP"
 
     def test_neg_strong_always_skip(self):
