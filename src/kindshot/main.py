@@ -283,6 +283,8 @@ async def run() -> None:
 
         # Health check server
         health_state = HealthState()
+        health_state.set_guardrail_state(guardrail_state)
+        health_state.set_llm_client(decision_engine._llm)
         health_runner = None
         try:
             health_runner, _health_task = await start_health_server(

@@ -22,7 +22,7 @@ from kindshot.context_card import (
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError, has_high_conviction_keyword, has_article_pattern
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -152,6 +152,7 @@ async def execute_bucket_path(
     mode: str,
     guardrail_state: Optional[GuardrailState],
     feed_source: str,
+    health_state: Optional[object] = None,
     analysis_tag_override: Optional[str] = None,
     promotion_original_event_id: Optional[str] = None,
     promotion_original_bucket: Optional[Bucket] = None,
@@ -362,6 +363,8 @@ async def execute_bucket_path(
         )
     except (LlmCallError, LlmTimeoutError, LlmParseError) as exc:
         logger.warning("LLM failed for [%s], using rule fallback: %s", raw.ticker, exc)
+        if health_state is not None and hasattr(health_state, "record_llm_fallback"):
+            health_state.record_llm_fallback()
         decision = decision_engine.fallback_decide(
             ticker=raw.ticker,
             headline=raw.title,
@@ -451,6 +454,19 @@ async def execute_bucket_path(
                             raw.ticker, before, decision.confidence,
                             f"{ctx.ret_3d:+.1f}%" if ctx.ret_3d is not None else "N/A",
                             f"{ctx.pos_20d:.0f}" if ctx.pos_20d is not None else "N/A")
+
+        # 1c. 기술지표 감점 (RSI/MACD — 프롬프트 technical_indicators 구현)
+        if ctx and (ctx.rsi_14 is not None or ctx.macd_hist is not None):
+            before = decision.confidence
+            has_catalyst = has_high_conviction_keyword(raw.title, keyword_hits, min_conf=79)
+            decision.confidence = apply_technical_confidence_adjustment(
+                decision.confidence, ctx.rsi_14, ctx.macd_hist, has_catalyst=has_catalyst,
+            )
+            if decision.confidence != before:
+                logger.info("Technical indicator adj [%s]: %d → %d (rsi=%s, macd=%s)",
+                            raw.ticker, before, decision.confidence,
+                            f"{ctx.rsi_14:.1f}" if ctx.rsi_14 is not None else "N/A",
+                            f"{ctx.macd_hist:.2f}" if ctx.macd_hist is not None else "N/A")
 
         # 2. 시장 반응 확인 (ret_today)
         if raw_data.ret_today is not None:
@@ -728,6 +744,7 @@ async def process_registered_event(
     guardrail_state: Optional[GuardrailState] = None,
     feed_source: str = "KIND",
     unknown_review_queue: Optional[asyncio.Queue] = None,
+    health_state: Optional[object] = None,
     registry: Optional[EventRegistry] = None,
     premarket_pending: Optional[list] = None,
 ) -> None:
@@ -810,6 +827,7 @@ async def process_registered_event(
             mode=mode,
             guardrail_state=guardrail_state,
             feed_source=feed_source,
+            health_state=health_state,
         )
     except (LlmTimeoutError, LlmCallError, LlmParseError) as llm_exc:
         err_type = type(llm_exc).__name__
@@ -817,6 +835,8 @@ async def process_registered_event(
             _tracer.llm_end(_t_llm, raw.ticker, error=err_type)
         if counters is not None:
             counters.errors[f"llm_{err_type}"] += 1
+        if health_state is not None and hasattr(health_state, "record_llm_fallback"):
+            health_state.record_llm_fallback()
 
         # 안전망: POS 버킷이면 rule_fallback으로 재시도 (LLM 없이)
         if bucket_result.bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
@@ -841,6 +861,7 @@ async def process_registered_event(
                     mode=mode,
                     guardrail_state=guardrail_state,
                     feed_source=feed_source,
+                    health_state=health_state,
                 )
             except Exception:
                 logger.warning("Rule fallback retry also failed for [%s]", raw.ticker, exc_info=True)
@@ -888,6 +909,14 @@ async def process_registered_event(
     else:
         if _tracer and _t_llm is not None:
             _tracer.llm_end(_t_llm, raw.ticker)
+
+    # Health state tracking: guardrail blocks + decisions
+    if health_state is not None:
+        if outcome.skip_stage == SkipStage.GUARDRAIL and outcome.skip_reason:
+            if hasattr(health_state, "record_guardrail_block"):
+                health_state.record_guardrail_block(outcome.skip_reason)
+        if outcome.action is not None and hasattr(health_state, "record_decision"):
+            health_state.record_decision(outcome.action.value)
 
     # 장전 재평가: iv_ratio=0으로 INTRADAY_VALUE_TOO_THIN된 POS 이벤트를
     # registry에서 해제해 장 시작 후 재처리 가능하게 함
@@ -1069,6 +1098,7 @@ async def pipeline_loop(
                     guardrail_state=guardrail_state,
                     feed_source=feed_source,
                     unknown_review_queue=unknown_review_queue,
+                    health_state=health_state,
                     registry=registry,
                     premarket_pending=premarket_pending,
                 )

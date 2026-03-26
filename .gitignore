@@ -9,3 +9,9 @@ dist/
 .uv-cache/
 .worktrees/
 .git-credentials
+.memsearch.toml
+.memsearch/
+.omc/
+.omg/
+.omx/
+data/

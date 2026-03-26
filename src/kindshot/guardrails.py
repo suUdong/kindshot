@@ -569,6 +569,29 @@ def apply_time_session_confidence_adjustment(confidence: int, decision_time_kst:
     return confidence
 
 
+def apply_technical_confidence_adjustment(
+    confidence: int,
+    rsi_14: float | None,
+    macd_hist: float | None,
+    *,
+    has_catalyst: bool = False,
+) -> int:
+    """RSI/MACD 기반 기술지표 confidence 조정 (프롬프트 technical_indicators 구현).
+
+    rsi_14 > 75: -5 (과매수)
+    rsi_14 < 30 + 촉매: +3 (과매도 반등 기회)
+    macd_hist < 0: -3 (모멘텀 약세)
+    """
+    if rsi_14 is not None:
+        if rsi_14 > 75:
+            confidence = max(0, confidence - 5)
+        elif rsi_14 < 30 and has_catalyst:
+            confidence = min(confidence + 3, 100)
+    if macd_hist is not None and macd_hist < 0:
+        confidence = max(0, confidence - 3)
+    return confidence
+
+
 def apply_adv_confidence_adjustment(confidence: int, adv_value_20d: float) -> int:
     """ADV 기반 confidence 캡/페널티/보너스. 소형주 집중 전략."""
     if adv_value_20d >= 500_000_000_000:  # 5000억+: 초대형주 → cap 65 (sell the news)

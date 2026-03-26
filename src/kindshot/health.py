@@ -30,8 +30,20 @@ class HealthState:
         self.error_count: int = 0
         self.llm_calls: int = 0
         self.llm_total_ms: int = 0
+        self.llm_fallback_count: int = 0
         self.kis_calls: int = 0
         self.kis_errors: int = 0
+        # Guardrail state references (set by main.py after init)
+        self._guardrail_state: Optional[Any] = None
+        self._llm_client: Optional[Any] = None
+        # Guardrail block tracking
+        self.guardrail_blocks: dict[str, int] = {}
+
+    def set_guardrail_state(self, state: Any) -> None:
+        self._guardrail_state = state
+
+    def set_llm_client(self, client: Any) -> None:
+        self._llm_client = client
 
     def record_poll(self) -> None:
         self.last_poll_at = datetime.now(_KST).isoformat()
@@ -49,6 +61,12 @@ class HealthState:
         else:
             self.skip_count += 1
 
+    def record_llm_fallback(self) -> None:
+        self.llm_fallback_count += 1
+
+    def record_guardrail_block(self, reason: str) -> None:
+        self.guardrail_blocks[reason] = self.guardrail_blocks.get(reason, 0) + 1
+
     def record_error(self) -> None:
         self.error_count += 1
 
@@ -60,7 +78,8 @@ class HealthState:
     def snapshot(self) -> dict[str, Any]:
         uptime_s = (datetime.now(_KST) - datetime.fromisoformat(self.started_at)).total_seconds()
         avg_llm_ms = self.llm_total_ms / self.llm_calls if self.llm_calls > 0 else 0
-        return {
+
+        result: dict[str, Any] = {
             "status": "healthy" if self.error_count < 10 else "degraded",
             "started_at": self.started_at,
             "uptime_seconds": int(uptime_s),
@@ -73,9 +92,32 @@ class HealthState:
             "error_count": self.error_count,
             "llm_calls": self.llm_calls,
             "llm_avg_ms": int(avg_llm_ms),
+            "llm_fallback_count": self.llm_fallback_count,
             "kis_calls": self.kis_calls,
             "kis_errors": self.kis_errors,
         }
+
+        # Circuit breaker status
+        if self._llm_client is not None:
+            result["circuit_breaker"] = {
+                "nvidia_open": getattr(self._llm_client, "nvidia_circuit_open", False),
+                "anthropic_open": getattr(self._llm_client, "circuit_open", False),
+            }
+
+        # Guardrail state
+        if self._guardrail_state is not None:
+            gs = self._guardrail_state
+            result["guardrail_state"] = {
+                "daily_pnl": getattr(gs, "daily_pnl", 0.0),
+                "position_count": getattr(gs, "position_count", 0),
+                "consecutive_stop_losses": getattr(gs, "consecutive_stop_losses", 0),
+                "bought_tickers_count": len(getattr(gs, "bought_tickers", set())),
+            }
+
+        if self.guardrail_blocks:
+            result["guardrail_blocks"] = dict(self.guardrail_blocks)
+
+        return result
 
 
 async def _health_handler(request: web.Request) -> web.Response:
