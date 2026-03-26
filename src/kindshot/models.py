@@ -175,7 +175,7 @@ class DecisionRecord(BaseModel):
     confidence: int = Field(ge=0, le=100)
     size_hint: SizeHint
     reason: str = Field(max_length=100)
-    decision_source: str = "LLM"  # "LLM" | "CACHE"
+    decision_source: str = "LLM"  # "LLM" | "CACHE" | "RULE_FALLBACK" | "LLM_FALLBACK_HYBRID" | "RULE_PREFLIGHT"
 
 
 class PriceSnapshot(BaseModel):
