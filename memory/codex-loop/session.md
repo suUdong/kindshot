@@ -3,9 +3,9 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `Backtest Analysis`
-- Focus: align the comparison/reporting script with the current exit-reconstruction rules before using it to choose the next trading-rule hypothesis.
-- Active hypothesis: `scripts/strategy_comparison.py` should reuse `strategy_observability` exit classification and full hold-profile-aware horizons instead of stale hardcoded TP/SL/trailing/max-hold assumptions.
+- Phase: `Weekly Performance Review`
+- Focus: summarize the latest 7 logged trading days with `deploy/daily_report.py` reconstruction so the next hypothesis can start from a current bucket-level evidence snapshot.
+- Active hypothesis: recent BUY performance is concentrated in a narrow subset of keyword buckets rather than broadly healthy across the `POS_STRONG` surface.
 
 ## Environment
 
@@ -13,21 +13,21 @@
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
-  - `source .venv/bin/activate && python -m pytest tests/test_daily_report.py tests/test_strategy_comparison.py -q` passed (`3 passed`)
-  - `source .venv/bin/activate && python -m pytest -q` passed (`572 passed, 1 warning`)
+  - `source .venv/bin/activate && python -m pytest tests/test_daily_report.py tests/test_strategy_observability.py tests/test_strategy_comparison.py tests/test_hold_profile.py -q` passed (`19 passed`)
+  - `source .venv/bin/activate && python -m pytest -q` passed (`585 passed, 1 warning`)
 
 ## Last Completed Step
 
-- Documented the remaining comparison-tooling drift in `docs/backtest-analysis.md`.
-- Reworked `scripts/strategy_comparison.py` to use the shared `classify_buy_exit()` path and the full hold-profile-aware horizon set.
-- Added script-level regression coverage for the current SL default and short-hold-profile max-hold behavior.
+- Reconstructed the latest 7 logged trading days directly from `deploy/daily_report.py` primitives.
+- Wrote `docs/weekly-performance.md` with realized-return coverage, daily breakdown, runtime bucket summary, and keyword-bucket Top 5.
+- Recorded the data-coverage caveat that only `16` of `23` BUY decisions currently have reconstructable realized returns in the local workspace.
 
 ## Next Intended Step
 
-- Run the now-aligned comparison report on the next real log window before selecting another trading-rule slice.
-- Prefer the next bounded hypothesis from fresh residual-cohort evidence rather than from stale pre-alignment comparison output.
+- Re-run the report after fresh runtime logs are synced beyond `2026-03-19`.
+- Use the refreshed bucket evidence to choose the next bounded trading-rule hypothesis, likely starting from the still-negative `공급계약` cohort.
 
 ## Notes
 
-- This slice intentionally stays in the analysis layer; live execution logic was not changed here.
+- This slice stays in the analysis/documentation layer; live execution logic was not changed here.
 - The working tree still contains unrelated pre-existing untracked paths that were not part of this slice.
