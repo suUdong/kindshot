@@ -227,6 +227,7 @@ async def build_context_card(
         top_ask_notional=top_ask_notional,
         quote_temp_stop=quote_temp_stop,
         quote_liquidation_trade=quote_liquidation_trade,
+        prior_volume_rate=price_info.prior_volume_rate if kis and price_info else None,
         rsi_14=hist.get("rsi_14"),
         macd_hist=hist.get("macd_hist"),
     )

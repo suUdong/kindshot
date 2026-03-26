@@ -75,11 +75,13 @@ def _build_prompt(
         f"pos_20d={ctx.pos_20d} gap={ctx.gap}{rsi_str}{macd_str}"
     )
     adv_display = f"{ctx.adv_value_20d/1e8:.0f}억" if ctx.adv_value_20d else "N/A"
+    vol_rate_str = f" prior_vol_rate={ctx.prior_volume_rate:.0f}%" if ctx.prior_volume_rate is not None else ""
     ctx_micro = (
         f"adv_20d={adv_display} spread_bps={ctx.spread_bps} vol_pct_20d={ctx.vol_pct_20d} "
         f"intraday_value_vs_adv20d={ctx.intraday_value_vs_adv20d} "
         f"top_ask_notional={ctx.top_ask_notional} "
         f"temp_stop={ctx.quote_temp_stop} liquidation_trade={ctx.quote_liquidation_trade}"
+        f"{vol_rate_str}"
     )
 
     # 시장 환경 요약

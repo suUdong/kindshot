@@ -111,6 +111,7 @@ class ContextCard(BaseModel):
     top_ask_notional: Optional[float] = None
     quote_temp_stop: Optional[bool] = None
     quote_liquidation_trade: Optional[bool] = None
+    prior_volume_rate: Optional[float] = None  # 전일대비 거래량 비율 (e.g. 200.0 = 2배)
     rsi_14: Optional[float] = None
     macd_hist: Optional[float] = None
 
