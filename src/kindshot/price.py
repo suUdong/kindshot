@@ -104,8 +104,8 @@ class SnapshotScheduler:
         self._event_confidence: dict[str, int] = {}
         # 이벤트별 실제 포지션 사이즈 (P&L 계산용)
         self._event_order_size: dict[str, float] = {}
-        # Stale position 감지: 5분 경과 후 ±0.2% 미만이면 모멘텀 소멸
-        self._stale_threshold_pct: float = 0.2
+        # Stale position 감지: 5분 경과 후 모멘텀 소멸 시 exit
+        self._stale_threshold_pct_default: float = 0.2
         self._stale_min_elapsed_s: float = 300.0  # 5분
 
     def _get_trailing_stop_pct(self, event_id: str) -> float:
@@ -368,14 +368,20 @@ class SnapshotScheduler:
                         snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
                         event_max,
                     )
-                # Stale position exit: 5분+ 경과 후 ±0.2% 미만 → 모멘텀 소멸
+                # Stale position exit: 5분+ 경과 후 모멘텀 소멸
+                # confidence 기반 동적 threshold: 고확신(85+)은 SL 밴드 내 조기 exit 방지
                 elif event_max != 0:  # EOD hold는 stale 판정 제외
                     entry_time = self._entry_times.get(snap.event_id)
                     if entry_time is not None:
                         elapsed_s = time.monotonic() - entry_time
+                        stale_pct = self._stale_threshold_pct_default
+                        if evt_conf >= 85:
+                            stale_pct = max(0.5, abs(effective_sl) * 0.4)
+                        elif evt_conf >= 80:
+                            stale_pct = 0.3
                         if (
                             elapsed_s >= self._stale_min_elapsed_s
-                            and abs(ret_pct) < self._stale_threshold_pct
+                            and abs(ret_pct) < stale_pct
                         ):
                             self._virtual_exits[snap.event_id] = snap.horizon
                             logger.info(
