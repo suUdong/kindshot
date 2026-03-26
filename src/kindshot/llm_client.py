@@ -11,6 +11,17 @@ from kindshot.config import Config
 
 logger = logging.getLogger(__name__)
 
+# 재시도해도 무의미한 영구 에러 패턴 (크레딧 부족, 인증 실패 등)
+_PERMANENT_ERROR_PATTERNS = (
+    "credit balance is too low",
+    "invalid x-api-key",
+    "invalid api key",
+    "authentication_error",
+)
+
+# Circuit breaker 쿨다운: 영구 에러 감지 후 이 시간 동안 LLM 호출 차단
+_CIRCUIT_BREAKER_COOLDOWN_S = 300  # 5분
+
 
 class LlmTimeoutError(Exception):
     """LLM call timed out after all retries."""
@@ -27,6 +38,9 @@ class LlmClient:
         self._config = config
         self._client: Optional[object] = None
         self._semaphore = asyncio.Semaphore(max(1, config.llm_max_concurrency))
+        # Circuit breaker: 영구 에러 시 즉시 fail-fast
+        self._circuit_open_until: float = 0.0
+        self._circuit_reason: str = ""
 
     def _get_client(self):
         if self._client is None:
@@ -36,6 +50,20 @@ class LlmClient:
                 timeout=self._config.llm_sdk_timeout_s,
             )
         return self._client
+
+    def _is_permanent_error(self, err: Exception) -> bool:
+        """재시도 무의미한 영구 에러 여부."""
+        msg = str(err).lower()
+        return any(pat in msg for pat in _PERMANENT_ERROR_PATTERNS)
+
+    def _open_circuit(self, reason: str) -> None:
+        self._circuit_open_until = time.monotonic() + _CIRCUIT_BREAKER_COOLDOWN_S
+        self._circuit_reason = reason
+        logger.warning("LLM circuit breaker OPEN for %ds: %s", _CIRCUIT_BREAKER_COOLDOWN_S, reason)
+
+    @property
+    def circuit_open(self) -> bool:
+        return time.monotonic() < self._circuit_open_until
 
     async def call(
         self,
@@ -49,6 +77,10 @@ class LlmClient:
 
         Raises LlmTimeoutError or LlmCallError on final failure.
         """
+        # Circuit breaker: 영구 에러 상태면 즉시 fail
+        if self.circuit_open:
+            raise LlmCallError(f"circuit breaker open: {self._circuit_reason}")
+
         client = self._get_client()
         last_err: Exception | None = None
         resp = None
@@ -66,6 +98,11 @@ class LlmClient:
                         ),
                         timeout=self._config.llm_wait_for_s,
                     )
+                # 성공 시 circuit breaker 리셋
+                if self._circuit_open_until > 0:
+                    logger.info("LLM circuit breaker CLOSED (call succeeded)")
+                    self._circuit_open_until = 0.0
+                    self._circuit_reason = ""
                 break
             except asyncio.TimeoutError as e:
                 last_err = e
@@ -78,6 +115,10 @@ class LlmClient:
                 raise LlmTimeoutError(str(e)) from e
             except Exception as e:
                 last_err = e
+                # 영구 에러: 재시도 없이 즉시 circuit breaker 열고 실패
+                if self._is_permanent_error(e):
+                    self._open_circuit(str(e)[:200])
+                    raise LlmCallError(str(e)) from e
                 is_rate_limit = "rate" in str(e).lower() or "429" in str(e)
                 if attempt < max_retries - 1:
                     delay = min(2 ** (attempt + 1), 16) if is_rate_limit else min(2 ** attempt, 8)
