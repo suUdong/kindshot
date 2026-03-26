@@ -534,12 +534,10 @@ async def execute_bucket_path(
                         raw.ticker, before, decision.confidence, best, worst,
                         f"{_br:.2f}" if _br is not None else "N/A")
 
-        # 총 감점 상한 적용: LLM 원본 - 10 이하로 떨어지지 않도록
-        # + min_buy_confidence 이하로 떨어지면 LLM BUY 의도 보존 (BUY 유지)
+        # 총 감점 상한 적용: LLM 원본 - 10 이상 감점 방지 (과다 감점 = 진짜 촉매 놓침)
         total_delta = decision.confidence - llm_original_conf
         if total_delta < -_MAX_TOTAL_PENALTY:
             floored = llm_original_conf - _MAX_TOTAL_PENALTY
-            # LLM이 BUY(>=75) 줬으면 min_buy_confidence 이하로 안 떨어지게
             if llm_original_conf >= config.min_buy_confidence:
                 floored = max(floored, config.min_buy_confidence)
             logger.warning(
@@ -547,6 +545,15 @@ async def execute_bucket_path(
                 raw.ticker, decision.confidence, floored, total_delta, _MAX_TOTAL_PENALTY, llm_original_conf,
             )
             decision.confidence = floored
+
+        # min_buy_confidence floor: 원본이 threshold 이상이면 감점으로 아래로 떨어지지 않게
+        # 예: fallback hybrid가 자사주 소각=82 줬는데 market adj로 73까지 떨어지는 것 방지
+        if llm_original_conf >= config.min_buy_confidence and decision.confidence < config.min_buy_confidence:
+            logger.info(
+                "Min-confidence floor [%s]: %d → %d (llm_original=%d, preserving min_buy_confidence)",
+                raw.ticker, decision.confidence, config.min_buy_confidence, llm_original_conf,
+            )
+            decision.confidence = config.min_buy_confidence
 
     # 킬 스위치: 연패 시 size_hint 다운그레이드
     if decision.action == Action.BUY and guardrail_state is not None:
