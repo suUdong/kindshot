@@ -37,6 +37,7 @@ Implement a bounded standalone report:
    - mode confidence and mode share
    - a simple collapse flag when one exact confidence dominates the cohort
 4. Add an overall comparison section across the selected logs
+5. Add explicit before/after delta and change verdicts for the `LLM` cohort
 5. Add focused tests
 
 ## Non-Goals
@@ -86,6 +87,11 @@ Within each cohort, compute:
      - `spread` otherwise
 6. `Comparison`
    - side-by-side summary across cohorts
+   - when 2+ cohorts are present, emit a delta summary:
+     - previous `LLM` mode confidence -> current
+     - previous `LLM` mode share -> current
+     - previous collapse flag -> current
+     - change verdict: `improved`, `unchanged`, `regressed`, or `insufficient-data`
 
 ### Key implementation choice
 
@@ -94,6 +100,10 @@ Keep it standalone under `scripts/`, but reuse the same log-parsing style as `sc
 ### Why exact-value mode share matters
 
 The NVIDIA day1 issue is not just "low confidence". It is "confidence collapsed to one exact value". A mode-share indicator detects that directly.
+
+### Why a delta verdict matters
+
+Operators do not just need two rows of numbers. They need a direct answer to "did the post-upgrade distribution stop collapsing?" A simple change verdict keeps the report actionable.
 
 ## Validation
 

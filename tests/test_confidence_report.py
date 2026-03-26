@@ -112,6 +112,8 @@ def test_render_report_includes_comparison_section(tmp_path):
     assert "Comparison:" in rendered
     assert "llm_mode=50" in rendered
     assert "llm_flag=collapsed" in rendered
+    assert "delta:" in rendered
+    assert "verdict=improved" in rendered
 
 
 def test_resolve_log_paths_requires_input():
@@ -122,3 +124,22 @@ def test_resolve_log_paths_requires_input():
         assert "provide at least one" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_comparison_delta_detects_regression(tmp_path):
+    mod = _load_module()
+    cohorts = [
+        {
+            "path": str(tmp_path / "before.jsonl"),
+            "by_source": {"LLM": {"mode_confidence": 72, "mode_share": 0.40, "collapse_flag": "spread", "median_confidence": 74}},
+        },
+        {
+            "path": str(tmp_path / "after.jsonl"),
+            "by_source": {"LLM": {"mode_confidence": 50, "mode_share": 1.00, "collapse_flag": "collapsed", "median_confidence": 50}},
+        },
+    ]
+    delta = mod.comparison_delta(cohorts)
+    assert delta is not None
+    assert delta["change_verdict"] == "regressed"
+    assert delta["before_flag"] == "spread"
+    assert delta["after_flag"] == "collapsed"

@@ -160,6 +160,54 @@ def comparison_rows(cohorts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def _flag_rank(flag: str) -> int:
+    order = {"collapsed": 0, "clustered": 1, "spread": 2}
+    return order.get(flag, -1)
+
+
+def comparison_delta(cohorts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if len(cohorts) < 2:
+        return None
+
+    before = cohorts[0]["by_source"].get("LLM")
+    after = cohorts[-1]["by_source"].get("LLM")
+    if not before or not after:
+        return {
+            "before_label": Path(cohorts[0]["path"]).name,
+            "after_label": Path(cohorts[-1]["path"]).name,
+            "change_verdict": "insufficient-data",
+        }
+
+    before_share = before["mode_share"]
+    after_share = after["mode_share"]
+    before_flag = before["collapse_flag"]
+    after_flag = after["collapse_flag"]
+
+    verdict = "unchanged"
+    if _flag_rank(after_flag) > _flag_rank(before_flag) or (
+        before_share is not None and after_share is not None and after_share < before_share
+    ):
+        verdict = "improved"
+    elif _flag_rank(after_flag) < _flag_rank(before_flag) or (
+        before_share is not None and after_share is not None and after_share > before_share
+    ):
+        verdict = "regressed"
+
+    return {
+        "before_label": Path(cohorts[0]["path"]).name,
+        "after_label": Path(cohorts[-1]["path"]).name,
+        "before_mode_confidence": before["mode_confidence"],
+        "after_mode_confidence": after["mode_confidence"],
+        "before_mode_share": before_share,
+        "after_mode_share": after_share,
+        "before_flag": before_flag,
+        "after_flag": after_flag,
+        "before_median": before.get("median_confidence"),
+        "after_median": after.get("median_confidence"),
+        "change_verdict": verdict,
+    }
+
+
 def render_report(cohorts: list[dict[str, Any]]) -> str:
     lines: list[str] = []
     w = lines.append
@@ -227,6 +275,20 @@ def render_report(cohorts: list[dict[str, Any]]) -> str:
                 f"llm_mode_share={mode_share} "
                 f"llm_flag={row['llm_collapse_flag']} "
                 f"overall_median={row['overall_median']}"
+            )
+        delta = comparison_delta(cohorts)
+        if delta:
+            before_share = "-" if delta.get("before_mode_share") is None else f"{delta['before_mode_share']:.1%}"
+            after_share = "-" if delta.get("after_mode_share") is None else f"{delta['after_mode_share']:.1%}"
+            w("  delta:")
+            w(
+                "    "
+                f"{delta['before_label']} -> {delta['after_label']} "
+                f"llm_mode={delta.get('before_mode_confidence')}->{delta.get('after_mode_confidence')} "
+                f"llm_mode_share={before_share}->{after_share} "
+                f"llm_flag={delta.get('before_flag')}->{delta.get('after_flag')} "
+                f"llm_median={delta.get('before_median')}->{delta.get('after_median')} "
+                f"verdict={delta['change_verdict']}"
             )
 
     return "\n".join(lines)
