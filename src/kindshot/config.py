@@ -51,6 +51,9 @@ class Config:
     kis_app_secret: str = field(default_factory=lambda: _env("KIS_APP_SECRET"))
     kis_account_no: str = field(default_factory=lambda: _env("KIS_ACCOUNT_NO"))
     kis_is_paper: bool = field(default_factory=lambda: _env_bool("KIS_IS_PAPER", True))
+    # 실전 서버 API 키 (모의투자 모드에서도 실시간 시세 조회용)
+    kis_real_app_key: str = field(default_factory=lambda: _env("KIS_REAL_APP_KEY"))
+    kis_real_app_secret: str = field(default_factory=lambda: _env("KIS_REAL_APP_SECRET"))
 
     # --- Feed ---
     feed_source: str = field(default_factory=lambda: _env("FEED_SOURCE", "KIS"))  # KIS or KIND

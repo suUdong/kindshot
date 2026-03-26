@@ -116,7 +116,11 @@ class KisResponse:
 
 
 class KisClient:
-    """KIS REST API client with token management and rate limiting."""
+    """KIS REST API client with token management and rate limiting.
+
+    Paper mode dual-server: 실전 서버 credentials가 있으면 시세 조회는 실전 서버,
+    주문 실행은 모의투자 서버 사용. VTS는 실시간 시세 미제공(전일 종가 반환) 문제 해결.
+    """
 
     def __init__(self, config: Config, session: aiohttp.ClientSession) -> None:
         self._config = config
@@ -128,6 +132,20 @@ class KisClient:
         self._rate_limit = _RATE_LIMIT_PAPER if config.kis_is_paper else _RATE_LIMIT_REAL
         self._request_failures: Counter[str] = Counter()
         self._invalid_payloads: Counter[str] = Counter()
+
+        # Dual-server: 실전 서버 시세 조회용 (paper 모드에서만 활성화)
+        self._has_real_market_data = (
+            config.kis_is_paper
+            and bool(config.kis_real_app_key)
+            and bool(config.kis_real_app_secret)
+        )
+        self._real_base = BASE_URL_REAL
+        self._real_token: Optional[str] = None
+        self._real_token_expires: float = 0.0
+        self._real_last_request: float = 0.0
+        self._real_rate_limit = _RATE_LIMIT_REAL
+        if self._has_real_market_data:
+            logger.info("Dual-server enabled: real server for market data, paper for orders")
 
     async def _ensure_token(self) -> Optional[str]:
         if not self._config.kis_app_key or not self._config.kis_app_secret:
@@ -154,11 +172,38 @@ class KisClient:
             logger.exception("KIS token fetch failed")
             return None
 
-    def _headers(self, token: str, tr_id: str, *, tr_cont: str = "") -> dict[str, str]:
+    async def _ensure_real_token(self) -> Optional[str]:
+        """실전 서버 토큰 발급 (시세 조회용)."""
+        if not self._has_real_market_data:
+            return None
+        if self._real_token and time.time() < self._real_token_expires:
+            return self._real_token
+        try:
+            async with self._session.post(
+                f"{self._real_base}/oauth2/tokenP",
+                json={
+                    "grant_type": "client_credentials",
+                    "appkey": self._config.kis_real_app_key,
+                    "appsecret": self._config.kis_real_app_secret,
+                },
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                data = await resp.json()
+                self._real_token = data.get("access_token")
+                self._real_token_expires = time.time() + 23 * 3600
+                logger.info("Real server token acquired for market data")
+                return self._real_token
+        except Exception:
+            logger.exception("KIS real server token fetch failed")
+            return None
+
+    def _headers(self, token: str, tr_id: str, *, tr_cont: str = "", use_real: bool = False) -> dict[str, str]:
+        app_key = self._config.kis_real_app_key if use_real else self._config.kis_app_key
+        app_secret = self._config.kis_real_app_secret if use_real else self._config.kis_app_secret
         headers = {
             "authorization": f"Bearer {token}",
-            "appkey": self._config.kis_app_key,
-            "appsecret": self._config.kis_app_secret,
+            "appkey": app_key,
+            "appsecret": app_secret,
             "tr_id": tr_id,
             "content-type": "application/json; charset=utf-8",
         }
@@ -181,13 +226,22 @@ class KisClient:
         params: dict[str, str],
         *,
         tr_cont: str = "",
+        use_real: bool = False,
     ) -> Optional[KisResponse]:
         """Run a rate-limited KIS GET request and return the JSON object body plus response header state."""
+        base = self._real_base if use_real else self._base
         try:
-            await self._rate_limit_wait()
+            if use_real:
+                now = time.monotonic()
+                elapsed = now - self._real_last_request
+                if elapsed < self._real_rate_limit:
+                    await asyncio.sleep(self._real_rate_limit - elapsed)
+                self._real_last_request = time.monotonic()
+            else:
+                await self._rate_limit_wait()
             async with self._session.get(
-                f"{self._base}{spec.path}",
-                headers=self._headers(token, spec.tr_id, tr_cont=tr_cont),
+                f"{base}{spec.path}",
+                headers=self._headers(token, spec.tr_id, tr_cont=tr_cont, use_real=use_real),
                 params=params,
                 timeout=aiohttp.ClientTimeout(total=spec.timeout_s),
             ) as resp:
@@ -195,7 +249,8 @@ class KisClient:
                 resp_tr_cont = resp.headers.get("tr_cont", "")
         except Exception:
             self._request_failures[spec.tr_id] += 1
-            logger.exception("KIS request failed (tr_id=%s, path=%s)", spec.tr_id, spec.path)
+            server = "real" if use_real else "paper"
+            logger.exception("KIS request failed (tr_id=%s, path=%s, server=%s)", spec.tr_id, spec.path, server)
             return None
 
         if not isinstance(data, dict):
@@ -255,8 +310,18 @@ class KisClient:
         return []
 
     async def get_price(self, ticker: str) -> Optional[PriceInfo]:
-        """Get current price + orderbook spread for a ticker. Returns None on any failure."""
-        token = await self._ensure_token()
+        """Get current price + orderbook spread for a ticker. Returns None on any failure.
+
+        Paper mode dual-server: 실전 서버 credentials가 있으면 실전 서버에서 실시간 시세 조회.
+        VTS(모의투자) 서버는 전일 종가만 반환하는 문제 회피.
+        """
+        # 실전 서버 시세 조회 우선 시도
+        use_real = False
+        if self._has_real_market_data:
+            token = await self._ensure_real_token()
+            use_real = token is not None
+        if not use_real:
+            token = await self._ensure_token()
         if not token:
             return None
 
@@ -271,7 +336,7 @@ class KisClient:
             "FID_INPUT_ISCD": ticker,
         }
 
-        response = await self._get_json(token, price_spec, params)
+        response = await self._get_json(token, price_spec, params, use_real=use_real)
         if response is None:
             return None
 
