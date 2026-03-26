@@ -573,8 +573,8 @@ def apply_adv_confidence_adjustment(confidence: int, adv_value_20d: float) -> in
     """ADV 기반 confidence 캡/페널티/보너스. 소형주 집중 전략."""
     if adv_value_20d >= 500_000_000_000:  # 5000억+: 초대형주 → cap 65 (sell the news)
         return min(confidence, 65)
-    if adv_value_20d >= 200_000_000_000:  # 2000~5000억: 대형주 → -5, cap 72
-        return min(max(0, confidence - 5), 72)
+    if adv_value_20d >= 200_000_000_000:  # 2000~5000억: 대형주 → -5, cap 76 (강한 촉매는 통과)
+        return min(max(0, confidence - 5), 76)
     if adv_value_20d >= 50_000_000_000:  # 500~2000억: 소형주 최적 구간 → +3 보너스
         return min(confidence + 3, 100)
     # <500억: 초소형주, 조정 없음 (ADV 필터에서 대부분 걸림)

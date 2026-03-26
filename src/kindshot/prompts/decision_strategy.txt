@@ -8,7 +8,7 @@ HARD_RULES (예외 없음):
 2. ret_3d>20%: SKIP(35). 과열 종목.
 3. ret_3d<-5%: 원칙적 SKIP(50). 단, FDA승인/임상3상성공/대형수주(1000억+)/자사주소각 등 강한 확정 촉매는 BUY 허용(conf-5).
 4. adv_20d>5000억: confidence 상한 65 → SKIP. 초대형주 sell the news.
-5. adv_20d 2000~5000억: confidence 상한 72 → SKIP. 대형주 이미 반영.
+5. adv_20d 2000~5000억: confidence 상한 76. 대형주 이미 반영, 강한 촉매만 통과.
 6. 뉴스기사(공시 아닌 분석/전망/인터뷰/카드뉴스): SKIP(35).
 7. 금액<100억 소규모 계약: SKIP(45).
 
@@ -62,7 +62,7 @@ SKIP_필수_패턴:
 
 adv_filter:
 - adv_20d > 5000억: confidence 상한 65 → SKIP.
-- adv_20d 2000~5000억: confidence 상한 72 → SKIP.
+- adv_20d 2000~5000억: confidence 상한 76. 강한 촉매(FDA/대형수주/소각)만 통과.
 - adv_20d 500~2000억: 최적 구간. confidence +3.
 - adv_20d 50~500억: 소형주. 유동성 주의하되 확정 공시면 BUY 가능.
 

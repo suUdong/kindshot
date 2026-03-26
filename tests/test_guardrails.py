@@ -759,8 +759,9 @@ def test_adv_confidence_mega_cap():
 
 
 def test_adv_confidence_large_cap():
-    """ADV 2000~5000억 → -5, cap 72."""
-    assert apply_adv_confidence_adjustment(80, 300_000_000_000) == 72
+    """ADV 2000~5000억 → -5, cap 76 (강한 촉매 통과 허용)."""
+    assert apply_adv_confidence_adjustment(80, 300_000_000_000) == 75  # 80-5=75, cap 76 이내
+    assert apply_adv_confidence_adjustment(85, 300_000_000_000) == 76  # 85-5=80, cap 76
 
 
 def test_adv_confidence_mid_cap():
