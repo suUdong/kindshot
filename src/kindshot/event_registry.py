@@ -108,6 +108,7 @@ class EventRegistry:
     ) -> None:
         self._seen_ids: dict[str, datetime] = {}  # event_id -> detected_at
         self._history: dict[str, list[_HistoryEntry]] = {}
+        self._reeval_ids: set[str] = set()  # unmark된 event_id — related_title_dup 우회
         self._current_date: Optional[str] = None  # YYYYMMDD for TTL
         self._state_dir = state_dir
         self._related_title_window_s = max(0, related_title_window_s)
@@ -116,6 +117,20 @@ class EventRegistry:
         if state_dir:
             state_dir.mkdir(parents=True, exist_ok=True)
             self._load_state()
+
+    def unmark(self, event_id: str) -> bool:
+        """Remove *event_id* from seen set so it can be re-processed.
+
+        Used by the pre-market re-evaluation mechanism: events that were
+        processed with iv_ratio=0 are unmarked, allowing the feed to
+        re-deliver them after the market opens.  Also adds to _reeval_ids
+        to bypass related-title dedup on the next arrival.
+        """
+        if event_id in self._seen_ids:
+            del self._seen_ids[event_id]
+            self._reeval_ids.add(event_id)
+            return True
+        return False
 
     def _state_file(self) -> Optional[Path]:
         if not self._state_dir or not self._current_date:
@@ -246,7 +261,12 @@ class EventRegistry:
         norm_title = _normalize_title(raw.title)
         title_tokens = _title_tokens(raw.title)
 
-        if self._is_related_title_duplicate(
+        # 장전 재평가 대상은 related_title_dup 우회 (한 번만)
+        is_reeval = event_id in self._reeval_ids
+        if is_reeval:
+            self._reeval_ids.discard(event_id)
+
+        if not is_reeval and self._is_related_title_duplicate(
             ticker=raw.ticker,
             event_kind=event_kind,
             normalized_title=norm_title,

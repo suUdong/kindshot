@@ -280,3 +280,59 @@ def test_related_title_duplicate_different_ticker_not_deduped():
 
     assert reg.process(r1) is not None
     assert reg.process(r2) is not None
+
+
+# ── US-002: EventRegistry.unmark() — 장전 재평가 ──────────────────
+
+
+def test_unmark_allows_reprocessing():
+    """unmark 후 동일 event_id 재처리 가능."""
+    reg = EventRegistry()
+    r = _raw()
+    e1 = reg.process(r)
+    assert e1 is not None
+    # 동일 이벤트 → DUPLICATE
+    assert reg.process(r) is None
+
+    # unmark → 재처리 가능
+    assert reg.unmark(e1.event_id) is True
+    e2 = reg.process(r)
+    assert e2 is not None
+    assert e2.event_id == e1.event_id
+
+
+def test_unmark_nonexistent_returns_false():
+    """존재하지 않는 event_id unmark 시 False 반환."""
+    reg = EventRegistry()
+    assert reg.unmark("nonexistent_id") is False
+
+
+def test_unmark_does_not_affect_different_events():
+    """unmark는 해당 event_id만 영향. 다른 이벤트는 정상 dedup."""
+    reg = EventRegistry()
+    r1 = RawDisclosure(
+        title="삼성전자(005930) - 자사주 소각 결정",
+        link="https://kind.krx.co.kr/?rcpNo=A",
+        rss_guid="guid_a", published="2026-03-05T09:12:04+09:00",
+        ticker="005930", corp_name="삼성전자",
+        detected_at=datetime.now(timezone.utc),
+    )
+    r2 = RawDisclosure(
+        title="현대차(005380) - 대규모 수주 체결",
+        link="https://kind.krx.co.kr/?rcpNo=B",
+        rss_guid="guid_b", published="2026-03-05T09:15:00+09:00",
+        ticker="005380", corp_name="현대차",
+        detected_at=datetime.now(timezone.utc),
+    )
+
+    e1 = reg.process(r1)
+    e2 = reg.process(r2)
+    assert e1 is not None
+    assert e2 is not None
+
+    # unmark r1만
+    reg.unmark(e1.event_id)
+
+    # r1 재처리 가능, r2는 여전히 DUPLICATE
+    assert reg.process(r1) is not None
+    assert reg.process(r2) is None

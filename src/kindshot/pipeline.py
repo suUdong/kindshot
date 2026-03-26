@@ -570,6 +570,8 @@ async def process_registered_event(
     guardrail_state: Optional[GuardrailState] = None,
     feed_source: str = "KIND",
     unknown_review_queue: Optional[asyncio.Queue] = None,
+    registry: Optional[EventRegistry] = None,
+    premarket_pending: Optional[list] = None,
 ) -> None:
     """Process an event that already passed dedup/registry."""
     _tracer = get_tracer()
@@ -721,6 +723,23 @@ async def process_registered_event(
         if _tracer and _t_llm is not None:
             _tracer.llm_end(_t_llm, raw.ticker)
 
+    # 장전 재평가: iv_ratio=0으로 INTRADAY_VALUE_TOO_THIN된 POS 이벤트를
+    # registry에서 해제해 장 시작 후 재처리 가능하게 함
+    if (
+        premarket_pending is not None
+        and registry is not None
+        and outcome.skip_reason == "INTRADAY_VALUE_TOO_THIN"
+        and detected_at.astimezone(_KST).hour < 9
+    ):
+        registry.unmark(processed.event_id)
+        premarket_pending.append((raw, processed))
+        logger.info(
+            "PREMARKET_DEFERRED [%s] %s — iv_ratio=0, 장 시작 후 재평가 예정",
+            raw.ticker, processed.event_id[:8],
+        )
+        if counters is not None:
+            counters.totals["premarket_deferred"] = counters.totals.get("premarket_deferred", 0) + 1
+
     if _tracer and _t_proc is not None:
         _tracer.process_end(_t_proc, processed.event_id, outcome.action.value if outcome.action else (outcome.skip_reason or "SKIP"))
 
@@ -858,6 +877,10 @@ async def pipeline_loop(
     queue_maxsize = max(1, config.pipeline_queue_maxsize)
     queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
 
+    # 장전 재평가: iv_ratio=0으로 SKIP된 POS 이벤트를 09:01 이후 재처리
+    premarket_pending: list[tuple] = []
+    premarket_reeval_done = False
+
     async def _worker(worker_idx: int) -> None:
         while True:
             item = await queue.get()
@@ -880,6 +903,8 @@ async def pipeline_loop(
                     guardrail_state=guardrail_state,
                     feed_source=feed_source,
                     unknown_review_queue=unknown_review_queue,
+                    registry=registry,
+                    premarket_pending=premarket_pending,
                 )
             except LogWriteError:
                 logger.critical("Log write failed in worker %d — initiating shutdown", worker_idx)
@@ -955,6 +980,19 @@ async def pipeline_loop(
                     _tracer.queue_put_done(_t_q)
                 if counters is not None:
                     counters.totals["events_enqueued"] += 1
+
+            # 장전 재평가: 09:01 이후 pending 이벤트 재주입
+            if not premarket_reeval_done and premarket_pending:
+                now_kst = datetime.now(_KST)
+                if now_kst.hour >= 9 and now_kst.minute >= 1:
+                    premarket_reeval_done = True
+                    n = len(premarket_pending)
+                    logger.info("PREMARKET_REEVAL: %d건 장전 이벤트 재처리 시작", n)
+                    for p_raw, p_processed in premarket_pending:
+                        await queue.put((p_raw, p_processed))
+                    premarket_pending.clear()
+                    if counters is not None:
+                        counters.totals["premarket_reeval_injected"] = n
 
         # Feed stopped naturally. Drain queue before shutdown.
         await queue.join()

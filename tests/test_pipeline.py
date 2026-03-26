@@ -1186,3 +1186,168 @@ async def test_skip_decision_tracks_price_for_false_negative(tmp_path):
     # 원본 이벤트도 스케줄링됨 (SKIP이어도 schedule_t0 호출)
     main_events = [s for s in scheduler._heap if not s.event_id.startswith("skip_")]
     assert len(main_events) >= 1
+
+
+# ── US-002: 장전 이벤트 재평가 메커니즘 ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_premarket_intraday_thin_defers_event(tmp_path):
+    """장전(09시 이전) iv_ratio=0 → INTRADAY_VALUE_TOO_THIN 시 pending에 추가 + registry unmark."""
+    from kindshot.event_registry import EventRegistry, ProcessedEvent
+    from kindshot.logger import JsonlLogger
+    from kindshot.market import MarketMonitor
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+    from kindshot.pipeline import process_registered_event
+    from kindshot.models import (
+        Action, DecisionRecord, SizeHint, EventIdMethod, ContextCard,
+    )
+    from kindshot.guardrails import GuardrailResult
+    from zoneinfo import ZoneInfo
+
+    cfg = Config(log_dir=tmp_path / "logs", paper=True)
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    fetcher = PriceFetcher(kis=None)
+    scheduler = SnapshotScheduler(cfg, fetcher, log)
+
+    # 장전 시각: 07:30 KST = 22:30 UTC (전일)
+    premarket_dt = datetime(2026, 3, 20, 22, 30, 0, tzinfo=timezone.utc)
+    raw = RawDisclosure(
+        title="삼성전자(005930) - 자사주 소각 결정",
+        link="https://kind.krx.co.kr/?rcpNo=20260320000001",
+        rss_guid="premarket_guid",
+        published="2026-03-20T07:30:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=premarket_dt,
+    )
+
+    # Registry에 등록
+    processed = registry.process(raw)
+    assert processed is not None
+    event_id = processed.event_id
+
+    # 동일 이벤트 → DUPLICATE 확인
+    assert registry.process(raw) is None
+
+    premarket_pending = []
+
+    decision = DecisionRecord(
+        schema_version="0.1.3", run_id="test_run", event_id=event_id,
+        decided_at=premarket_dt, llm_model="test", llm_latency_ms=0,
+        action=Action.BUY, confidence=85, size_hint=SizeHint.M,
+        reason="test", decision_source="test",
+    )
+
+    with patch("kindshot.pipeline.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.pipeline.check_guardrails") as mock_gr, \
+         patch("kindshot.pipeline.classify") as mock_bucket:
+        from kindshot.bucket import BucketResult
+        from kindshot.context_card import ContextCardData
+        mock_bucket.return_value = BucketResult(bucket=Bucket.POS_STRONG, keyword_hits=["자사주 소각"])
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0, intraday_value_vs_adv20d=0.0),
+            ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=0.0, intraday_value_vs_adv20d=0.0),
+        )
+        # INTRADAY_VALUE_TOO_THIN 반환
+        mock_gr.return_value = GuardrailResult(passed=False, reason="INTRADAY_VALUE_TOO_THIN")
+
+        mock_engine = MagicMock()
+        mock_engine.decide = AsyncMock(return_value=decision)
+
+        await process_registered_event(
+            raw=raw, processed=processed,
+            decision_engine=mock_engine, market=market,
+            scheduler=scheduler, log=log, config=cfg,
+            run_id="test_run", kis=None, counters=None,
+            mode="paper", feed_source="KIND",
+            registry=registry,
+            premarket_pending=premarket_pending,
+        )
+
+    # pending에 추가되었는지 확인
+    assert len(premarket_pending) == 1
+    assert premarket_pending[0][0].ticker == "005930"
+
+    # registry에서 unmark되어 재처리 가능
+    reprocessed = registry.process(raw)
+    assert reprocessed is not None, "unmark 후 재처리 가능해야 함"
+
+
+@pytest.mark.asyncio
+async def test_market_hours_intraday_thin_not_deferred(tmp_path):
+    """장중(09시 이후) INTRADAY_VALUE_TOO_THIN은 pending에 추가 안 함."""
+    from kindshot.event_registry import EventRegistry
+    from kindshot.logger import JsonlLogger
+    from kindshot.market import MarketMonitor
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+    from kindshot.pipeline import process_registered_event
+    from kindshot.models import (
+        Action, DecisionRecord, SizeHint, ContextCard,
+    )
+    from kindshot.guardrails import GuardrailResult
+
+    cfg = Config(log_dir=tmp_path / "logs", paper=True)
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    fetcher = PriceFetcher(kis=None)
+    scheduler = SnapshotScheduler(cfg, fetcher, log)
+
+    # 장중 시각: 10:00 KST = 01:00 UTC
+    market_dt = datetime(2026, 3, 20, 1, 0, 0, tzinfo=timezone.utc)
+    raw = RawDisclosure(
+        title="삼성전자(005930) - 자사주 소각 결정",
+        link="https://kind.krx.co.kr/?rcpNo=20260320000002",
+        rss_guid="market_guid",
+        published="2026-03-20T10:00:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=market_dt,
+    )
+
+    processed = registry.process(raw)
+    assert processed is not None
+
+    premarket_pending = []
+
+    decision = DecisionRecord(
+        schema_version="0.1.3", run_id="test_run", event_id=processed.event_id,
+        decided_at=market_dt, llm_model="test", llm_latency_ms=0,
+        action=Action.BUY, confidence=85, size_hint=SizeHint.M,
+        reason="test", decision_source="test",
+    )
+
+    with patch("kindshot.pipeline.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.pipeline.check_guardrails") as mock_gr, \
+         patch("kindshot.pipeline.classify") as mock_bucket:
+        from kindshot.bucket import BucketResult
+        from kindshot.context_card import ContextCardData
+        mock_bucket.return_value = BucketResult(bucket=Bucket.POS_STRONG, keyword_hits=["자사주 소각"])
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0, intraday_value_vs_adv20d=0.005),
+            ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=0.5, intraday_value_vs_adv20d=0.005),
+        )
+        mock_gr.return_value = GuardrailResult(passed=False, reason="INTRADAY_VALUE_TOO_THIN")
+
+        mock_engine = MagicMock()
+        mock_engine.decide = AsyncMock(return_value=decision)
+
+        await process_registered_event(
+            raw=raw, processed=processed,
+            decision_engine=mock_engine, market=market,
+            scheduler=scheduler, log=log, config=cfg,
+            run_id="test_run", kis=None, counters=None,
+            mode="paper", feed_source="KIND",
+            registry=registry,
+            premarket_pending=premarket_pending,
+        )
+
+    # 장중이므로 pending에 추가되지 않아야 함
+    assert len(premarket_pending) == 0
