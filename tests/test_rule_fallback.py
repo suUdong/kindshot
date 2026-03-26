@@ -244,3 +244,23 @@ class TestRuleFallbackPosStrong:
             ["공급계약"], _ctx(),
         )
         assert result["action"] == "BUY"
+
+    def test_usd_large_contract_buys(self):
+        """해외 대형 수주 (1.5억달러 ≈ 2100억원) → BUY."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "HD현대중공업 해외 수주 1.5억달러 규모 공급계약 체결",
+            ["해외 수주", "공급계약"], _ctx(),
+        )
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 78
+
+    def test_usd_million_contract_buys(self):
+        """해외 수주 (300M USD ≈ 4200억원) → BUY."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "한화오션 수주 300M USD 해군 호위함",
+            ["수주"], _ctx(),
+        )
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 78
