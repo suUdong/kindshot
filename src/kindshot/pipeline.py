@@ -737,55 +737,63 @@ async def process_registered_event(
             guardrail_state=guardrail_state,
             feed_source=feed_source,
         )
-    except LlmTimeoutError:
+    except (LlmTimeoutError, LlmCallError, LlmParseError) as llm_exc:
+        err_type = type(llm_exc).__name__
         if _tracer and _t_llm is not None:
-            _tracer.llm_end(_t_llm, raw.ticker, error="timeout")
+            _tracer.llm_end(_t_llm, raw.ticker, error=err_type)
         if counters is not None:
-            counters.errors["llm_timeout"] += 1
-        outcome = ProcessOutcome(processed.event_id, skip_stage=SkipStage.LLM_TIMEOUT, skip_reason="LLM_TIMEOUT")
-        err_rec = _make_error_event_record(
-            mode=mode, config=config, run_id=run_id, processed=processed,
-            raw=raw, detected_at=detected_at, feed_source=feed_source,
-            bucket_result=bucket_result, skip_stage=SkipStage.LLM_TIMEOUT,
-            skip_reason="LLM_TIMEOUT", market_snapshot=market.snapshot,
-        )
-        await log.write(err_rec)
-        _mark_skip(counters, stage=SkipStage.LLM_TIMEOUT.value, reason="LLM_TIMEOUT")
-        # 안전망: LLM 실패해도 반사실 데이터 수집
+            counters.errors[f"llm_{err_type}"] += 1
+
+        # 안전망: POS 버킷이면 rule_fallback으로 재시도 (LLM 없이)
         if bucket_result.bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
-            scheduler.schedule_t0(event_id=processed.event_id, ticker=raw.ticker, t0_basis=T0Basis.DETECTED_AT, t0_ts=detected_at, run_id=run_id, mode=mode)
-    except LlmCallError:
-        if _tracer and _t_llm is not None:
-            _tracer.llm_end(_t_llm, raw.ticker, error="call_error")
-        if counters is not None:
-            counters.errors["llm_call_error"] += 1
-        outcome = ProcessOutcome(processed.event_id, skip_stage=SkipStage.LLM_ERROR, skip_reason="LLM_ERROR")
-        err_rec = _make_error_event_record(
-            mode=mode, config=config, run_id=run_id, processed=processed,
-            raw=raw, detected_at=detected_at, feed_source=feed_source,
-            bucket_result=bucket_result, skip_stage=SkipStage.LLM_ERROR,
-            skip_reason="LLM_ERROR", market_snapshot=market.snapshot,
-        )
-        await log.write(err_rec)
-        _mark_skip(counters, stage=SkipStage.LLM_ERROR.value, reason="LLM_ERROR")
-        if bucket_result.bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
-            scheduler.schedule_t0(event_id=processed.event_id, ticker=raw.ticker, t0_basis=T0Basis.DETECTED_AT, t0_ts=detected_at, run_id=run_id, mode=mode)
-    except LlmParseError:
-        if _tracer and _t_llm is not None:
-            _tracer.llm_end(_t_llm, raw.ticker, error="parse_error")
-        if counters is not None:
-            counters.errors["llm_parse_error"] += 1
-        outcome = ProcessOutcome(processed.event_id, skip_stage=SkipStage.LLM_PARSE, skip_reason="LLM_PARSE")
-        err_rec = _make_error_event_record(
-            mode=mode, config=config, run_id=run_id, processed=processed,
-            raw=raw, detected_at=detected_at, feed_source=feed_source,
-            bucket_result=bucket_result, skip_stage=SkipStage.LLM_PARSE,
-            skip_reason="LLM_PARSE", market_snapshot=market.snapshot,
-        )
-        await log.write(err_rec)
-        _mark_skip(counters, stage=SkipStage.LLM_PARSE.value, reason="LLM_PARSE")
-        if bucket_result.bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
-            scheduler.schedule_t0(event_id=processed.event_id, ticker=raw.ticker, t0_basis=T0Basis.DETECTED_AT, t0_ts=detected_at, run_id=run_id, mode=mode)
+            logger.warning(
+                "Outer LLM error [%s] %s, retrying via rule_fallback: %s",
+                raw.ticker, err_type, llm_exc,
+            )
+            try:
+                outcome = await execute_bucket_path(
+                    raw=raw,
+                    processed=processed,
+                    bucket=bucket_result.bucket,
+                    keyword_hits=bucket_result.keyword_hits,
+                    decision_engine=decision_engine,
+                    market=market,
+                    scheduler=scheduler,
+                    log=log,
+                    config=config,
+                    run_id=run_id,
+                    kis=kis,
+                    counters=counters,
+                    mode=mode,
+                    guardrail_state=guardrail_state,
+                    feed_source=feed_source,
+                )
+            except Exception:
+                logger.warning("Rule fallback retry also failed for [%s]", raw.ticker, exc_info=True)
+                skip_stage = SkipStage.LLM_ERROR
+                skip_reason = f"LLM_{err_type}_FALLBACK_FAIL"
+                outcome = ProcessOutcome(processed.event_id, skip_stage=skip_stage, skip_reason=skip_reason)
+                err_rec = _make_error_event_record(
+                    mode=mode, config=config, run_id=run_id, processed=processed,
+                    raw=raw, detected_at=detected_at, feed_source=feed_source,
+                    bucket_result=bucket_result, skip_stage=skip_stage,
+                    skip_reason=skip_reason, market_snapshot=market.snapshot,
+                )
+                await log.write(err_rec)
+                _mark_skip(counters, stage=skip_stage.value, reason=skip_reason)
+                scheduler.schedule_t0(event_id=processed.event_id, ticker=raw.ticker, t0_basis=T0Basis.DETECTED_AT, t0_ts=detected_at, run_id=run_id, mode=mode)
+        else:
+            skip_stage = SkipStage.LLM_ERROR
+            skip_reason = f"LLM_{err_type}"
+            outcome = ProcessOutcome(processed.event_id, skip_stage=skip_stage, skip_reason=skip_reason)
+            err_rec = _make_error_event_record(
+                mode=mode, config=config, run_id=run_id, processed=processed,
+                raw=raw, detected_at=detected_at, feed_source=feed_source,
+                bucket_result=bucket_result, skip_stage=skip_stage,
+                skip_reason=skip_reason, market_snapshot=market.snapshot,
+            )
+            await log.write(err_rec)
+            _mark_skip(counters, stage=skip_stage.value, reason=skip_reason)
     except Exception:
         logger.exception("Unexpected error processing %s [%s]", processed.event_id, raw.ticker)
         if _tracer and _t_llm is not None:
