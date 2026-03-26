@@ -405,29 +405,33 @@ async def test_contract_downtrend_large_contract_bypasses_preflight():
     assert result is None
 
 
-async def test_contract_large_cap_preflight_skips_without_llm_call():
-    cfg = Config(anthropic_api_key="test")
-    engine = DecisionEngine(cfg)
-
-    mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock()
-    engine._llm._anthropic_client = mock_client
+async def test_contract_large_cap_large_amount_bypasses_preflight():
+    """대형주(ADV 3811억) + 대형계약(1.5조) → preflight 바이패스, LLM 판단."""
+    from kindshot.decision import _contract_preflight_skip
 
     ctx = ContextCard(ret_today=0.3, ret_3d=-2.5, adv_value_20d=381_140_000_000)
-    result = await engine.decide(
-        "006400",
-        "삼성SDI",
+    result = _contract_preflight_skip(
         "삼성SDI, 美 에너지 기업과 1.5조 규모 ESS 공급 계약 체결",
-        Bucket.POS_STRONG,
+        ["공급 계약"],
         ctx,
-        "09:40:00",
-        keyword_hits=["공급 계약"],
     )
+    # 대형 계약(1.5조)이므로 preflight가 None 반환 (LLM으로 넘김)
+    assert result is None
 
-    assert result.action == Action.SKIP
-    assert result.decision_source == "RULE_PREFLIGHT"
-    assert "contract_large_cap" in result.reason
-    assert mock_client.messages.create.call_count == 0
+
+async def test_contract_large_cap_small_amount_preflight_skips():
+    """대형주(ADV 3811억) + 소형계약(200억) → preflight SKIP."""
+    from kindshot.decision import _contract_preflight_skip
+
+    ctx = ContextCard(ret_today=0.3, ret_3d=-2.5, adv_value_20d=381_140_000_000)
+    result = _contract_preflight_skip(
+        "삼성SDI, 200억 규모 공급 계약 체결",
+        ["공급 계약"],
+        ctx,
+    )
+    assert result is not None
+    assert result["confidence"] == 45
+    assert "contract_large_cap" in result["reason"]
 
 
 async def test_normal_contract_still_calls_llm_when_preflight_clean():

@@ -257,8 +257,11 @@ def _contract_preflight_skip(
             return {"confidence": 50, "reason": f"rule_preflight:contract_downtrend ret_3d={ctx.ret_3d:.1f}%"}
 
     if ctx.adv_value_20d is not None and ctx.adv_value_20d > 200_000_000_000:
-        adv_eok = ctx.adv_value_20d / 1e8
-        return {"confidence": 45, "reason": f"rule_preflight:contract_large_cap adv={adv_eok:.0f}억"}
+        # 대형주지만 대형 계약(1000억+)이면 LLM 판단 허용 (v63: cap 76 적용됨)
+        is_large, _ = _has_large_contract_signal(headline, keyword_hits)
+        if not is_large:
+            adv_eok = ctx.adv_value_20d / 1e8
+            return {"confidence": 45, "reason": f"rule_preflight:contract_large_cap adv={adv_eok:.0f}억"}
 
     return None
 
