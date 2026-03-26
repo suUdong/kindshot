@@ -18,8 +18,8 @@ class TestRuleFallbackBucket:
         assert result["size_hint"] == "S"  # POS_WEAK은 항상 S
 
     def test_pos_weak_medium_conviction_skips(self):
-        """POS_WEAK에서 conf 78 키워드는 SKIP (80 미만)."""
-        result = _rule_based_decide(Bucket.POS_WEAK, "흑자전환 달성", ["흑자전환"], _ctx())
+        """POS_WEAK에서 conf 79 키워드는 SKIP (80 미만)."""
+        result = _rule_based_decide(Bucket.POS_WEAK, "대형 계약 체결", ["대형 계약"], _ctx())
         assert result["action"] == "SKIP"
         assert "pos_weak_below_80" in result["reason"]
 
