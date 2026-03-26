@@ -123,6 +123,27 @@ def test_neg_strong_regulatory_violation_phrase():
     assert "규제 위반" in result.keyword_hits
 
 
+def test_pos_strong_stock_cancellation_no_space():
+    """주식소각 (띄어쓰기 없음) 변형도 POS_STRONG으로 분류."""
+    result = classify("(주)대덕 주식소각 결정(자회사의 주요경영사항)")
+    assert result.bucket == Bucket.POS_STRONG
+    assert "주식소각 결정" in result.keyword_hits
+
+
+def test_pos_strong_cancellation_decision():
+    """'소각 결정' 패턴: 자사주 취득 후 소각 결정도 POS_STRONG."""
+    result = classify("와이솔, 70억 규모 자사주 취득 후 소각 결정")
+    assert result.bucket == Bucket.POS_STRONG
+    assert "소각 결정" in result.keyword_hits
+
+
+def test_pos_strong_stock_cancellation_bare():
+    """'주식소각' 단독 키워드 매칭."""
+    result = classify("ABC 주식소각 발표")
+    assert result.bucket == Bucket.POS_STRONG
+    assert "주식소각" in result.keyword_hits
+
+
 def test_unknown_generic_lawsuit_not_negative():
     result = classify("삼성전자서비스 퇴직자도 \"퇴직금 더 줘\"...줄소송 현실화")
     assert result.bucket == Bucket.UNKNOWN
