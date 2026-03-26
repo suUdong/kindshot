@@ -44,6 +44,9 @@ class LlmParseError(Exception):
 
 
 _MAX_HEADLINE_LEN = 500
+_CONTRACT_FAMILY_KEYWORDS = ("수주", "공급계약", "공급 계약", "납품계약", "단일판매")
+_CONTRACT_ARTICLE_MARKERS = ("[카드]", "[종합]", "[TOP's Pick]", "[클릭e종목]", "[특징주]", "파죽지세", "보인다", "전망")
+_INCREMENTAL_ORDER_MARKERS = ("1척 추가", "추가 수주", "추가 공급", "추가 계약")
 
 
 def _build_prompt(
@@ -182,6 +185,50 @@ def _parse_llm_response(raw: str) -> Optional[dict]:
     data["reason"] = reason[:100]
 
     return data
+
+
+def _is_contract_family(headline: str, keyword_hits: list[str]) -> bool:
+    haystacks = [headline, *keyword_hits]
+    return any(term in text for text in haystacks for term in _CONTRACT_FAMILY_KEYWORDS)
+
+
+def _looks_like_contract_article(headline: str) -> bool:
+    if any(marker in headline for marker in _CONTRACT_ARTICLE_MARKERS):
+        return True
+    if "넘어" in headline and any(mark in headline for mark in ('"', "'", "“", "”", "‘", "’")):
+        return True
+    return False
+
+
+def _looks_like_incremental_order(headline: str) -> bool:
+    return any(marker in headline for marker in _INCREMENTAL_ORDER_MARKERS)
+
+
+def _contract_preflight_skip(
+    headline: str,
+    keyword_hits: list[str],
+    ctx: ContextCard,
+) -> dict[str, object] | None:
+    if not _is_contract_family(headline, keyword_hits):
+        return None
+
+    if _looks_like_contract_article(headline):
+        return {"confidence": 35, "reason": "rule_preflight:contract_article"}
+
+    if _looks_like_incremental_order(headline):
+        return {"confidence": 45, "reason": "rule_preflight:contract_incremental"}
+
+    if ctx.ret_today is not None and ctx.ret_today >= 3.0:
+        return {"confidence": 40, "reason": f"rule_preflight:contract_chase ret={ctx.ret_today:.1f}%"}
+
+    if ctx.ret_3d is not None and ctx.ret_3d <= -5.0:
+        return {"confidence": 50, "reason": f"rule_preflight:contract_downtrend ret_3d={ctx.ret_3d:.1f}%"}
+
+    if ctx.adv_value_20d is not None and ctx.adv_value_20d > 200_000_000_000:
+        adv_eok = ctx.adv_value_20d / 1e8
+        return {"confidence": 45, "reason": f"rule_preflight:contract_large_cap adv={adv_eok:.0f}억"}
+
+    return None
 
 
 @dataclass
@@ -405,6 +452,33 @@ class DecisionEngine:
         )
         return record
 
+    def _preflight_decide(
+        self,
+        headline: str,
+        ctx: ContextCard,
+        keyword_hits: list[str],
+        *,
+        run_id: str = "",
+        schema_version: str = "0.1.2",
+    ) -> DecisionRecord | None:
+        parsed = _contract_preflight_skip(headline, keyword_hits, ctx)
+        if parsed is None:
+            return None
+
+        return DecisionRecord(
+            schema_version=schema_version,
+            run_id=run_id,
+            event_id="",
+            decided_at=datetime.now(timezone.utc),
+            llm_model="rule_preflight",
+            llm_latency_ms=0,
+            action=Action.SKIP,
+            confidence=int(parsed["confidence"]),
+            size_hint=SizeHint.S,
+            reason=str(parsed["reason"]),
+            decision_source="RULE_PREFLIGHT",
+        )
+
     async def decide(
         self,
         ticker: str,
@@ -414,6 +488,7 @@ class DecisionEngine:
         ctx: ContextCard,
         detected_at_str: str,
         *,
+        keyword_hits: Optional[list[str]] = None,
         run_id: str = "",
         schema_version: str = "0.1.2",
         market_ctx: Optional[MarketContext] = None,
@@ -425,6 +500,15 @@ class DecisionEngine:
             LlmCallError: upstream call failure.
             LlmParseError: response parse/shape failure.
         """
+        preflight = self._preflight_decide(
+            headline,
+            ctx,
+            list(keyword_hits or []),
+            run_id=run_id,
+            schema_version=schema_version,
+        )
+        if preflight is not None:
+            return preflight
 
         self._sweep_cache()
         key = self._cache_key(ticker, headline, bucket, ctx)

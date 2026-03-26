@@ -315,6 +315,133 @@ async def test_llm_invalid_json_raises():
         await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
 
 
+async def test_contract_article_preflight_skips_without_llm_call():
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock()
+    engine._llm._client = mock_client
+
+    ctx = ContextCard(ret_today=1.2, ret_3d=7.3, adv_value_20d=132_310_000_000)
+    result = await engine.decide(
+        "298040",
+        "효성중공업",
+        "‘파죽지세’ K전력기기…효성중공업, 美·유럽 이어 호주서 ESS 수주",
+        Bucket.POS_STRONG,
+        ctx,
+        "10:18:27",
+        keyword_hits=["수주"],
+    )
+
+    assert result.action == Action.SKIP
+    assert result.decision_source == "RULE_PREFLIGHT"
+    assert "contract_article" in result.reason
+    assert mock_client.messages.create.call_count == 0
+
+
+async def test_incremental_order_preflight_skips_without_llm_call():
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock()
+    engine._llm._client = mock_client
+
+    ctx = ContextCard(ret_today=0.6, ret_3d=-2.8, adv_value_20d=50_370_000_000)
+    result = await engine.decide(
+        "439260",
+        "대한조선",
+        "대한조선, 수에즈막스 원유운반선 1척 추가 수주",
+        Bucket.POS_STRONG,
+        ctx,
+        "09:17:00",
+        keyword_hits=["수주"],
+    )
+
+    assert result.action == Action.SKIP
+    assert result.decision_source == "RULE_PREFLIGHT"
+    assert "contract_incremental" in result.reason
+    assert mock_client.messages.create.call_count == 0
+
+
+async def test_contract_downtrend_preflight_skips_without_llm_call():
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock()
+    engine._llm._client = mock_client
+
+    ctx = ContextCard(ret_today=0.3, ret_3d=-9.0, adv_value_20d=103_090_000_000)
+    result = await engine.decide(
+        "003670",
+        "포스코퓨처엠",
+        "포스코퓨처엠 수주공시 - 이차전지용 인조흑연 음극재 공급 1.01조",
+        Bucket.POS_STRONG,
+        ctx,
+        "09:06:00",
+        keyword_hits=["수주"],
+    )
+
+    assert result.action == Action.SKIP
+    assert result.decision_source == "RULE_PREFLIGHT"
+    assert "contract_downtrend" in result.reason
+    assert mock_client.messages.create.call_count == 0
+
+
+async def test_contract_large_cap_preflight_skips_without_llm_call():
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock()
+    engine._llm._client = mock_client
+
+    ctx = ContextCard(ret_today=0.3, ret_3d=-2.5, adv_value_20d=381_140_000_000)
+    result = await engine.decide(
+        "006400",
+        "삼성SDI",
+        "삼성SDI, 美 에너지 기업과 1.5조 규모 ESS 공급 계약 체결",
+        Bucket.POS_STRONG,
+        ctx,
+        "09:40:00",
+        keyword_hits=["공급 계약"],
+    )
+
+    assert result.action == Action.SKIP
+    assert result.decision_source == "RULE_PREFLIGHT"
+    assert "contract_large_cap" in result.reason
+    assert mock_client.messages.create.call_count == 0
+
+
+async def test_normal_contract_still_calls_llm_when_preflight_clean():
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text='{"action":"BUY","confidence":80,"size_hint":"M","reason":"large confirmed contract"}')]
+    mock_msg.usage = MagicMock(input_tokens=100, output_tokens=50)
+    mock_client.messages.create = AsyncMock(return_value=mock_msg)
+    engine._llm._client = mock_client
+
+    ctx = ContextCard(ret_today=-2.5, ret_3d=-2.0, adv_value_20d=156_420_000_000)
+    result = await engine.decide(
+        "329180",
+        "HD현대중공업",
+        "HD현대중공업, 8,237억원 규모 공급계약(컨테이너선 10척) 체결",
+        Bucket.POS_STRONG,
+        ctx,
+        "09:11:00",
+        keyword_hits=["공급계약"],
+    )
+
+    assert result.action == Action.BUY
+    assert result.decision_source == "LLM"
+    assert mock_client.messages.create.call_count == 1
+
+
 # ── v3 프롬프트 & 파서 테스트 ──────────────────
 
 def test_prompt_contains_market_adjustment():

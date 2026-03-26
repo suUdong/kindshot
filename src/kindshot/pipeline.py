@@ -347,6 +347,7 @@ async def execute_bucket_path(
             bucket=bucket,
             ctx=ctx if ctx else ContextCard(),
             detected_at_str=detected_at.strftime("%H:%M:%S"),
+            keyword_hits=keyword_hits,
             run_id=run_id,
             schema_version=config.schema_version,
             market_ctx=market.snapshot,

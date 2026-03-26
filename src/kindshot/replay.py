@@ -809,6 +809,7 @@ async def _run_replay(
                 bucket=Bucket.POS_STRONG,
                 ctx=ctx,
                 detected_at_str=detected_at_str,
+                keyword_hits=rec.get("keyword_hits") or [],
                 run_id="replay",
                 schema_version=config.schema_version,
             )
