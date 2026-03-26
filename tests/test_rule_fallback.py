@@ -199,3 +199,48 @@ class TestRuleFallbackPosStrong:
         )
         assert result["action"] == "BUY"
         assert result["confidence"] >= 77
+
+    def test_article_pattern_preview_skips(self):
+        """Preview 기사 패턴 → SKIP."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "삼성전자 1Q26 Preview: 수주 전망 양호",
+            ["수주"], _ctx(),
+        )
+        assert result["action"] == "SKIP"
+
+    def test_article_pattern_unconfirmed_skips(self):
+        """미확정 표현 '추진' → SKIP."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "현대건설 자사주 소각 추진",
+            ["자사주 소각"], _ctx(),
+        )
+        assert result["action"] == "SKIP"
+
+    def test_article_pattern_scheduled_skips(self):
+        """미확정 표현 '예정' → SKIP."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "SK이노 대규모 수주 계약 체결 예정",
+            ["수주"], _ctx(),
+        )
+        assert result["action"] == "SKIP"
+
+    def test_article_pattern_target_skips(self):
+        """'목표' = 계획/전망 → SKIP."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "현대건설 수주 33조 목표",
+            ["수주"], _ctx(),
+        )
+        assert result["action"] == "SKIP"
+
+    def test_confirmed_order_still_buys(self):
+        """확정 수주 공시는 BUY 유지."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "넥스틴 SK하이닉스 106억 규모 공급계약 체결",
+            ["공급계약"], _ctx(),
+        )
+        assert result["action"] == "BUY"
