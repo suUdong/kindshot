@@ -313,8 +313,8 @@ _HIGH_CONVICTION_KEYWORDS: list[tuple[str, int]] = [
     # 첫 수주/매출 — 모멘텀 전환 신호
     ("최초 수주", 80), ("첫 수주", 80), ("첫 매출", 79),
     ("첫 양산", 79), ("양산 개시", 79),
-    # 정��/조달 계약 — 안정적 매출
-    ("정부 조달", 78), ("조달�� 계약", 78), ("국책과제 선정", 77),
+    # 정부/조달 계약 — 안정적 매출
+    ("정부 조달", 79), ("조달청 계약", 79), ("국책과제 선정", 78),
     # 역대/사상 최대 수주
     ("역대 최대 수주", 83), ("사상 최대 수주", 83),
     ("수주 잔고 최대", 81), ("수주잔고 최대", 81),
@@ -350,10 +350,12 @@ def _has_large_contract_signal(headline: str, keyword_hits: list[str]) -> tuple[
     pct_match = re.search(r"매출액[대]?비\s*(\d+(?:\.\d+)?)\s*%", headline)
     if pct_match:
         pct = float(pct_match.group(1))
+        if pct >= 15.0:
+            return True, 88
         if pct >= 10.0:
-            return True, 80
+            return True, 85
         if pct >= 5.0:
-            return True, 78
+            return True, 82
         # 5% 미만은 무시
 
     # 금액 파싱: 조 단위 + 억 단위
@@ -362,17 +364,17 @@ def _has_large_contract_signal(headline: str, keyword_hits: list[str]) -> tuple[
     if cho_match:
         amt_eok = float(cho_match.group(1).replace(",", "")) * 10000
         if amt_eok >= 10000:  # 1조+
-            return True, 80
+            return True, 86
         if amt_eok >= 5000:  # 5000억+
-            return True, 79
+            return True, 83
 
     amt_match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*억", headline)
     if amt_match:
         amt = float(amt_match.group(1).replace(",", ""))
         if amt >= 1000:
-            return True, 79
+            return True, 81
         if amt >= 500:
-            return True, 77
+            return True, 79
 
     # 달러/USD 금액 파싱: 해외 수주
     # "1.5억달러", "150백만달러", "2억불", "100M USD"
@@ -381,22 +383,22 @@ def _has_large_contract_signal(headline: str, keyword_hits: list[str]) -> tuple[
         usd_eok = float(usd_eok_match.group(1).replace(",", ""))
         amt_eok = usd_eok * 1400  # 1억달러 ≈ 1400억원 (환율 1400원 기준)
         if amt_eok >= 1000:
-            return True, 80
+            return True, 83
         if amt_eok >= 500:
-            return True, 78
+            return True, 80
 
     usd_m_match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*(?:백만|million|M)\s*(?:달러|불|USD)", headline, re.IGNORECASE)
     if usd_m_match:
         usd_m = float(usd_m_match.group(1).replace(",", ""))
         amt_eok = usd_m * 14  # 1M USD ≈ 14억원 (환율 1400원)
         if amt_eok >= 1000:
-            return True, 80
+            return True, 83
         if amt_eok >= 500:
-            return True, 78
+            return True, 80
 
     # "단일판매ㆍ공급계약체결" 정규 공시는 금액 없어도 신뢰도 있음 (KIND 공시)
     if "단일판매" in headline and "공급계약" in headline:
-        return True, 77
+        return True, 79
 
     return False, 0
 
