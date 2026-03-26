@@ -39,6 +39,7 @@ class Config:
     nvidia_model: str = field(default_factory=lambda: _env("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct"))
     # --- Anthropic (fallback) ---
     anthropic_api_key: str = field(default_factory=lambda: _env("ANTHROPIC_API_KEY"))
+    llm_fallback_enabled: bool = field(default_factory=lambda: _env_bool("LLM_FALLBACK_ENABLED", True))
     llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "claude-haiku-4-5-20251001"))
     llm_sdk_timeout_s: float = 15.0  # SDK backup timeout (> wait_for)
     llm_wait_for_s: float = 12.0    # asyncio.wait_for fires first
