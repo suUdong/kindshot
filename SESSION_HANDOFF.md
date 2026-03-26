@@ -1,61 +1,60 @@
-# Session Handoff — 2026-03-26 (10차, 파이어모드)
+# Session Handoff — 2026-03-26 (11차, 파이어모드)
 
-## 이번 세션 완료 작업
-
-### 수익성 개선 v7 — Hold Profile 연동 TP/SL + Stale Position Exit
+## 이번 세션 완료 작업 (v7~v12)
 
 | # | 커밋 | 분류 | 내용 |
 |---|------|------|------|
-| 1 | (pending) | feat | hold profile 연동 TP/SL + stale position exit |
+| 1 | `74987cc` | feat | v7: hold profile 연동 TP/SL + stale position exit |
+| 2 | `18e72e8` | feat | v8: detection delay 감점 + BUY 알림 TP/SL 표시 |
+| 3 | `441f290` | feat | v9: 시장 반응 확인 confidence 보정 (ret_today) |
+| 4 | `1098423` | feat | v10: confidence 조정 파이프라인 통합 + 감점 상한 -10 |
+| 5 | `cbaec36` | feat | v11: 고확신 키워드 확대 + hold profile 보강 |
+| 6 | `4c72553` | fix | v12: 버킷 키워드 갭 해소 — HIGH_CONVICTION↔POS_STRONG 동기화 |
 
 ### 변경 상세
 
-**핵심 진단: 승률 25.8%, 누적 -24.31%의 원인**
-- TP/SL이 confidence만 반영, 촉매 유형(hold profile)을 무시
-- 수주(빠른 반전)와 자사주소각(장기 트렌드)에 동일한 TP/SL 적용
-- 모멘텀 소멸 포지션에 대한 탈출 전략 부재
+**v7: Hold Profile 연동 TP/SL + Stale Exit**
+- EOD hold(자사주소각): TP×1.5, SL×1.3 → 장기 트렌드 수익 극대화
+- 수주/공급계약(hold≤15): TP×0.7 → 빠른 반전 전 익절
+- Stale position: 5분+ 경과 ±0.2% 미만 → 모멘텀 소멸 탈출
 
-**1. Hold Profile 연동 TP/SL (`guardrails.py`)**
-- `get_dynamic_tp_pct()`, `get_dynamic_stop_loss_pct()`에 `hold_minutes` 파라미터 추가
-- EOD hold (자사주소각, 공개매수): TP ×1.5, SL ×1.3 — 장기 트렌드 수익 극대화
-- 수주/공급계약 (hold≤15분): TP ×0.7 — 빠른 반전 전 이익 확보
-- 표준 (특허/임상, hold>15분): 기존 confidence 기반 유지
+**v8: Detection Delay 감점**
+- 30~60s: -1, 60~120s: -2, 120s+: -3
+- 텔레그램 BUY 알림에 TP/SL% 표시
 
-**2. Stale Position Exit (`price.py`)**
-- 진입 후 5분 경과 + 수익률 ±0.2% 미만 → 모멘텀 소멸 판단, 자동 탈출
-- EOD hold (hold_minutes=0)는 stale 판정 제외 (장기 촉매)
-- 불필요한 보유 시간 감소 → 기회비용 절감
+**v9: 시장 반응 확인**
+- ret_today 0.3~1.5%: 시장 반응 확인 → +2
+- ret_today < -0.5%: 시장 불신 → -2
 
-**3. Price Tracker hold_minutes 연동 (`price.py`)**
-- TP/SL 계산 시 이벤트별 hold_minutes를 guardrails 함수에 전달
-- 촉매 유형별 맞춤형 출구 전략 완성
+**v10: 감점 상한**
+- 4개 조정(ADV, price reaction, delay, market) 단일 블록
+- 총 감점 상한 -10: 과다 감점 방지
 
-## 이전 세션 완료 작업
+**v11: 키워드 확대**
+- 최초수주/첫매출/양산개시, 역대최대수주, 정부조달 추가
+- hold_profile: 정부조달 15분, 첫수주/양산 20분
 
-### 수익성 개선 v6 — 하락장 고확신 촉매 바이패스 + hold_profile 확대 + SKIP 알림
-- `285c95a` feat: 하락장에서도 고확신 촉매(conf>=82) LLM 판단 허용
-- 텔레그램 high-conf SKIP 알림 추가 (false negative 모니터링)
-
-### 수익성 개선 v5 — SKIP 편향 해소
-- `da51250` feat: 프롬프트 리밸런싱 + rule_fallback 키워드 확대 + circuit breaker 강화
+**v12: 버킷 키워드 갭 해소 (버그 수정)**
+- FDA승인/허가, 임상2상/3상 성공 등 21개 키워드가 POS_STRONG 누락
+- UNKNOWN 분류 → rule_fallback 미도달 → 시그널 유실 해결
 
 ## 현재 상태
 - **브랜치:** main
-- **테스트:** 637 passed, 0 failed (+3 신규 테스트)
-- **서버:** active (running) — 배포 필요
+- **테스트:** 645 passed, 0 failed
+- **서버:** active (running), 최종 배포 완료
 
 ## 잔여 기술 부채
 
 ### P1 — 긴급
 1. **Anthropic 크레딧 충전 또는 제거** — fallback 불가 상태
-2. **3/27 장중 모니터링** — BUY 시그널 발생 + hold profile TP/SL 효과 확인
-3. **2주 룰 freeze + 데이터 수집** — 새 전략으로 100건+ 거래 필요
+2. **3/27 장중 모니터링** — v7~v12 효과 검증
+3. **2주 룰 freeze + 데이터 수집** — 100건+ 거래 필요
 
 ### P2 — 기능/전략
-4. **Paper → 소액 Live 전환 준비** — KIS live API 키 설정, 주문 실행 모듈
-5. **확률 기반 진입** — 뉴스 후 2~5분 관찰 후 진입 (구현 복잡)
+4. **Paper → 소액 Live 전환 준비** — KIS live API 키 설정
+5. **확률 기반 진입** — 뉴스 후 2~5분 관찰 후 진입
 6. **Volume 확인 게이트** — 진입 시 거래량 급증 확인
 
 ### P3 — 제품 방향
-7. **외부 사용자 확보** — 텔레그램 채널에 지인 1~3명 초대
+7. **외부 사용자 확보** — 텔레그램 채널 초대
 8. **정보 서비스 pivot 검토** — AI 공시 분석 알림 서비스
