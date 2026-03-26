@@ -222,7 +222,10 @@ def _contract_preflight_skip(
         return {"confidence": 40, "reason": f"rule_preflight:contract_chase ret={ctx.ret_today:.1f}%"}
 
     if ctx.ret_3d is not None and ctx.ret_3d <= -5.0:
-        return {"confidence": 50, "reason": f"rule_preflight:contract_downtrend ret_3d={ctx.ret_3d:.1f}%"}
+        # 대형 계약(1000억+ 또는 매출액대비 10%+)은 하락장에서도 LLM 판단 허용
+        is_large, _ = _has_large_contract_signal(headline, keyword_hits)
+        if not is_large:
+            return {"confidence": 50, "reason": f"rule_preflight:contract_downtrend ret_3d={ctx.ret_3d:.1f}%"}
 
     if ctx.adv_value_20d is not None and ctx.adv_value_20d > 200_000_000_000:
         adv_eok = ctx.adv_value_20d / 1e8

@@ -366,6 +366,7 @@ async def test_incremental_order_preflight_skips_without_llm_call():
 
 
 async def test_contract_downtrend_preflight_skips_without_llm_call():
+    """소규모 수주 + 하락장 → preflight SKIP."""
     cfg = Config(anthropic_api_key="test")
     engine = DecisionEngine(cfg)
 
@@ -377,7 +378,7 @@ async def test_contract_downtrend_preflight_skips_without_llm_call():
     result = await engine.decide(
         "003670",
         "포스코퓨처엠",
-        "포스코퓨처엠 수주공시 - 이차전지용 인조흑연 음극재 공급 1.01조",
+        "포스코퓨처엠 수주공시 - 이차전지용 인조흑연 음극재 공급",
         Bucket.POS_STRONG,
         ctx,
         "09:06:00",
@@ -388,6 +389,20 @@ async def test_contract_downtrend_preflight_skips_without_llm_call():
     assert result.decision_source == "RULE_PREFLIGHT"
     assert "contract_downtrend" in result.reason
     assert mock_client.messages.create.call_count == 0
+
+
+async def test_contract_downtrend_large_contract_bypasses_preflight():
+    """대형 계약(1조+) + 하락장 → preflight 바이패스, LLM 판단 허용."""
+    from kindshot.decision import _contract_preflight_skip
+
+    ctx = ContextCard(ret_today=0.3, ret_3d=-9.0, adv_value_20d=103_090_000_000)
+    result = _contract_preflight_skip(
+        "포스코퓨처엠 수주공시 - 이차전지용 인조흑연 음극재 공급 1.01조",
+        ["수주"],
+        ctx,
+    )
+    # 대형 계약이므로 preflight가 None 반환 (LLM으로 넘김)
+    assert result is None
 
 
 async def test_contract_large_cap_preflight_skips_without_llm_call():
