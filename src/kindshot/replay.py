@@ -471,13 +471,16 @@ def _ops_row_for_date(config: Config, dt: str) -> dict[str, Any]:
     report_path = _report_output_path(config, dt)
     status = _read_json_file(status_path) or replay_day_status(dt, config, output_path=str(status_path))
     report = _read_json_file(report_path)
+    collector_input = status.get("input", {}).get("collector", {})
     return {
         "date": dt,
         "health": status.get("health", "missing_inputs"),
         "warning_count": len(status.get("warnings", [])),
         "warnings": status.get("warnings", []),
         "merged_event_count": status.get("replayability", {}).get("merged_event_count", 0),
-        "collector_available": bool(status.get("input", {}).get("collector", {}).get("available", False)),
+        "collector_available": bool(collector_input.get("available", False)),
+        "collector_status_reason": str(collector_input.get("status_reason", "") or ""),
+        "collector_manifest_path": str(collector_input.get("manifest_path", "") or ""),
         "runtime_available": bool(status.get("input", {}).get("runtime", {}).get("available", False)),
         "report_available": bool(report),
         "buy_decisions": int(report.get("summary", {}).get("buy_decisions", 0) or 0),
@@ -547,6 +550,8 @@ def _build_replay_ops_ready_queue(config: Config, *, policy: ReplayOpsSelectionP
                 "selection_reason": "selected" if selected else reason,
                 "report_available": bool(row.get("report_available")),
                 "collector_available": bool(row.get("collector_available")),
+                "collector_status_reason": str(row.get("collector_status_reason", "") or ""),
+                "collector_manifest_path": str(row.get("collector_manifest_path", "") or ""),
                 "runtime_available": bool(row.get("runtime_available")),
                 "merged_event_count": int(row.get("merged_event_count", 0) or 0),
                 "warning_count": int(row.get("warning_count", 0) or 0),

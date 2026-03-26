@@ -944,7 +944,14 @@ def test_replay_ops_summary_aggregates_multiple_dates(tmp_path):
                 "generated_at": "2026-03-15T10:00:00+09:00",
                 "health": "partial_inputs",
                 "warnings": ["COLLECTOR_PARTIAL_STATUS", "NO_REPLAYABLE_EVENTS"],
-                "input": {"collector": {"available": True}, "runtime": {"available": False}},
+                "input": {
+                    "collector": {
+                        "available": True,
+                        "status_reason": "daily_index_missing",
+                        "manifest_path": str(collector_manifests_dir / "20260315.json"),
+                    },
+                    "runtime": {"available": False},
+                },
                 "replayability": {"merged_event_count": 0},
             }
         ),
@@ -986,6 +993,8 @@ def test_replay_ops_summary_aggregates_multiple_dates(tmp_path):
     assert len(report["rows"]) == 2
     assert report["rows"][0]["date"] == "20260316"
     assert report["rows"][0]["buy_decisions"] == 2
+    assert report["all_rows"][1]["collector_status_reason"] == "daily_index_missing"
+    assert report["all_rows"][1]["collector_manifest_path"].endswith("20260315.json")
     assert (tmp_path / "data" / "replay" / "ops" / "latest.json").exists()
 
 
@@ -1045,7 +1054,22 @@ def test_replay_ops_queue_ready_applies_policy_filters(tmp_path):
         encoding="utf-8",
     )
     (day_status_dir / "20260314.json").write_text(
-        json.dumps({"date": "20260314", "health": "partial_inputs", "warnings": ["COLLECTOR_PARTIAL_STATUS"], "input": {"collector": {"available": True}, "runtime": {"available": True}}, "replayability": {"merged_event_count": 5}}),
+        json.dumps(
+            {
+                "date": "20260314",
+                "health": "partial_inputs",
+                "warnings": ["COLLECTOR_PARTIAL_STATUS"],
+                "input": {
+                    "collector": {
+                        "available": True,
+                        "status_reason": "pagination_truncated",
+                        "manifest_path": str(collector_manifests_dir / "20260314.json"),
+                    },
+                    "runtime": {"available": True},
+                },
+                "replayability": {"merged_event_count": 5},
+            }
+        ),
         encoding="utf-8",
     )
     (day_reports_dir / "20260315.json").write_text(
@@ -1079,6 +1103,8 @@ def test_replay_ops_queue_ready_applies_policy_filters(tmp_path):
     assert rows["20260316"]["selection_reason"] == "missing_runtime"
     assert rows["20260315"]["selection_reason"] == "existing_report"
     assert rows["20260314"]["selection_reason"] == "health_not_ready"
+    assert rows["20260314"]["collector_status_reason"] == "pagination_truncated"
+    assert rows["20260314"]["collector_manifest_path"].endswith("20260314.json")
     assert (tmp_path / "data" / "replay" / "ops" / "queue_ready_latest.json").exists()
 
 

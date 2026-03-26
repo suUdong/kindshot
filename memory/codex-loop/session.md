@@ -4,8 +4,8 @@
 
 - Branch: `main`
 - Phase: `Historical Collection Foundation`
-- Focus: expose collector partial-input reasons directly in replay status so operators can see why a collector day is incomplete without opening the raw manifest file.
-- Active hypothesis: if replay day status/ops summaries include collector `status_reason`, `generated_at`, and the resolved `manifest_path`, partial collector inputs become actionable instead of just being labeled generic `COLLECTOR_PARTIAL_STATUS`.
+- Focus: carry collector partial-input reasons from day status into replay ops summary/queue rows so multi-day triage does not require opening per-day status files.
+- Active hypothesis: if replay ops rows keep the same collector `status_reason` and `manifest_path` that replay day status already exposes, operators can scan the queue and immediately see why a day is blocked.
 
 ## Environment
 
@@ -18,10 +18,10 @@
 
 ## Last Completed Step
 
-- Extended replay collector input summaries so replay day status now surfaces collector `status_reason`, `generated_at`, and the resolved `manifest_path`.
-- Kept the manifest-index read contract in place and wired the resolved manifest path through the bundle summary.
-- Added replay coverage proving partial-input status reports now expose the collector reason and source manifest path.
-- Updated the collection-infra design doc so replay status/ops output expectations match the code.
+- Extended replay ops summary rows and queue rows so they now carry collector `status_reason` and `manifest_path` alongside the existing health/selection fields.
+- Kept the day-status shape as the source of truth and only propagated those fields upward into multi-day ops views.
+- Added replay coverage proving partial collector days keep their reason/path signals in both ops summary and queue-ready output.
+- Updated the collection-infra design doc so ops-row expectations match the enriched output shape.
 - Verified the full repository test suite after the change (`708 passed, 1 warning`).
 
 ## Next Intended Step

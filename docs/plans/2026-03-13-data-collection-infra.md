@@ -337,6 +337,7 @@ python -m kindshot --replay-ops-cycle-ready --replay-ops-run-limit 3 --replay-op
 - 기본 status report 경로는 `data/replay/day_status/YYYYMMDD.json`로 두고, 필요 시 CLI output override를 허용한다.
 - 다음 큰 batch는 multi-day ops summary 경로다. `--replay-ops-summary`는 collector/runtime indices를 함께 읽어 여러 날짜의 replay readiness를 한 번에 집계하고, 기존 day status/day report가 있으면 함께 요약해야 한다.
 - ops summary는 최소한 `generated_at`, `date_count`, `health_counts`, `warning_counts`, `rows`를 포함해야 한다. 각 row는 `date`, `health`, `warning_count`, `merged_event_count`, `collector_available`, `runtime_available`, `report_available`, `buy_decisions`, `price_data_trades`를 가져야 한다.
+- collector input이 partial인 row는 `collector_status_reason`과 `collector_manifest_path`도 함께 가져 replay ops summary만 봐도 불완전 원인과 근거 파일을 알 수 있어야 한다.
 - 기본 ops summary 출력은 최신 날짜 우선 limit를 두되, aggregate counts는 전체 대상 날짜 기준을 유지해야 한다.
 - 기본 ops summary 경로는 `data/replay/ops/latest.json`로 두고, 필요 시 CLI output override를 허용한다.
 - 다음 큰 batch는 action-oriented ready queue/run 경로다. `--replay-ops-run-ready`는 ops summary/status를 기반으로 `health=ready`이면서 아직 day report가 없는 날짜를 최신순으로 골라 실제 `replay-day`를 실행해야 한다.
@@ -354,6 +355,7 @@ python -m kindshot --replay-ops-cycle-ready --replay-ops-run-limit 3 --replay-op
 - queue/run은 동일한 policy evaluator를 공유하고, row마다 `selection_reason`을 남겨 왜 선택/제외됐는지 운영자가 바로 볼 수 있어야 한다.
 - queue/run artifact는 공통으로 `generated_at`, `policy`, `candidate_count`, `selected_count`, `skipped_counts`, `rows`를 포함해야 한다.
 - queue row는 최소한 `date`, `health`, `selected`, `selection_reason`, `report_available`, `collector_available`, `runtime_available`, `merged_event_count`를 제공해야 한다.
+- collector partial row가 queue에서 제외될 때도 같은 row에 `collector_status_reason`과 `collector_manifest_path`를 남겨 왜 막혔는지 바로 보이게 한다.
 - run row는 queue row 필드에 더해 `executed`, `report_path`, `summary`를 제공해야 한다.
 - 다음 큰 batch는 higher-level replay ops cycle 경로다. `--replay-ops-cycle-ready`는 같은 selection policy로 queue를 만들고, 선택된 날짜를 실행한 뒤, 마지막에 refreshed ops summary까지 남겨야 한다.
 - cycle artifact 기본 경로는 `data/replay/ops/cycle_ready_latest.json`로 둔다.
