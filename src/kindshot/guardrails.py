@@ -513,6 +513,26 @@ def apply_volume_confidence_adjustment(confidence: int, prior_volume_rate: float
     return confidence
 
 
+def apply_time_session_confidence_adjustment(confidence: int, decision_time_kst: datetime | None) -> int:
+    """시간대별 confidence 조정 (프롬프트 time_session_rules 구현).
+
+    06:00~08:30 장전 공시: +5 (가격 미반영, 최고 기회)
+    11:00~13:00 비유동 시간대: -3 (유동성 부족, 승률 저조)
+    시간 정보 없으면 조정 없음.
+    """
+    if decision_time_kst is None:
+        return confidence
+    now_kst = _resolve_decision_time_kst(decision_time_kst)
+    h, m = now_kst.hour, now_kst.minute
+    # 장전 공시 (06:00~08:30): 최고 기회 — 가격 미반영
+    if (6 <= h < 8) or (h == 8 and m <= 30):
+        return min(confidence + 5, 100)
+    # 비유동 시간대 (11:00~13:00): 승률 저조
+    if 11 <= h < 13:
+        return max(0, confidence - 3)
+    return confidence
+
+
 def apply_adv_confidence_adjustment(confidence: int, adv_value_20d: float) -> int:
     """ADV 기반 confidence 캡/페널티/보너스. 소형주 집중 전략."""
     if adv_value_20d >= 500_000_000_000:  # 5000억+: 초대형주 → cap 65 (sell the news)

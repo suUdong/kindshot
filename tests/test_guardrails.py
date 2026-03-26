@@ -11,6 +11,7 @@ from kindshot.guardrails import (
     apply_delay_confidence_adjustment, apply_price_reaction_adjustment,
     apply_volume_confidence_adjustment,
     apply_dorg_confidence_adjustment,
+    apply_time_session_confidence_adjustment,
     calculate_position_size,
     downgrade_size_hint, get_kill_switch_size_hint,
 )
@@ -1219,3 +1220,52 @@ def test_dorg_empty_no_penalty():
 def test_dorg_floor_at_zero():
     """감점 후 0 미만 방지."""
     assert apply_dorg_confidence_adjustment(3, "매일경제") == 0
+
+
+# ── time session confidence adjustment ──
+
+
+def test_time_premarket_boost():
+    """장전 공시 06:00~08:30 → +5 부스트."""
+    from kindshot.tz import KST
+    t0700 = datetime(2026, 3, 27, 7, 0, tzinfo=KST)
+    t0830 = datetime(2026, 3, 27, 8, 30, tzinfo=KST)
+    assert apply_time_session_confidence_adjustment(80, t0700) == 85
+    assert apply_time_session_confidence_adjustment(80, t0830) == 85
+
+
+def test_time_premarket_after_0830_no_boost():
+    """08:31 이후 → 부스트 없음."""
+    from kindshot.tz import KST
+    t0831 = datetime(2026, 3, 27, 8, 31, tzinfo=KST)
+    assert apply_time_session_confidence_adjustment(80, t0831) == 80
+
+
+def test_time_midday_penalty():
+    """비유동 시간대 11:00~13:00 → -3."""
+    from kindshot.tz import KST
+    t1130 = datetime(2026, 3, 27, 11, 30, tzinfo=KST)
+    t1200 = datetime(2026, 3, 27, 12, 0, tzinfo=KST)
+    assert apply_time_session_confidence_adjustment(80, t1130) == 77
+    assert apply_time_session_confidence_adjustment(80, t1200) == 77
+
+
+def test_time_normal_no_adjustment():
+    """일반 시간대 → 조정 없음."""
+    from kindshot.tz import KST
+    t1000 = datetime(2026, 3, 27, 10, 0, tzinfo=KST)
+    t1400 = datetime(2026, 3, 27, 14, 0, tzinfo=KST)
+    assert apply_time_session_confidence_adjustment(80, t1000) == 80
+    assert apply_time_session_confidence_adjustment(80, t1400) == 80
+
+
+def test_time_none_no_adjustment():
+    """시간 정보 없으면 조정 없음."""
+    assert apply_time_session_confidence_adjustment(80, None) == 80
+
+
+def test_time_premarket_cap_at_100():
+    """부스트 후 100 초과 방지."""
+    from kindshot.tz import KST
+    t0700 = datetime(2026, 3, 27, 7, 0, tzinfo=KST)
+    assert apply_time_session_confidence_adjustment(98, t0700) == 100
