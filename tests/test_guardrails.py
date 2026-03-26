@@ -8,7 +8,7 @@ from kindshot.guardrails import (
     check_guardrails, GuardrailResult, GuardrailState,
     get_dynamic_stop_loss_pct, get_dynamic_tp_pct,
     apply_adv_confidence_adjustment, apply_market_confidence_adjustment,
-    apply_delay_confidence_adjustment,
+    apply_delay_confidence_adjustment, apply_price_reaction_adjustment,
     calculate_position_size,
     downgrade_size_hint, get_kill_switch_size_hint,
 )
@@ -1121,3 +1121,30 @@ def test_delay_confidence_60s():
 def test_delay_confidence_120s_plus():
     """120초+: -3."""
     assert apply_delay_confidence_adjustment(80, 180_000) == 77
+
+
+# ── Price Reaction confidence 조정 테스트 ──────────────────
+
+def test_price_reaction_confirmed():
+    """ret_today 0.3~1.5%: 시장 반응 확인 → +2."""
+    assert apply_price_reaction_adjustment(78, 0.5) == 80
+    assert apply_price_reaction_adjustment(78, 1.0) == 80
+    assert apply_price_reaction_adjustment(78, 1.5) == 80
+
+
+def test_price_reaction_no_response():
+    """ret_today < -0.5%: 시장 불신 → -2."""
+    assert apply_price_reaction_adjustment(80, -1.0) == 78
+    assert apply_price_reaction_adjustment(80, -0.6) == 78
+
+
+def test_price_reaction_neutral():
+    """ret_today -0.5~0.3%: 조정 없음."""
+    assert apply_price_reaction_adjustment(80, 0.0) == 80
+    assert apply_price_reaction_adjustment(80, 0.2) == 80
+    assert apply_price_reaction_adjustment(80, -0.4) == 80
+
+
+def test_price_reaction_none():
+    """ret_today=None: 조정 없음."""
+    assert apply_price_reaction_adjustment(80, None) == 80

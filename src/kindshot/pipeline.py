@@ -22,7 +22,7 @@ from kindshot.context_card import (
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError, has_high_conviction_keyword
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -382,6 +382,16 @@ async def execute_bucket_path(
                 "ADV confidence adj [%s]: %d → %d (adv=%.0f억)",
                 raw.ticker, original_conf, decision.confidence,
                 raw_data.adv_value_20d / 1e8,
+            )
+
+    # 시장 반응 확인: 당일 수익률 기반 confidence 보정
+    if decision.action == Action.BUY and raw_data.ret_today is not None:
+        original_conf = decision.confidence
+        decision.confidence = apply_price_reaction_adjustment(decision.confidence, raw_data.ret_today)
+        if decision.confidence != original_conf:
+            logger.info(
+                "Price reaction adj [%s]: %d → %d (ret_today=%+.1f%%)",
+                raw.ticker, original_conf, decision.confidence, raw_data.ret_today,
             )
 
     # Detection delay 기반 confidence 감점 (늦게 감지된 뉴스 = 이미 반영)

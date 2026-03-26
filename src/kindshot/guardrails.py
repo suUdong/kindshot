@@ -426,6 +426,22 @@ def apply_market_confidence_adjustment(confidence: int, kospi_change_pct: float 
     return max(0, confidence - 5)
 
 
+def apply_price_reaction_adjustment(confidence: int, ret_today: float | None) -> int:
+    """뉴스 감지 시점의 당일 수익률 기반 시장 반응 확인.
+
+    주가가 소폭 상승 중(0.3~1.5%)이면 뉴스에 시장이 반응 → +2.
+    하락 중(-0.5% 이하)이면 시장 불신 → -2.
+    chase_buy_pct(3%)는 별도 guardrail에서 차단하므로 여기서는 확인만.
+    """
+    if ret_today is None:
+        return confidence
+    if 0.3 <= ret_today <= 1.5:
+        return min(confidence + 2, 100)  # 시장 반응 확인 → 소폭 부스트
+    if ret_today < -0.5:
+        return max(0, confidence - 2)  # 시장 무반응/하락 → 불신
+    return confidence
+
+
 def apply_delay_confidence_adjustment(confidence: int, delay_ms: int | None) -> int:
     """Detection delay 기반 confidence 감점.
 
