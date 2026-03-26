@@ -842,11 +842,14 @@ def test_replay_day_status_reports_ready_inputs(tmp_path):
 def test_replay_day_status_reports_partial_inputs(tmp_path):
     collector_manifests_dir = tmp_path / "data" / "collector" / "manifests"
     collector_manifests_dir.mkdir(parents=True)
-    (collector_manifests_dir / "20260316.json").write_text(
+    manifest_path = collector_manifests_dir / "20260316.json"
+    manifest_path.write_text(
         json.dumps(
             {
                 "date": "20260316",
                 "status": "partial",
+                "status_reason": "daily_index_missing",
+                "generated_at": "2026-03-16T00:03:00+09:00",
                 "counts": {"news": 0, "classifications": 0, "daily_prices": 0, "daily_index": 0},
                 "paths": {
                     "news": str(tmp_path / "missing-news.jsonl"),
@@ -868,6 +871,9 @@ def test_replay_day_status_reports_partial_inputs(tmp_path):
     assert "COLLECTOR_PARTIAL_STATUS" in report["warnings"]
     assert "RUNTIME_CONTEXT_CARDS_MISSING" in report["warnings"]
     assert "NO_REPLAYABLE_EVENTS" in report["warnings"]
+    assert report["input"]["collector"]["status_reason"] == "daily_index_missing"
+    assert report["input"]["collector"]["manifest_path"] == str(manifest_path)
+    assert report["input"]["collector"]["generated_at"] == "2026-03-16T00:03:00+09:00"
 
 
 def test_replay_day_status_reports_missing_inputs_with_override(tmp_path):

@@ -178,8 +178,9 @@ def load_runtime_day_artifacts(config: Config, dt: str) -> dict[str, Any]:
 
 def load_collector_day_bundle(config: Config, dt: str) -> dict[str, Any]:
     manifest = load_collected_day_manifest(config, dt)
+    manifest_path = _resolve_collected_manifest_path(config, dt)
     paths = manifest.get("paths", {})
-    payload: dict[str, Any] = {"date": dt, "manifest": manifest, "artifacts": {}}
+    payload: dict[str, Any] = {"date": dt, "manifest": manifest, "manifest_path": str(manifest_path), "artifacts": {}}
     for artifact_name in ("news", "classifications", "daily_prices", "daily_index"):
         path_text = str(paths.get(artifact_name, "")).strip()
         if not path_text:
@@ -332,6 +333,9 @@ def _collector_input_summary(bundle: Optional[dict[str, Any]]) -> dict[str, Any]
     return {
         "available": True,
         "status": manifest.get("status", ""),
+        "status_reason": manifest.get("status_reason", ""),
+        "generated_at": manifest.get("generated_at", ""),
+        "manifest_path": bundle.get("manifest_path", ""),
         "counts": manifest.get("counts", {}),
         "artifacts": {
             name: {

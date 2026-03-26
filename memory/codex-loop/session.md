@@ -4,8 +4,8 @@
 
 - Branch: `main`
 - Phase: `Historical Collection Foundation`
-- Focus: keep the collector replay contract consistent by making replay resolve collector manifests through `data/collector/manifests/index.json` before falling back to legacy per-date paths.
-- Active hypothesis: if replay trusts the collector manifest index as the read entrypoint, relocated or regenerated manifests will stay consumable without forcing every consumer to reconstruct the path convention.
+- Focus: expose collector partial-input reasons directly in replay status so operators can see why a collector day is incomplete without opening the raw manifest file.
+- Active hypothesis: if replay day status/ops summaries include collector `status_reason`, `generated_at`, and the resolved `manifest_path`, partial collector inputs become actionable instead of just being labeled generic `COLLECTOR_PARTIAL_STATUS`.
 
 ## Environment
 
@@ -18,15 +18,16 @@
 
 ## Last Completed Step
 
-- Updated replay's collector-manifest read path to resolve `manifest_path` from `data/collector/manifests/index.json` before falling back to the legacy `YYYYMMDD.json` convention.
-- Added replay coverage for both indexed manifest-path resolution and legacy fallback behavior.
-- Updated the collection-infra design doc so the replay-facing storage contract explicitly says index lookup comes first.
+- Extended replay collector input summaries so replay day status now surfaces collector `status_reason`, `generated_at`, and the resolved `manifest_path`.
+- Kept the manifest-index read contract in place and wired the resolved manifest path through the bundle summary.
+- Added replay coverage proving partial-input status reports now expose the collector reason and source manifest path.
+- Updated the collection-infra design doc so replay status/ops output expectations match the code.
 - Verified the full repository test suite after the change (`708 passed, 1 warning`).
 
 ## Next Intended Step
 
 - If a genuine post-upgrade runtime decision log appears, run `python3 scripts/confidence_report.py --log-file <before> --log-file <after>` and close the confidence-comparison evidence gap.
-- Otherwise continue Phase 6 with the next replay-facing collector slice that does not require external runtime evidence.
+- Otherwise continue Phase 6 with the next replay-facing collector slice that improves operator/replay usability without needing new external runtime evidence.
 
 ## Notes
 

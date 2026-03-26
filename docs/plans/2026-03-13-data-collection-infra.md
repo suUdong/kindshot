@@ -243,6 +243,7 @@
 - replay/analysis는 우선 manifest를 entrypoint로 사용하고, 세부 데이터는 manifest가 가리키는 경로에서 읽는다.
 - replay/analysis helper는 먼저 `index.json`에서 날짜별 `manifest_path`를 찾고, 구형 데이터셋 호환이 필요할 때만 `data/collector/manifests/YYYYMMDD.json` fallback을 사용한다.
 - `partial` 날짜는 manifest만 읽어도 왜 불완전한지 알 수 있게 `status_reason`을 채워야 한다. 현재 1차 값은 `pagination_truncated`다.
+- replay day status/ops summary는 collector input이 partial일 때 `status_reason`과 실제 `manifest_path`를 함께 노출해, 운영자가 추가 파일 열기 없이 원인과 데이터 원본을 확인할 수 있어야 한다.
 - `index.json`은 최소한 `generated_at`과 날짜별 엔트리 목록을 포함해야 하며, 각 엔트리는 `date`, `status`, `has_partial_data`, `manifest_path`, `generated_at`를 가져야 한다.
 - replay 쪽 helper는 우선 `index.json`에서 available date를 읽고, 필요 시 각 날짜 manifest를 열어 dataset path와 status metadata를 해석해야 한다.
 - 운영 알림 요약은 날짜 목록만이 아니라 `daily_index_missing`, `non_trading_day` 같은 per-date reason도 함께 포함해야 한다. 그래야 텔레그램만 보고도 재시도와 무시를 구분할 수 있다.
