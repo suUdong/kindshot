@@ -369,7 +369,11 @@ def get_dynamic_tp_pct(config: Config, confidence: int) -> float:
 
 
 def apply_market_confidence_adjustment(confidence: int, kospi_change_pct: float | None, kosdaq_change_pct: float | None) -> int:
-    """하락장 confidence 감점. 지수 하락폭에 비례해 BUY 문턱을 높임."""
+    """하락장 confidence 감점. 지수 하락폭에 비례해 BUY 문턱을 높임.
+
+    기존 -8 일괄 감점은 폭락장에서 모든 BUY를 차단해 진짜 촉매(FDA 승인, 대형 수주 등)도
+    놓치게 함. 세분화된 감점으로 LLM 고확신 시그널은 통과 가능하도록 조정.
+    """
     if kospi_change_pct is None and kosdaq_change_pct is None:
         return confidence
     # 두 지수 중 더 나쁜 쪽 기준
@@ -382,9 +386,11 @@ def apply_market_confidence_adjustment(confidence: int, kospi_change_pct: float 
     if worst >= -1.0:
         return max(0, confidence - 2)
     if worst >= -2.0:
-        return max(0, confidence - 5)
-    # -2% 이하: 강한 하락장
-    return max(0, confidence - 8)
+        return max(0, confidence - 3)
+    if worst >= -3.0:
+        return max(0, confidence - 4)
+    # -3% 이하: 강한 하락장 — 최대 -5 (기존 -8에서 완화)
+    return max(0, confidence - 5)
 
 
 def apply_adv_confidence_adjustment(confidence: int, adv_value_20d: float) -> int:

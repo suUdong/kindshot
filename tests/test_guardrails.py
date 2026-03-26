@@ -740,16 +740,20 @@ def test_market_confidence_mild_down():
     assert apply_market_confidence_adjustment(80, -0.7, 0.1) == 78
 
 def test_market_confidence_moderate_down():
-    """지수 -1~-2% → -5."""
-    assert apply_market_confidence_adjustment(80, -1.5, -0.3) == 75
+    """지수 -1~-2% → -3."""
+    assert apply_market_confidence_adjustment(80, -1.5, -0.3) == 77
+
+def test_market_confidence_heavy_down():
+    """지수 -2~-3% → -4."""
+    assert apply_market_confidence_adjustment(80, -2.5, -1.8) == 76
 
 def test_market_confidence_severe_down():
-    """지수 -2% 이하 → -8."""
-    assert apply_market_confidence_adjustment(80, -2.5, -1.8) == 72
+    """지수 -3% 이하 → -5 (기존 -8에서 완화)."""
+    assert apply_market_confidence_adjustment(80, -3.5, -2.0) == 75
 
 def test_market_confidence_worst_of_both():
     """두 지수 중 더 나쁜 쪽 기준."""
-    assert apply_market_confidence_adjustment(80, -0.3, -1.5) == 75
+    assert apply_market_confidence_adjustment(80, -0.3, -1.5) == 77
 
 def test_market_confidence_none_values():
     """지수 데이터 없으면 조정 없음."""
@@ -757,7 +761,7 @@ def test_market_confidence_none_values():
 
 def test_market_confidence_one_none():
     """한쪽만 있으면 해당 값 기준."""
-    assert apply_market_confidence_adjustment(80, -1.5, None) == 75
+    assert apply_market_confidence_adjustment(80, -1.5, None) == 77
 
 
 # ── US-004: 포지션 사이징 테스트 ──────────────────
