@@ -7,6 +7,7 @@ from collections import Counter
 import hashlib
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -161,6 +162,7 @@ async def execute_bucket_path(
 ) -> ProcessOutcome:
     detected_at = raw.detected_at
     disclosed_at, disclosed_at_missing, delay_ms = _parse_disclosure_meta(raw, detected_at)
+    _pipeline_t0 = time.monotonic()
 
     raw_data = ContextCardData()
     skip_stage: Optional[SkipStage] = None
@@ -177,8 +179,14 @@ async def execute_bucket_path(
         analysis_tag = analysis_tag or "SHORT_WATCH"
         should_track_price = True
     elif bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
+        _ctx_t0 = time.monotonic()
         ctx_card, raw_data = await build_context_card(raw.ticker, kis, config=config)
         ctx = ctx_card
+        _ctx_ms = int((time.monotonic() - _ctx_t0) * 1000)
+        if _ctx_ms > 500:
+            logger.warning("Slow context_card build [%s]: %dms", raw.ticker, _ctx_ms)
+        else:
+            logger.debug("context_card build [%s]: %dms", raw.ticker, _ctx_ms)
         effective_adv_threshold = config.adv_threshold_for_bucket(bucket.value)
 
         qr = quant_check(
@@ -455,18 +463,24 @@ async def execute_bucket_path(
                             f"{ctx.ret_3d:+.1f}%" if ctx.ret_3d is not None else "N/A",
                             f"{ctx.pos_20d:.0f}" if ctx.pos_20d is not None else "N/A")
 
-        # 1c. 기술지표 감점 (RSI/MACD — 프롬프트 technical_indicators 구현)
-        if ctx and (ctx.rsi_14 is not None or ctx.macd_hist is not None):
+        # 1c. 기술지표 감점 (RSI/MACD/BB/ATR — 프롬프트 technical_indicators 구현)
+        if ctx and (ctx.rsi_14 is not None or ctx.macd_hist is not None
+                    or ctx.bb_position is not None or ctx.atr_14 is not None):
             before = decision.confidence
             has_catalyst = has_high_conviction_keyword(raw.title, keyword_hits, min_conf=79)
             decision.confidence = apply_technical_confidence_adjustment(
-                decision.confidence, ctx.rsi_14, ctx.macd_hist, has_catalyst=has_catalyst,
+                decision.confidence, ctx.rsi_14, ctx.macd_hist,
+                has_catalyst=has_catalyst,
+                bb_position=ctx.bb_position,
+                atr_14=ctx.atr_14,
             )
             if decision.confidence != before:
-                logger.info("Technical indicator adj [%s]: %d → %d (rsi=%s, macd=%s)",
+                logger.info("Technical indicator adj [%s]: %d → %d (rsi=%s, macd=%s, bb=%s, atr=%s)",
                             raw.ticker, before, decision.confidence,
                             f"{ctx.rsi_14:.1f}" if ctx.rsi_14 is not None else "N/A",
-                            f"{ctx.macd_hist:.2f}" if ctx.macd_hist is not None else "N/A")
+                            f"{ctx.macd_hist:.2f}" if ctx.macd_hist is not None else "N/A",
+                            f"{ctx.bb_position:.1f}" if ctx.bb_position is not None else "N/A",
+                            f"{ctx.atr_14:.2f}%" if ctx.atr_14 is not None else "N/A")
 
         # 2. 시장 반응 확인 (ret_today)
         if raw_data.ret_today is not None:
@@ -692,6 +706,11 @@ async def execute_bucket_path(
             sl_pct=buy_sl,
         )
 
+    _pipeline_ms = int((time.monotonic() - _pipeline_t0) * 1000)
+    logger.info(
+        "Pipeline total [%s] %s: %dms (llm=%dms)",
+        raw.ticker, decision.action.value, _pipeline_ms, decision.llm_latency_ms,
+    )
     return ProcessOutcome(event_id=processed.event_id, action=decision.action)
 
 

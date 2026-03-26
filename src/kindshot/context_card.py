@@ -146,6 +146,36 @@ async def _pykrx_features(ticker: str) -> dict:
                 signal = macd_line.ewm(span=9, adjust=False).mean()
                 macd_hist = round(float(macd_line.iloc[-1] - signal.iloc[-1]), 2)
 
+            # Bollinger Bands (20일, 2σ) — 현재가의 밴드 내 위치 (0=하단, 100=상단)
+            bb_position = None
+            if len(close) >= 20:
+                sma20 = close.rolling(20).mean()
+                std20 = close.rolling(20).std()
+                upper = sma20 + 2 * std20
+                lower = sma20 - 2 * std20
+                band_width = upper.iloc[-1] - lower.iloc[-1]
+                if band_width > 0:
+                    bb_position = round(
+                        float((cur_close - lower.iloc[-1]) / band_width * 100), 1
+                    )
+
+            # ATR-14 (Average True Range) — 변동성 지표
+            atr_14 = None
+            high_col = "고가" if "고가" in df.columns else "High" if "High" in df.columns else None
+            low_col = "저가" if "저가" in df.columns else "Low" if "Low" in df.columns else None
+            if high_col and low_col and len(df) >= 15:
+                high = df[high_col]
+                low = df[low_col]
+                tr1 = high - low
+                tr2 = (high - close.shift(1)).abs()
+                tr3 = (low - close.shift(1)).abs()
+                import pandas as pd
+                tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+                atr_series = tr.rolling(14, min_periods=14).mean()
+                if not atr_series.isna().iloc[-1]:
+                    # ATR을 현재가 대비 %로 표현 (비교 가능성)
+                    atr_14 = round(float(atr_series.iloc[-1] / cur_close * 100), 2)
+
             return {
                 "ret_1d": round(ret_1d, 2) if ret_1d is not None else None,
                 "ret_3d": round(ret_3d, 2) if ret_3d is not None else None,
@@ -155,6 +185,8 @@ async def _pykrx_features(ticker: str) -> dict:
                 "prev_close": prev_close,
                 "rsi_14": rsi_14,
                 "macd_hist": macd_hist,
+                "bb_position": bb_position,
+                "atr_14": atr_14,
             }
         except Exception:
             logger.exception("pykrx fetch failed for %s", ticker)
@@ -234,6 +266,8 @@ async def build_context_card(
         prior_volume_rate=price_info.prior_volume_rate if kis and price_info else None,
         rsi_14=hist.get("rsi_14"),
         macd_hist=hist.get("macd_hist"),
+        bb_position=hist.get("bb_position"),
+        atr_14=hist.get("atr_14"),
     )
 
     raw = ContextCardData(

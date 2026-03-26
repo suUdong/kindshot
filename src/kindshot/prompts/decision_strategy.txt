@@ -76,6 +76,9 @@ technical_indicators (있을 때만):
 - rsi_14 > 75: confidence -5.
 - rsi_14 < 30 + 촉매: confidence +3.
 - macd_hist < 0: confidence -3.
+- bb_pos > 95: confidence -3 (상단 밴드 이탈, 과매수).
+- bb_pos < 5 + 촉매: confidence +2 (하단 밴드 이탈, 반등 기회).
+- atr_14 > 5%: 고변동성, size_hint 한 단계 낮춤.
 
 time_session_rules:
 - 06:00~08:30 (장전 공시): 최고 기회. confidence +5.

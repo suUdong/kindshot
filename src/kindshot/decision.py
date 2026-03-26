@@ -70,9 +70,11 @@ def _build_prompt(
     headline = headline[:_MAX_HEADLINE_LEN]
     rsi_str = f" rsi_14={ctx.rsi_14}" if ctx.rsi_14 is not None else ""
     macd_str = f" macd_hist={ctx.macd_hist}" if ctx.macd_hist is not None else ""
+    bb_str = f" bb_pos={ctx.bb_position}" if ctx.bb_position is not None else ""
+    atr_str = f" atr_14={ctx.atr_14}%" if ctx.atr_14 is not None else ""
     ctx_price = (
         f"ret_today={ctx.ret_today} ret_1d={ctx.ret_1d} ret_3d={ctx.ret_3d} "
-        f"pos_20d={ctx.pos_20d} gap={ctx.gap}{rsi_str}{macd_str}"
+        f"pos_20d={ctx.pos_20d} gap={ctx.gap}{rsi_str}{macd_str}{bb_str}{atr_str}"
     )
     adv_display = f"{ctx.adv_value_20d/1e8:.0f}억" if ctx.adv_value_20d else "N/A"
     vol_rate_str = f" prior_vol_rate={ctx.prior_volume_rate:.0f}%" if ctx.prior_volume_rate is not None else ""

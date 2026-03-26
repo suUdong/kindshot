@@ -575,12 +575,17 @@ def apply_technical_confidence_adjustment(
     macd_hist: float | None,
     *,
     has_catalyst: bool = False,
+    bb_position: float | None = None,
+    atr_14: float | None = None,
 ) -> int:
-    """RSI/MACD 기반 기술지표 confidence 조정 (프롬프트 technical_indicators 구현).
+    """RSI/MACD/BB/ATR 기반 기술지표 confidence 조정.
 
     rsi_14 > 75: -5 (과매수)
     rsi_14 < 30 + 촉매: +3 (과매도 반등 기회)
     macd_hist < 0: -3 (모멘텀 약세)
+    bb_position > 95: -3 (상단 밴드 이탈, 과매수)
+    bb_position < 5 + 촉매: +2 (하단 밴드 이탈, 반등 기회)
+    atr_14 > 5%: -2 (고변동성 리스크)
     """
     if rsi_14 is not None:
         if rsi_14 > 75:
@@ -589,6 +594,13 @@ def apply_technical_confidence_adjustment(
             confidence = min(confidence + 3, 100)
     if macd_hist is not None and macd_hist < 0:
         confidence = max(0, confidence - 3)
+    if bb_position is not None:
+        if bb_position > 95:
+            confidence = max(0, confidence - 3)
+        elif bb_position < 5 and has_catalyst:
+            confidence = min(confidence + 2, 100)
+    if atr_14 is not None and atr_14 > 5.0:
+        confidence = max(0, confidence - 2)
     return confidence
 
 
