@@ -161,6 +161,75 @@ def test_load_collected_day_manifest_reads_manifest(tmp_path):
     assert payload["status"] == "complete"
 
 
+def test_load_collected_day_manifest_prefers_index_manifest_path(tmp_path):
+    manifests_dir = tmp_path / "data" / "collector" / "manifests"
+    relocated_dir = tmp_path / "data" / "collector" / "relocated"
+    manifests_dir.mkdir(parents=True)
+    relocated_dir.mkdir(parents=True)
+    manifest_path = relocated_dir / "custom-20260310.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "date": "20260310",
+                "status": "partial",
+                "status_reason": "daily_index_missing",
+                "paths": {"news": str(tmp_path / "data" / "collector" / "news" / "20260310.jsonl")},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifests_dir / "index.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-03-27T09:00:00+09:00",
+                "entries": [
+                    {
+                        "date": "20260310",
+                        "status": "partial",
+                        "has_partial_data": True,
+                        "generated_at": "2026-03-27T09:00:00+09:00",
+                        "manifest_path": str(manifest_path),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = Config(collector_manifests_dir=manifests_dir)
+
+    payload = load_collected_day_manifest(cfg, "20260310")
+
+    assert payload["date"] == "20260310"
+    assert payload["status"] == "partial"
+    assert payload["status_reason"] == "daily_index_missing"
+
+
+def test_load_collected_day_manifest_falls_back_without_index_entry(tmp_path):
+    manifests_dir = tmp_path / "data" / "collector" / "manifests"
+    manifests_dir.mkdir(parents=True)
+    manifest_path = manifests_dir / "20260310.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "date": "20260310",
+                "status": "complete",
+                "paths": {"news": str(tmp_path / "data" / "collector" / "news" / "20260310.jsonl")},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifests_dir / "index.json").write_text(
+        json.dumps({"generated_at": "2026-03-27T09:00:00+09:00", "entries": []}),
+        encoding="utf-8",
+    )
+    cfg = Config(collector_manifests_dir=manifests_dir)
+
+    payload = load_collected_day_manifest(cfg, "20260310")
+
+    assert payload["date"] == "20260310"
+    assert payload["status"] == "complete"
+
+
 def test_load_collector_day_bundle_reads_manifest_paths(tmp_path):
     manifests_dir = tmp_path / "data" / "collector" / "manifests"
     news_dir = tmp_path / "data" / "collector" / "news"

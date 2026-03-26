@@ -120,8 +120,19 @@ def list_runtime_dates(config: Config) -> list[str]:
     return dates
 
 
+def _resolve_collected_manifest_path(config: Config, dt: str) -> Path:
+    payload = _load_collector_manifest_index(config)
+    for row in payload.get("entries", []):
+        if str(row.get("date", "")).strip() != dt:
+            continue
+        path_text = str(row.get("manifest_path", "")).strip()
+        if path_text:
+            return Path(path_text)
+    return config.collector_manifests_dir / f"{dt}.json"
+
+
 def load_collected_day_manifest(config: Config, dt: str) -> dict[str, Any]:
-    path = config.collector_manifests_dir / f"{dt}.json"
+    path = _resolve_collected_manifest_path(config, dt)
     if not path.exists():
         raise FileNotFoundError(f"collector manifest not found for {dt}: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
