@@ -9,6 +9,7 @@ from kindshot.guardrails import (
     get_dynamic_stop_loss_pct, get_dynamic_tp_pct,
     apply_adv_confidence_adjustment, apply_market_confidence_adjustment,
     apply_delay_confidence_adjustment, apply_price_reaction_adjustment,
+    apply_volume_confidence_adjustment,
     calculate_position_size,
     downgrade_size_hint, get_kill_switch_size_hint,
 )
@@ -1148,3 +1149,42 @@ def test_price_reaction_neutral():
 def test_price_reaction_none():
     """ret_today=None: 조정 없음."""
     assert apply_price_reaction_adjustment(80, None) == 80
+
+
+# ── Volume confidence adjustment ──
+
+
+def test_volume_spike_strong():
+    """전일대비 300%+: +3 부스트."""
+    assert apply_volume_confidence_adjustment(80, 350.0) == 83
+
+
+def test_volume_spike_moderate():
+    """전일대비 150~300%: +1 부스트."""
+    assert apply_volume_confidence_adjustment(80, 200.0) == 81
+
+
+def test_volume_normal():
+    """전일대비 80~150%: 조정 없음."""
+    assert apply_volume_confidence_adjustment(80, 100.0) == 80
+    assert apply_volume_confidence_adjustment(80, 140.0) == 80
+
+
+def test_volume_low():
+    """전일대비 50~80%: -1."""
+    assert apply_volume_confidence_adjustment(80, 60.0) == 79
+
+
+def test_volume_very_low():
+    """전일대비 50% 미만: -3."""
+    assert apply_volume_confidence_adjustment(80, 30.0) == 77
+
+
+def test_volume_none():
+    """None: 조정 없음."""
+    assert apply_volume_confidence_adjustment(80, None) == 80
+
+
+def test_volume_cap_at_100():
+    """상한 100 초과 방지."""
+    assert apply_volume_confidence_adjustment(99, 400.0) == 100
