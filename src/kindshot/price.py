@@ -106,17 +106,29 @@ class SnapshotScheduler:
         self._stale_min_elapsed_s: float = 300.0  # 5분
 
     def _get_trailing_stop_pct(self, event_id: str) -> float:
-        """시간대별 trailing stop 폭 반환: 0~5분 early, 5~30분 mid, 30분+ late."""
+        """시간대 + hold profile별 trailing stop 폭 반환.
+
+        EOD hold(자사주소각 등): 기본 trailing × 1.5 (장기 트렌드 보호)
+        수주/공급계약(hold≤15): 기본 trailing × 0.7 (빠른 반전 대비)
+        """
         entry_time = self._entry_times.get(event_id)
         if entry_time is None:
             return self._config.trailing_stop_pct
         elapsed_s = time.monotonic() - entry_time
         if elapsed_s < 300:  # 0~5분
-            return self._config.trailing_stop_early_pct
+            base = self._config.trailing_stop_early_pct
         elif elapsed_s < 1800:  # 5~30분
-            return self._config.trailing_stop_mid_pct
+            base = self._config.trailing_stop_mid_pct
         else:  # 30분+
-            return self._config.trailing_stop_late_pct
+            base = self._config.trailing_stop_late_pct
+
+        # Hold profile 보정
+        hold = self._max_hold_minutes.get(event_id, self._config.max_hold_minutes)
+        if hold == 0:
+            return base * 1.5  # EOD hold: 넓은 trailing (트렌드 보호)
+        if hold <= 15:
+            return base * 0.7  # 수주/공급계약: 타이트 trailing (빠른 반전)
+        return base
 
     def _runtime_snapshot_path(self, ts: datetime) -> Path:
         dt = ts.astimezone(_KST).strftime("%Y%m%d")
