@@ -314,6 +314,13 @@ def _has_large_contract_signal(headline: str, keyword_hits: list[str]) -> tuple[
     return False, 0
 
 
+_ARTICLE_MARKERS = (
+    "전망", "보인다", "기대", "파죽지세", "분석", "평가",
+    "…목표", "수혜", "기대감", "가속화", "본격화",
+    "CEO ", "대표 ", "회장 ", "의장 ",
+)
+
+
 def _rule_based_decide(
     bucket: Bucket,
     headline: str,
@@ -329,6 +336,11 @@ def _rule_based_decide(
     if bucket not in (Bucket.POS_STRONG, Bucket.POS_WEAK):
         return {"action": "SKIP", "confidence": 70, "size_hint": "S",
                 "reason": "rule_fallback:weak_bucket"}
+
+    # 기사 패턴 감지: rule_fallback은 LLM보다 보수적이어야 함
+    if any(marker in headline for marker in _ARTICLE_MARKERS):
+        return {"action": "SKIP", "confidence": 55, "size_hint": "S",
+                "reason": "rule_fallback:article_pattern"}
 
     # 고확신 키워드 매칭 (가장 높은 confidence 사용)
     best_conf = 0
