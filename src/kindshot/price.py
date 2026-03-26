@@ -102,6 +102,8 @@ class SnapshotScheduler:
         self._max_hold_minutes: dict[str, int] = {}
         # 이벤트별 confidence (동적 TP/SL용)
         self._event_confidence: dict[str, int] = {}
+        # 이벤트별 실제 포지션 사이즈 (P&L 계산용)
+        self._event_order_size: dict[str, float] = {}
         # Stale position 감지: 5분 경과 후 ±0.2% 미만이면 모멘텀 소멸
         self._stale_threshold_pct: float = 0.2
         self._stale_min_elapsed_s: float = 300.0  # 5분
@@ -170,6 +172,7 @@ class SnapshotScheduler:
         is_buy_decision: bool = False,
         max_hold_minutes: int = 0,
         confidence: int = 0,
+        size_hint: str = "M",
     ) -> None:
         """Schedule t0 snapshot immediately + future horizons."""
         now = time.monotonic()
@@ -179,6 +182,8 @@ class SnapshotScheduler:
             self._max_hold_minutes[event_id] = max_hold_minutes
         if confidence > 0:
             self._event_confidence[event_id] = confidence
+        if is_buy_decision:
+            self._event_order_size[event_id] = self._config.order_size_for_hint(size_hint)
 
         # t0: fire immediately (will be fetched in the run loop)
         heapq.heappush(self._heap, ScheduledSnapshot(
@@ -277,8 +282,10 @@ class SnapshotScheduler:
                 self._event_confidence.pop(snap.event_id, None)
                 # Report close P&L to guardrail state (BUY decisions only)
                 if snap.is_buy_decision and ret_long is not None and self._pnl_callback and t0_px:
-                    pnl_won = ret_long * self._config.order_size
+                    actual_size = self._event_order_size.get(snap.event_id, self._config.order_size)
+                    pnl_won = ret_long * actual_size
                     self._pnl_callback(snap.ticker, pnl_won)
+                self._event_order_size.pop(snap.event_id, None)
 
         record = PriceSnapshot(
             mode=snap.mode,

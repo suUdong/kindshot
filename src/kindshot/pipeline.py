@@ -600,6 +600,7 @@ async def execute_bucket_path(
         is_buy_decision=is_buy,
         max_hold_minutes=hold_minutes,
         confidence=decision.confidence if is_buy else 0,
+        size_hint=decision.size_hint.value if is_buy else "M",
     )
 
     # SKIP 종목 후속 추적: false negative 식별을 위해 가격 스냅샷 스케줄
