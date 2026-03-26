@@ -190,7 +190,7 @@ async def test_cache_hit():
     mock_msg.content = [MagicMock(text='{"action":"BUY","confidence":80,"size_hint":"M","reason":"test"}')]
     mock_msg.usage = MagicMock(input_tokens=100, output_tokens=50)
     mock_client.messages.create = AsyncMock(return_value=mock_msg)
-    engine._llm._client = mock_client
+    engine._llm._anthropic_client = mock_client
 
     ctx = ContextCard()
     # First call
@@ -220,7 +220,7 @@ async def test_inflight_dedup_single_upstream_call():
         return mock_msg
 
     mock_client.messages.create = AsyncMock(side_effect=_create)
-    engine._llm._client = mock_client
+    engine._llm._anthropic_client = mock_client
 
     ctx = ContextCard()
     r1, r2 = await asyncio.gather(
@@ -247,7 +247,7 @@ async def test_inflight_dedup_error_propagates_to_all_callers():
         raise RuntimeError("upstream failure")
 
     mock_client.messages.create = AsyncMock(side_effect=_create)
-    engine._llm._client = mock_client
+    engine._llm._anthropic_client = mock_client
 
     ctx = ContextCard()
 
@@ -265,7 +265,7 @@ async def test_llm_timeout_raises():
 
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock(side_effect=asyncio.TimeoutError())
-    engine._llm._client = mock_client
+    engine._llm._anthropic_client = mock_client
 
     ctx = ContextCard()
     with pytest.raises(LlmTimeoutError):
@@ -278,7 +278,7 @@ async def test_llm_call_error_raises():
 
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock(side_effect=RuntimeError("503"))
-    engine._llm._client = mock_client
+    engine._llm._anthropic_client = mock_client
 
     ctx = ContextCard()
     with pytest.raises(LlmCallError):
@@ -293,7 +293,7 @@ async def test_llm_bad_response_structure_raises():
     mock_msg = MagicMock()
     mock_msg.content = []  # Empty content list
     mock_client.messages.create = AsyncMock(return_value=mock_msg)
-    engine._llm._client = mock_client
+    engine._llm._anthropic_client = mock_client
 
     ctx = ContextCard()
     with pytest.raises(LlmCallError):
@@ -308,7 +308,7 @@ async def test_llm_invalid_json_raises():
     mock_msg = MagicMock()
     mock_msg.content = [MagicMock(text="not json")]
     mock_client.messages.create = AsyncMock(return_value=mock_msg)
-    engine._llm._client = mock_client
+    engine._llm._anthropic_client = mock_client
 
     ctx = ContextCard()
     with pytest.raises(LlmParseError):
@@ -321,7 +321,7 @@ async def test_contract_article_preflight_skips_without_llm_call():
 
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock()
-    engine._llm._client = mock_client
+    engine._llm._anthropic_client = mock_client
 
     ctx = ContextCard(ret_today=1.2, ret_3d=7.3, adv_value_20d=132_310_000_000)
     result = await engine.decide(
@@ -346,7 +346,7 @@ async def test_incremental_order_preflight_skips_without_llm_call():
 
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock()
-    engine._llm._client = mock_client
+    engine._llm._anthropic_client = mock_client
 
     ctx = ContextCard(ret_today=0.6, ret_3d=-2.8, adv_value_20d=50_370_000_000)
     result = await engine.decide(
@@ -371,7 +371,7 @@ async def test_contract_downtrend_preflight_skips_without_llm_call():
 
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock()
-    engine._llm._client = mock_client
+    engine._llm._anthropic_client = mock_client
 
     ctx = ContextCard(ret_today=0.3, ret_3d=-9.0, adv_value_20d=103_090_000_000)
     result = await engine.decide(
@@ -396,7 +396,7 @@ async def test_contract_large_cap_preflight_skips_without_llm_call():
 
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock()
-    engine._llm._client = mock_client
+    engine._llm._anthropic_client = mock_client
 
     ctx = ContextCard(ret_today=0.3, ret_3d=-2.5, adv_value_20d=381_140_000_000)
     result = await engine.decide(
@@ -424,7 +424,7 @@ async def test_normal_contract_still_calls_llm_when_preflight_clean():
     mock_msg.content = [MagicMock(text='{"action":"BUY","confidence":80,"size_hint":"M","reason":"large confirmed contract"}')]
     mock_msg.usage = MagicMock(input_tokens=100, output_tokens=50)
     mock_client.messages.create = AsyncMock(return_value=mock_msg)
-    engine._llm._client = mock_client
+    engine._llm._anthropic_client = mock_client
 
     ctx = ContextCard(ret_today=-2.5, ret_3d=-2.0, adv_value_20d=156_420_000_000)
     result = await engine.decide(

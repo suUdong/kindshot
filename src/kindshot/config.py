@@ -31,7 +31,13 @@ def _env_float(key: str, default: float = 0.0) -> float:
 
 @dataclass(frozen=True)
 class Config:
-    # --- Anthropic ---
+    # --- LLM provider (nvidia | anthropic) ---
+    llm_provider: str = field(default_factory=lambda: _env("LLM_PROVIDER", "nvidia"))
+    # --- NVIDIA NIM (OpenAI-compatible) ---
+    nvidia_api_key: str = field(default_factory=lambda: _env("NVIDIA_API_KEY"))
+    nvidia_base_url: str = field(default_factory=lambda: _env("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"))
+    nvidia_model: str = field(default_factory=lambda: _env("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct"))
+    # --- Anthropic (fallback) ---
     anthropic_api_key: str = field(default_factory=lambda: _env("ANTHROPIC_API_KEY"))
     llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "claude-haiku-4-5-20251001"))
     llm_sdk_timeout_s: float = 15.0  # SDK backup timeout (> wait_for)
@@ -199,9 +205,20 @@ class Config:
         _log = logging.getLogger(__name__)
         warnings: list[str] = []
 
+        # LLM provider 유효성 검사
+        if self.llm_provider not in ("nvidia", "anthropic"):
+            raise ValueError(f"LLM_PROVIDER must be 'nvidia' or 'anthropic', got '{self.llm_provider}'")
+
+        if self.llm_provider == "nvidia" and not self.nvidia_api_key:
+            warnings.append("NVIDIA_API_KEY not set (primary LLM provider)")
+            _log.warning("Config: NVIDIA_API_KEY not set — will fallback to Anthropic")
+
         if not self.anthropic_api_key:
             warnings.append("ANTHROPIC_API_KEY not set")
-            _log.warning("Config: ANTHROPIC_API_KEY not set — LLM calls will fail")
+            if self.llm_provider == "anthropic":
+                _log.warning("Config: ANTHROPIC_API_KEY not set — LLM calls will fail")
+            else:
+                _log.info("Config: ANTHROPIC_API_KEY not set — fallback unavailable")
 
         if self.paper_take_profit_pct <= 0:
             raise ValueError(f"paper_take_profit_pct must be positive, got {self.paper_take_profit_pct}")

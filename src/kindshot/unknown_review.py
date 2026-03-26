@@ -965,7 +965,7 @@ class UnknownReviewEngine:
         body_source = request.article_source if not headline_only else ""
         body_text_chars = len(request.article_text.strip()) if not headline_only else 0
         re_reviewed = not headline_only
-        if not self._config.anthropic_api_key:
+        if not self._config.nvidia_api_key and not self._config.anthropic_api_key:
             return UnknownReviewRecord(
                 event_id=request.event_id,
                 reviewed_at=datetime.now(timezone.utc),
