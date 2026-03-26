@@ -1,17 +1,18 @@
-Hypothesis: On the latest `2026-03-26` server snapshot, the NVIDIA-backed LLM path remained fully defensive rather than selectively opportunistic: structured LLM decisions were `0 BUY / 20 SKIP`, the full executable stream was `0 BUY / 41 SKIP`, and all `11` inline BUY intents were blocked by the `LOW_CONFIDENCE` guardrail before any executable BUY could escape.
+Hypothesis: As of `2026-03-27 04:11 KST`, there is no new structured NVIDIA trading result yet, and the latest completed runtime day (`2026-03-26`) confirms the same fully defensive shape at full-day scale: structured LLM decisions were `0 BUY / 30 SKIP`, the full executable stream was `0 BUY / 51 SKIP`, and all `15` inline BUY intents were blocked before execution (`13 LOW_CONFIDENCE`, `2 MARKET_CLOSE_CUTOFF`).
 
 Changed files:
-- `docs/daily-nvidia-report.md`
+- `docs/nvidia-day1.md`
 - `memory/codex-loop/latest.md`
 
 Validation:
-- Snapshotted `kindshot-server:/opt/kindshot/logs/kindshot_20260326.jsonl` at `2026-03-26 18:00:01 KST`
-- Recomputed structured `decision`-row source/action counts from the refreshed local snapshot copy (`41` decisions total; `20` LLM)
-- Recomputed inline `event`-row BUY/SKIP counts and BUY guardrail blockers from the same snapshot (`11` BUY intents, all `LOW_CONFIDENCE`)
-- Cross-checked same-day `journalctl -u kindshot` for successful NVIDIA endpoint calls (`55` `200 OK`) and restart instability (`49` timeout restarts)
+- Pulled `kindshot-server:/opt/kindshot/logs/kindshot_20260326.jsonl` after day close (`2,621,121` bytes; `mtime=2026-03-26 21:17:23 KST`)
+- Recomputed full-day structured `decision` counts from the server log copy (`51` decisions total; `30` LLM; all `SKIP`)
+- Recomputed inline `event` BUY/SKIP counts and BUY guardrail blockers from the same full-day log (`15` BUY intents; `13 LOW_CONFIDENCE`, `2 MARKET_CLOSE_CUTOFF`)
+- Cross-checked `journalctl -u kindshot` for `2026-03-26` (`71` NVIDIA `200 OK`, `53` timeout failures) and `2026-03-27` so far (`0` NVIDIA `200 OK`)
+- Verified `2026-03-27` still has no `kindshot_20260327.jsonl`; only `polling_trace_20260327.jsonl` exists and shows one raw item noise-filtered before structured logging
 
 Risk and rollback note:
 - This slice is documentation-only and does not change runtime behavior.
 - Structured `decision.llm_model` still logs `claude-haiku-4-5-20251001`, so provider attribution relies on `decision_source=LLM` plus same-day journal evidence showing NVIDIA API calls.
-- The service restarted repeatedly through the day, so this report is a point-in-time snapshot, not an end-of-day closeout.
-- Roll back by reverting `docs/daily-nvidia-report.md` and restoring the previous `memory/codex-loop/latest.md`.
+- `2026-03-26` remained restart-heavy, so interpretation should separate provider activity (`71` successful calls) from trade quality (`0 BUY`).
+- Roll back by reverting `docs/nvidia-day1.md` and restoring the previous `memory/codex-loop/latest.md`.
