@@ -1,6 +1,8 @@
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
+import pytest
+
 
 def _load_strategy_comparison_module():
     path = Path(__file__).resolve().parents[1] / "scripts" / "strategy_comparison.py"
@@ -33,11 +35,12 @@ def test_compute_exit_respects_short_hold_profile():
     snapshots = {
         "t+5m": {"ret_long_vs_t0": 0.002},
         "t+15m": {"ret_long_vs_t0": 0.003},
+        "t+20m": {"ret_long_vs_t0": 0.004},
         "t+30m": {"ret_long_vs_t0": 0.006},
     }
 
     exit_type, exit_horizon, exit_ret = mod.compute_exit(event, snapshots)
 
     assert exit_type == "MAX_HOLD"
-    assert exit_horizon == "t+15m"
-    assert exit_ret == 0.3
+    assert exit_horizon == "t+20m"
+    assert exit_ret == pytest.approx(0.4)

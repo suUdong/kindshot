@@ -367,7 +367,7 @@ def get_dynamic_stop_loss_pct(config: Config, confidence: int, hold_minutes: int
     """confidence + hold_profile 기반 동적 손절 비율.
 
     hold_minutes=0 (EOD, 자사주소각 등 장기 촉매): SL 넓게 (-3.0%)
-    hold_minutes<=15 (수주/공급계약, 빠른 반전 리스크): SL 표준
+    hold_minutes<=20 (수주/공급계약, 반전 리스크): SL 표준
     hold_minutes>15 (특허/임상 등): confidence 기반 표준
 
     base=-1.5% 기준:
@@ -410,9 +410,9 @@ def get_dynamic_tp_pct(config: Config, confidence: int, hold_minutes: int = 0) -
     if hold_minutes == 0:
         # EOD hold: 트렌드 수익 극대화 — TP 1.5배
         tp = tp * 1.5
-    elif hold_minutes <= 15:
-        # 수주/공급계약: 빠른 반전 리스크 — TP 0.7배 (빠른 익절)
-        tp = tp * 0.7
+    elif hold_minutes <= 20:
+        # 수주/공급계약: 반전 리스크 — TP 0.85배 (적정 익절, 0.7은 너무 타이트)
+        tp = tp * 0.85
 
     return tp
 

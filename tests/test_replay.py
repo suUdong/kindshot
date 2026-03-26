@@ -407,7 +407,7 @@ async def test_replay_passes_normalized_guardrail_context(tmp_path):
     assert mock_gr.call_args.kwargs["quote_temp_stop"] is True
     assert mock_gr.call_args.kwargs["quote_liquidation_trade"] is False
     assert mock_gr.call_args.kwargs["decision_time_kst"] == datetime.fromisoformat(evt["detected_at"])
-    assert mock_gr.call_args.kwargs["decision_hold_minutes"] == 15
+    assert mock_gr.call_args.kwargs["decision_hold_minutes"] == 20
 
 
 async def test_replay_runtime_date_uses_runtime_index_artifacts(tmp_path):

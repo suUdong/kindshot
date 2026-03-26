@@ -83,6 +83,7 @@ def test_collect_strategy_summary_counts_key_strategies():
         },
         "buy_hold": {
             "t+15m": {"ret_long_vs_t0": 0.002},
+            "t+20m": {"ret_long_vs_t0": 0.003},
         },
         "skip_evt1": {"t0": {"ret_long_vs_t0": 0.0}},
         "skip_evt2": {"t0": {"ret_long_vs_t0": 0.0}},
@@ -95,7 +96,7 @@ def test_collect_strategy_summary_counts_key_strategies():
     assert summary["trailing_stop_hits"] == 1
     assert summary["max_hold_hits"] == 1
     assert summary["hold_profile_applied"] == 3
-    assert summary["hold_profile_breakdown"] == {"15m": 2, "30m": 1}
+    assert summary["hold_profile_breakdown"] == {"20m": 2, "30m": 1}
     assert summary["kill_switch_halts"] == 1
     assert summary["midday_spread_blocks"] == 1
     assert summary["market_close_cutoffs"] == 1

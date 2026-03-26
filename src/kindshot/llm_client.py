@@ -256,18 +256,25 @@ class LlmClient:
         )
 
         if use_nvidia:
+            logger.debug("LLM call: using NVIDIA NIM (%s)", self._config.nvidia_model)
             try:
                 return await self._call_nvidia(
                     prompt, max_tokens=max_tokens, temperature=temperature, max_retries=max_retries,
                 )
             except (LlmCallError, LlmTimeoutError) as nvidia_err:
                 # Fallback to Anthropic if available
-                if self._config.anthropic_api_key:
+                if self._config.anthropic_api_key and not self.circuit_open:
                     logger.warning("NVIDIA failed (%s), falling back to Anthropic", nvidia_err)
                     return await self._call_anthropic(
                         prompt, max_tokens=max_tokens, temperature=temperature, max_retries=max_retries,
                     )
+                # Anthropic도 불가하면 NVIDIA 에러를 그대로 raise
+                logger.error("NVIDIA failed and Anthropic unavailable (circuit=%s, key=%s)",
+                             self.circuit_open, bool(self._config.anthropic_api_key))
                 raise
+        elif self._config.llm_provider == "nvidia":
+            skip_reason = "no_api_key" if not self._config.nvidia_api_key else f"circuit_open:{self._nvidia_circuit_reason[:80]}"
+            logger.warning("NVIDIA skipped (%s), trying Anthropic", skip_reason)
 
         # Anthropic as primary (no NVIDIA key or circuit open)
         if self._config.anthropic_api_key:

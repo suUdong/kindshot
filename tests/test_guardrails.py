@@ -268,6 +268,7 @@ def test_intraday_value_ratio_blocks_buy():
         cfg,
         intraday_value_vs_adv20d=0.005,
         decision_action=Action.BUY,
+        decision_time_kst=_kst_dt(10, 30),  # 장중 시간 고정
         **_base_args(),
     )
     assert r.passed is False
@@ -716,17 +717,17 @@ def test_kill_switch_configurable_halt_at_2():
 # ── US-001: 동적 TP 테스트 ──────────────────
 
 def test_dynamic_tp_high_confidence():
-    """conf>=85, hold=20 (표준) → TP 1.5%."""
+    """conf>=85, hold=25 (표준, 20분 이상) → TP 1.5%."""
     cfg = _cfg()
-    assert get_dynamic_tp_pct(cfg, 90, hold_minutes=20) == 1.5
-    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=20) == 1.5
+    assert get_dynamic_tp_pct(cfg, 90, hold_minutes=25) == 1.5
+    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=25) == 1.5
 
 
 def test_dynamic_tp_mid_confidence():
-    """conf 80-84 → TP 1.0%, conf 75-79 → TP 0.5%. hold=20 (표준)."""
+    """conf 80-84 → TP 1.0%, conf 75-79 → TP 0.5%. hold=25 (표준, 20분 이상)."""
     cfg = _cfg()
-    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=20) == 1.0
-    assert get_dynamic_tp_pct(cfg, 75, hold_minutes=20) == 0.5
+    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=25) == 1.0
+    assert get_dynamic_tp_pct(cfg, 75, hold_minutes=25) == 0.5
 
 
 def test_dynamic_tp_eod_hold():
@@ -737,16 +738,16 @@ def test_dynamic_tp_eod_hold():
 
 
 def test_dynamic_tp_short_hold():
-    """hold_minutes=15 (수주/공급계약): TP 0.7배 — 빠른 반전 전 익절."""
+    """hold_minutes=20 (수주/공급계약): TP 0.85배 — 반전 리스크 대응."""
     cfg = _cfg()
-    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=15) == pytest.approx(1.5 * 0.7)  # 1.05
-    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=15) == pytest.approx(1.0 * 0.7)  # 0.7
+    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=20) == pytest.approx(1.5 * 0.85)  # 1.275
+    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=20) == pytest.approx(1.0 * 0.85)  # 0.85
 
 
 def test_dynamic_tp_low_confidence():
-    """conf<75 → config 기본값. hold=20 (표준)."""
+    """conf<75 → config 기본값. hold=25 (표준, 20분 이상)."""
     cfg = _cfg(paper_take_profit_pct=1.0)
-    assert get_dynamic_tp_pct(cfg, 70, hold_minutes=20) == 1.0
+    assert get_dynamic_tp_pct(cfg, 70, hold_minutes=25) == 1.0
 
 
 # ── US-003: ADV confidence 조정 테스트 ──────────────────
