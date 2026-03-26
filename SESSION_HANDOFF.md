@@ -1,77 +1,71 @@
-# Session Handoff — 2026-03-26 (13차, 파이어모드)
+# Session Handoff — 2026-03-26 (14차, 파이어모드)
 
-## 이번 세션 완료 작업 (v7~v26, 20개 개선)
+## 이번 세션 완료 작업 (v27~v31, 5개 개선)
 
-| # | 커밋 | 내용 |
-|---|------|------|
-| 1 | `74987cc` | v7: hold profile 연동 TP/SL + stale position exit |
-| 2 | `18e72e8` | v8: detection delay 감점 + BUY 알림 TP/SL 표시 |
-| 3 | `441f290` | v9: 시장 반응 확인 confidence 보정 |
-| 4 | `1098423` | v10: confidence 파이프라인 통합 + 감점 상한 -10 |
-| 5 | `cbaec36` | v11: 고확신 키워드 확대 + hold profile 보강 |
-| 6 | `4c72553` | v12: 버킷 키워드 갭 해소 (21개 POS_STRONG 추가) |
-| 7 | `7a1ec3e` | v13: UNKNOWN 헤드라인 분석 기반 키워드 추가 |
-| 8 | `5640a43` | v14: trailing stop hold profile 차등화 |
-| 9 | `2155ad4` | v15: LLM 프롬프트 최적화 |
-| 10 | `55abbf5` | v16: rule_fallback 기사/미확정 필터 강화 |
-| 11 | `138aea9` | **v17: LLM-fallback 하이브리드 오버라이드** ★ 핵심 |
-| 12 | `9f63cdb` | v18: "목표" 키워드 정확 매칭 |
-| 13 | `be96b55` | v19: "예정" 미확정 표현 추가 |
-| 14 | `dad4e0f` | v20: contract preflight 대형계약 하락장 바이패스 |
-| 15 | `11a8cf7` | v21: contract preflight 기사/미확정 필터 확대 |
-| 16 | `1e11054` | **v22: post-LLM 기사 패턴 감점 -10** ★ |
-| 17 | `5853a00` | v23: 해외 수주 달러/USD 금액 파싱 |
-| 18 | `ec00a34` | v24: 점진적 수주 마커 + IGNORE_OVERRIDE 증권사 확대 |
-| 19 | `ee99573` | v25: IGNORE_OVERRIDE 증권사 약어 -한투/-미래 등 12개 |
-| 20 | `c522502` | v26: "허가 취득" HIGH_CONVICTION + POS_STRONG |
+| # | 커밋 | 내용 | 영향 |
+|---|------|------|------|
+| 1 | `217ea32` | **v27: graceful shutdown 수정** | 재시작 90s→5s |
+| 2 | `5993b5c` | v28: 키워드 갭 해소 (유통계약, 국책과제 등) | false negative 감소 |
+| 3 | `b9964c2` | v29: false negative 보강 (자사주 추가 매입, 임상3상 진입) | false negative 감소 |
+| 4 | `15bfc10` | **v30: 외부 LLM 에러 핸들러 rule_fallback 재시도** ★★ | 하루 57~69건 복구 |
+| 5 | `0713e21` | **v31: KIS dual-server (실전 시세 + 모의 주문)** ★★★ | 가격 추적 정상화 |
 
 ### 핵심 발견 + 해결
 
-**서버 로그 분석 결과:**
-- 최근 3일 2544 이벤트, BUY 11건, LOW_CONFIDENCE 11건
-- NVIDIA LLM이 고확신 촉매를 체계적으로 과소평가:
-  - 자사주 소각(rule_fallback=82) → LLM이 71-73
-  - FDA 허가(rule_fallback=82) → LLM이 72
-  - 106억 수주 매출 9.33%(rule_fallback=77) → LLM이 69
+**1. Graceful shutdown 실패 (v27)**
+- `_unknown_review_loop`가 `queue.get()` 무한 블로킹 → SIGTERM 90초 timeout → SIGKILL
+- Fix: `asyncio.wait_for(2s)` + sentinel 순서 수정 + drain timeout 5s
+- systemd `TimeoutStopSec=15` 추가
 
-**v17 하이브리드 해결:** LLM conf<75 + rule_fallback BUY(75+) → rule_fallback 오버라이드
-→ 11건 false negative 중 최소 6건 구제 예상
+**2. LLM 에러로 POS 이벤트 대량 SKIP (v30)**
+- 서버 로그 분석: 3/24 57건, 3/25 69건 LLM_ERROR로 SKIP
+- 외부 exception 핸들러가 rule_fallback 없이 바로 SKIP
+- Fix: POS 버킷은 execute_bucket_path 재호출 (내부 fallback 활용)
 
-### 개선 카테고리 요약
+**3. 가격 스냅샷 전부 동일 가격 (v31) ★ 치명적**
+- 모의투자 VTS 서버가 실시간 시세 미제공 → 전일 종가만 반환
+- 모든 스냅샷 t0=t+5m=t+30m 동일 → 수익률 측정 완전 불가
+- Fix: `KIS_REAL_APP_KEY/SECRET` 설정 시 가격 조회만 실전 서버 사용
+- **⚠️ 서버 .env에 실전 API 키 추가 필요:**
+  ```
+  KIS_REAL_APP_KEY=실전앱키
+  KIS_REAL_APP_SECRET=실전앱시크릿
+  ```
 
-| 카테고리 | 버전 | 핵심 효과 |
-|---------|------|----------|
-| 출구 전략 | v7,v14 | 촉매별 TP/SL/trailing 차등화 |
-| Confidence | v8-v10 | 4단계 파이프라인 + 감점 상한 |
-| 키워드 | v11-v13 | 27+ POS_STRONG 추가, 갭 해소 |
-| 프롬프트 | v15 | 하락장 완화, hold profile 안내 |
-| 필터 | v16,v18-v19,v21 | 기사/미확정 false positive 방지 |
-| **하이브리드** | **v17** | **LLM 과소평가 → rule_fallback 오버라이드** |
-| **Post-LLM** | **v22** | **기사/미확정 패턴 감점 -10 (false positive 방지)** |
-| Preflight | v20-v21 | 대형계약 하락장 통과, 미확정 차단 |
-| 금액 파싱 | v23 | 해외 수주 달러/USD 금액 파싱 |
-| IGNORE 강화 | v24-v25 | 증권사 리포트 노이즈 차단 (24개 패턴) |
-| 키워드 보완 | v26 | "허가 취득" 동기화 |
+### 서버 로그 분석 결과
+
+| 날짜 | final_BUY | skipped_BUY | 주요 skip 사유 |
+|------|-----------|-------------|---------------|
+| 3/20 | 7 | 21 | 정상 (pre-v22 코드) |
+| 3/23 | 0 | 1 | MARKET_BREADTH_RISK_OFF |
+| 3/24 | 0 | 0 | **LLM_ERROR 57건**, ADV_TOO_LOW 37건 |
+| 3/25 | 0 | 0 | **LLM_ERROR 69건**, ADV_TOO_LOW 70건 |
+| 3/26 | 0 | 13 | LOW_CONFIDENCE (KOSPI -3.22%) |
+
+**3/20 실제 매매 분석 (9건 final BUY):**
+- 수익률 모두 ≈0% (VTS 종가 문제 — v31로 해결 예정)
+- false positive 3건: CEO 발언, 기사 → v22-v26 IGNORE_OVERRIDE로 이미 해결
 
 ## 현재 상태
 - **브랜치:** main
-- **테스트:** 653 passed, 0 failed (634 → 653, +19 신규 테스트)
-- **서버:** active (running), v21 최종 배포
+- **테스트:** 653 passed, 0 failed
+- **서버:** active (running), v31 최종 배포
+- **systemd:** TimeoutStopSec=15 추가됨
 
 ## 다음 세션 우선순위
 
-### P0 — 내일 검증
-1. **3/27 장중 모니터링** — v7~v21 효과 검증 (특히 v17 하이브리드)
-2. **하이브리드 오버라이드 로그 확인** — "LLM-fallback hybrid" 로그 발생 여부
+### P0 — 즉시
+1. **서버 .env에 KIS 실전 API 키 추가** — v31 dual-server 활성화 필수
+2. **3/27 장중 모니터링** — v30 LLM fallback 효과 + 실시간 시세 확인
 
 ### P1 — 긴급
-3. **Anthropic 크레딧 충전 또는 제거** — fallback 불가
-4. **2주 룰 freeze + 데이터 수집** — 100건+ 거래 필요
+3. **Anthropic 크레딧 충전 또는 제거** — fallback 불가 (현재 NVIDIA primary)
+4. **2주 룰 freeze + 데이터 수집** — 100건+ 거래로 통계적 유의성 확보
 
 ### P2 — 기능
-5. **Paper → 소액 Live 전환** — KIS live API 키
-6. **확률 기반 진입** — 뉴스 후 2~5분 관찰
-7. **Volume spike 게이트** — 거래량 급증 확인
+5. **Volume spike gate** — 거래량 급증 확인 후 BUY (시장 반응 확인)
+6. **Paper → 소액 Live 전환** — KIS live API 키로 전환
+7. **확률 기반 진입** — 뉴스 후 2~5분 관찰
 
 ### P3 — 제품
 8. **텔레그램 채널 지인 초대** — 외부 검증
