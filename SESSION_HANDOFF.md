@@ -1,60 +1,69 @@
-# Session Handoff — 2026-03-26 (12차, 파이어모드)
+# Session Handoff — 2026-03-26 (13차, 파이어모드)
 
-## 이번 세션 완료 작업 (v7~v16, 10개 개선)
+## 이번 세션 완료 작업 (v7~v21, 15개 개선)
 
-| # | 커밋 | 분류 | 내용 |
-|---|------|------|------|
-| 1 | `74987cc` | feat | v7: hold profile 연동 TP/SL + stale position exit |
-| 2 | `18e72e8` | feat | v8: detection delay 감점 + BUY 알림 TP/SL 표시 |
-| 3 | `441f290` | feat | v9: 시장 반응 확인 confidence 보정 (ret_today) |
-| 4 | `1098423` | feat | v10: confidence 조정 파이프라인 통합 + 감점 상한 -10 |
-| 5 | `cbaec36` | feat | v11: 고확신 키워드 확대 + hold profile 보강 |
-| 6 | `4c72553` | fix | v12: 버킷 키워드 갭 해소 — HIGH_CONVICTION↔POS_STRONG 동기화 |
-| 7 | `7a1ec3e` | feat | v13: UNKNOWN 헤드라인 분석 기반 키워드 추가 |
-| 8 | `5640a43` | feat | v14: trailing stop hold profile 차등화 |
-| 9 | `2155ad4` | feat | v15: LLM 프롬프트 최적화 (ret_3d<-5% 완화, hold profile 안내) |
-| 10 | `55abbf5` | feat | v16: rule_fallback 기사/미확정 필터 강화 |
+| # | 커밋 | 내용 |
+|---|------|------|
+| 1 | `74987cc` | v7: hold profile 연동 TP/SL + stale position exit |
+| 2 | `18e72e8` | v8: detection delay 감점 + BUY 알림 TP/SL 표시 |
+| 3 | `441f290` | v9: 시장 반응 확인 confidence 보정 |
+| 4 | `1098423` | v10: confidence 파이프라인 통합 + 감점 상한 -10 |
+| 5 | `cbaec36` | v11: 고확신 키워드 확대 + hold profile 보강 |
+| 6 | `4c72553` | v12: 버킷 키워드 갭 해소 (21개 POS_STRONG 추가) |
+| 7 | `7a1ec3e` | v13: UNKNOWN 헤드라인 분석 기반 키워드 추가 |
+| 8 | `5640a43` | v14: trailing stop hold profile 차등화 |
+| 9 | `2155ad4` | v15: LLM 프롬프트 최적화 |
+| 10 | `55abbf5` | v16: rule_fallback 기사/미확정 필터 강화 |
+| 11 | `138aea9` | **v17: LLM-fallback 하이브리드 오버라이드** ★ 핵심 |
+| 12 | `9f63cdb` | v18: "목표" 키워드 정확 매칭 |
+| 13 | `be96b55` | v19: "예정" 미확정 표현 추가 |
+| 14 | `dad4e0f` | v20: contract preflight 대형계약 하락장 바이패스 |
+| 15 | `11a8cf7` | v21: contract preflight 기사/미확정 필터 확대 |
 
-### 핵심 개선 요약
+### 핵심 발견 + 해결
 
-**출구 전략 (v7, v14)**
-- TP/SL/trailing stop 모두 hold profile(촉매 유형) 반영
-- EOD hold(자사주소각): TP×1.5, SL×1.3, trailing×1.5
-- 수주/공급계약(hold≤15): TP×0.7, trailing×0.7
-- Stale exit: 5분+ 무반응(±0.2%) 자동 탈출
+**서버 로그 분석 결과:**
+- 최근 3일 2544 이벤트, BUY 11건, LOW_CONFIDENCE 11건
+- NVIDIA LLM이 고확신 촉매를 체계적으로 과소평가:
+  - 자사주 소각(rule_fallback=82) → LLM이 71-73
+  - FDA 허가(rule_fallback=82) → LLM이 72
+  - 106억 수주 매출 9.33%(rule_fallback=77) → LLM이 69
 
-**Confidence 파이프라인 (v8-v10)**
-- 4단계 조정: ADV → price reaction → delay → market
-- 총 감점 상한 -10 (과다 감점 방지)
-- Price reaction: ret_today 0.3~1.5% → +2 (시장 확인)
-- Delay: 30s+ 감지 지연 → -1~-3
+**v17 하이브리드 해결:** LLM conf<75 + rule_fallback BUY(75+) → rule_fallback 오버라이드
+→ 11건 false negative 중 최소 6건 구제 예상
 
-**키워드/버킷 (v11-v13)**
-- 27개 POS_STRONG 키워드 추가
-- HIGH_CONVICTION↔POS_STRONG 갭 해소 (FDA승인 등 시그널 유실 수정)
-- 서버 UNKNOWN 분석 기반 추가 (품목허가, 사용승인 등)
+### 개선 카테고리 요약
 
-**프롬프트/필터 (v15-v16)**
-- ret_3d<-5% 강한 촉매 BUY 허용 (코드 v6와 일치)
-- 미확정 표현(추진/검토/계획) rule_fallback 필터
+| 카테고리 | 버전 | 핵심 효과 |
+|---------|------|----------|
+| 출구 전략 | v7,v14 | 촉매별 TP/SL/trailing 차등화 |
+| Confidence | v8-v10 | 4단계 파이프라인 + 감점 상한 |
+| 키워드 | v11-v13 | 27+ POS_STRONG 추가, 갭 해소 |
+| 프롬프트 | v15 | 하락장 완화, hold profile 안내 |
+| 필터 | v16,v18-v19,v21 | 기사/미확정 false positive 방지 |
+| **하이브리드** | **v17** | **LLM 과소평가 → rule_fallback 오버라이드** |
+| Preflight | v20-v21 | 대형계약 하락장 통과, 미확정 차단 |
 
 ## 현재 상태
 - **브랜치:** main
-- **테스트:** 645 passed, 0 failed (634 → 645, +11 신규)
-- **서버:** active (running), v16 배포 완료
+- **테스트:** 651 passed, 0 failed (634 → 651, +17 신규)
+- **서버:** active (running), v21 최종 배포
 
 ## 다음 세션 우선순위
 
-### P1 — 검증
-1. **3/27 장중 모니터링** — v7~v16 효과 검증 (BUY 시그널 발생 여부)
-2. **Anthropic 크레딧 충전 또는 제거** — fallback 불가 상태
-3. **2주 룰 freeze + 데이터 수집** — 100건+ 거래 필요
+### P0 — 내일 검증
+1. **3/27 장중 모니터링** — v7~v21 효과 검증 (특히 v17 하이브리드)
+2. **하이브리드 오버라이드 로그 확인** — "LLM-fallback hybrid" 로그 발생 여부
+
+### P1 — 긴급
+3. **Anthropic 크레딧 충전 또는 제거** — fallback 불가
+4. **2주 룰 freeze + 데이터 수집** — 100건+ 거래 필요
 
 ### P2 — 기능
-4. **Paper → 소액 Live 전환 준비** — KIS live API 키 설정
-5. **확률 기반 진입** — 뉴스 후 2~5분 관찰 후 진입
-6. **Volume spike 확인 게이트** — 진입 시 거래량 급증 확인
+5. **Paper → 소액 Live 전환** — KIS live API 키
+6. **확률 기반 진입** — 뉴스 후 2~5분 관찰
+7. **Volume spike 게이트** — 거래량 급증 확인
 
 ### P3 — 제품
-7. **외부 사용자 확보** — 텔레그램 채널 초대
-8. **정보 서비스 pivot 검토** — AI 공시 분석 알림 서비스
+8. **텔레그램 채널 지인 초대** — 외부 검증
+9. **AI 공시 분석 서비스 pivot** — 수익모델 다변화
