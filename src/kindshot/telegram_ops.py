@@ -100,11 +100,13 @@ def format_buy_signal(
     spread_bps: float | None = None,
     adv_display: str = "",
     mode: str = "paper",
+    decision_source: str = "LLM",
 ) -> str:
     """Format a real-time BUY signal notification for Telegram."""
     hold_label = "EOD" if hold_minutes == 0 else f"{hold_minutes}m"
+    source_tag = f" [{decision_source}]" if decision_source != "LLM" else ""
     lines = [
-        f"[{mode.upper()}] BUY {corp_name}({ticker})",
+        f"[{mode.upper()}] BUY {corp_name}({ticker}){source_tag}",
         f"conf={confidence} size={size_hint} hold={hold_label}",
         f"bucket={bucket}",
     ]
@@ -140,6 +142,7 @@ def try_send_buy_signal(
     spread_bps: float | None = None,
     adv_display: str = "",
     mode: str = "paper",
+    decision_source: str = "LLM",
 ) -> bool:
     """Best-effort BUY signal telegram notification. Never raises."""
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -153,6 +156,7 @@ def try_send_buy_signal(
             reason=reason, keyword_hits=keyword_hits,
             hold_minutes=hold_minutes, ret_today=ret_today,
             spread_bps=spread_bps, adv_display=adv_display, mode=mode,
+            decision_source=decision_source,
         )
         return send_telegram_message(text, bot_token, chat_id)
     except Exception:

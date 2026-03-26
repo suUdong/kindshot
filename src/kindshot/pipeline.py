@@ -514,6 +514,7 @@ async def execute_bucket_path(
             spread_bps=raw_data.spread_bps,
             adv_display=adv_display,
             mode=mode,
+            decision_source=decision.decision_source,
         )
 
     return ProcessOutcome(event_id=processed.event_id, action=decision.action)
