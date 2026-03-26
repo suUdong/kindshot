@@ -1,77 +1,61 @@
-# Session Handoff — 2026-03-24 (6차, 야간 자율 운영)
+# Session Handoff — 2026-03-26 (7차, 파이어모드)
 
 ## 이번 세션 완료 작업
 
-### 전략 개선 7건 — fire-profitability 기반
+### 긴급 복구 + 전략 개선 2건
 
 | # | 커밋 | 분류 | 내용 |
 |---|------|------|------|
-| 1 | `41fc426` | 전략 | 시간 기반 trailing stop (early 0.3%, mid 0.5%, late 0.7%) + TP 1.5%→0.8% |
-| 2 | `7d94ff5` | 전략 | 킬 스위치 — 2연패 size 축소, 3연패 당일 BUY 중단 |
-| 3 | `f38fd1b` | 전략 | 보유시간 차등화 — 공급계약 15분, 특허 30분, 주주환원 EOD |
-| 4 | `aca12bb` | 전략 | 시간대별 전략 분리 — 비유동 시간대 spread 강화 + LLM 프롬프트 |
-| 5 | `068ecc5` | 전략 | 체결/해지 구분 강화 — 복합 NEG 키워드 8개 + 문맥 분석 프롬프트 |
-| 6 | `c64098b` | 전략 | SKIP 종목 후속 추적 — false negative 식별용 가격 스냅샷 |
+| 1 | `872fd8c` | fix | 하락장 confidence 감점 완화 — 최대 -8 → -5 (4단계 세분화) |
+| 2 | `5380373` | feat | rule_fallback 고확신 키워드 confidence 상향 + 설계계약 추가 |
 
-### 변경 요약
+### 진단 결과
 
-**1. Trailing Stop + TP 조정**
-- 고정 TP 1.5% → 0.8% (뉴스 반응 특성에 현실적)
-- trailing stop activation 0.8% → 0.3% (더 빨리 수익 보호)
-- 시간대별 trail 폭: 0~5분 0.3%, 5~30분 0.5%, 30분+ 0.7%
-- `_get_trailing_stop_pct()` + `_entry_times` 추적
+**3/24~26 거래 0건 원인:**
+1. **Anthropic 크레딧 고갈** → LLM circuit breaker 작동
+2. **NVIDIA API 키 미설정** (3/26 14:20 이전) → fallback도 실패
+3. **14:28 서버 재시작** 후 NVIDIA 키 설정됨 → 14:43부터 NVIDIA LLM 정상 동작
+4. **rule_fallback의 BUY도 전멸**: conf 77~80 → market adjustment -8 → 69~72 < min_buy_confidence(75)
 
-**2. 킬 스위치**
-- 2연패 시 size_hint 한단계 다운 (L→M, M→S)
-- 3연패 시 당일 BUY 완전 중단 (CONSECUTIVE_STOP_LOSS)
-- `consecutive_loss_size_down`, `consecutive_loss_halt` config 추가
-- `downgrade_size_hint()`, `get_kill_switch_size_hint()` 함수
+**수정 내용:**
+1. `apply_market_confidence_adjustment`: -2%이하 일괄 -8 → 4단계(-2/-3/-4/-5) 세분화
+   - -0.5~-1%: -2, -1~-2%: -3, -2~-3%: -4, -3%+: -5
+   - LLM conf 80 + 폭락장(-3%) = 75 → min_buy_confidence 통과
+2. `_HIGH_CONVICTION_KEYWORDS` base confidence 상향:
+   - 자사주 소각/FDA/공개매수: 80→82 (폭락장에서도 77 통과)
+   - 실적서프라이즈/흑자전환: 78→80
+   - 계약/수주/바이오: 78→79
+   - 설계계약 키워드 신규 추가
 
-**3. 보유시간 차등화**
-- `hold_profile.py` 신규: 키워드→보유시간 매핑
-- 공급계약/수주 15분, 특허/FDA 30분, 임상2상 20분, 자사주 소각 EOD
-- pipeline에서 BUY 시 자동 적용
+### 분석 결과
 
-**4. 시간대별 전략 분리**
-- 11:00~14:00 비유동 시간대: spread 한도 70% 강화 (MIDDAY_SPREAD_TOO_WIDE)
-- decision_strategy.txt: 장전/개장/비유동/마감 시간대별 규칙 추가
-
-**5. 체결/해지 구분 강화**
-- buckets.json: 공급계약 해제/파기, 납품계약 해지, 수주계약 해지 등 8개 NEG 키워드
-- decision_strategy.txt: 체결/해지/판매/구매 문맥 분석 규칙
-- NEG_STRONG > POS_STRONG 우선순위로 "공급계약 해지" 확실히 NEG 처리
-
-**6. SKIP 종목 후속 추적**
-- SKIP된 POS_STRONG/POS_WEAK 종목 "skip_" 프리픽스로 가격 추적
-- close 시점 수익률로 false negative 식별 가능
-
-### 전체 누적 성과 (세션 1~6)
-
-| 항목 | 시작 | 현재 |
-|------|------|------|
-| 테스트 | 427 (1 fail) | **490 passed, 0 failed** (+63) |
-| 커밋 수 | 0 | **25 commits** |
-| main.py LOC | 1,194 | **330** (72% 감소) |
-| 전략 모듈 | 없음 | **hold_profile.py, 킬스위치, trailing stop** |
-| 키워드 | 477개 | **485+개** (NEG 복합 키워드 추가) |
+**NVIDIA LLM 상태:** 정상 (HTTP 200, Llama-3.1-70B)
+**UNKNOWN 리뷰:** 62건 → 2건 프로모션 (conf 90) → main pipeline에서 SKIP 판단 (정상)
+**오늘 폭락장:** KOSPI -3.3%, KOSDAQ -3.6% → SKIP 판단 대부분 정확 (false negative 1건, +0.77%)
+**3/20 데이터 (LLM 정상 운영):** 7건 BUY 실행, close 기준 대부분 양수 — 시스템 알파 생성 확인
 
 ## 현재 상태
 - **브랜치:** main
-- **테스트:** 490 passed, 0 failed
-- **마지막 커밋:** `c64098b` feat: SKIP 종목 후속 추적
+- **테스트:** 625 passed, 0 failed
+- **마지막 커밋:** `5380373` feat: rule_fallback 고확신 키워드 confidence 상향
+- **서버:** active (running), NVIDIA LLM 정상
 
 ## 잔여 기술 부채
 
+### P1 — 긴급
+1. **Anthropic 크레딧 충전 또는 제거** — fallback 불가 상태 방치 위험
+2. **장전 이벤트 재평가 메커니즘** — iv_ratio=0 이벤트가 DUPLICATE로 영구 소실 (3/20 12건 miss)
+
 ### P1 — 전략 검증
-1. **2주 룰 freeze + 데이터 수집** — 새 전략으로 100건+ 거래 필요
-2. **replay 검증** — 기존 데이터로 trailing stop / hold profile 시뮬레이션
+3. **SL -0.7% 재검토** — t+5m에서 -1~-3% → close에서 +2~+10% V자 반등 패턴 다수 발견. SL이 잠재적 위너를 조기 손절 가능성
+4. **2주 룰 freeze + 데이터 수집** — 새 전략으로 100건+ 거래 필요
 
 ### P2 — 기능/전략
-3. **Paper → 소액 Live 전환 준비** — KIS live API 키 설정, 주문 실행 모듈
-4. **텔레그램 알림 품질 개선** — BUY 시그널에 "왜 BUY인지" 이유 추가
-5. **소형주 집중** — ADV 500~2000억 구간 confidence 보너스 (brainstorm에서 P1)
-6. **확률 기반 진입** — 뉴스 후 2~5분 관찰 후 진입 (구현 복잡)
+5. **Paper → 소액 Live 전환 준비** — KIS live API 키 설정, 주문 실행 모듈
+6. **텔레그램 알림 품질 개선** — BUY 시그널에 "왜 BUY인지" 이유 추가
+7. **소형주 집중** — ADV 500~2000억 구간 confidence 보너스
+8. **확률 기반 진입** — 뉴스 후 2~5분 관찰 후 진입 (구현 복잡)
 
 ### P3 — 제품 방향
-7. **외부 사용자 확보** — 텔레그램 채널에 지인 1~3명 초대
-8. **정보 서비스 pivot 검토** — AI 공시 분석 알림 서비스
+9. **외부 사용자 확보** — 텔레그램 채널에 지인 1~3명 초대
+10. **정보 서비스 pivot 검토** — AI 공시 분석 알림 서비스
