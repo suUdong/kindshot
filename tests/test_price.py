@@ -27,7 +27,7 @@ def test_schedule_creates_all_horizons():
     )
 
     horizons = {s.horizon for s in scheduler._heap}
-    assert horizons == {"t0", "t+30s", "t+1m", "t+2m", "t+5m", "t+15m", "t+20m", "t+30m", "close"}
+    assert horizons == {"t0", "t+30s", "t+1m", "t+2m", "t+5m", "t+10m", "t+15m", "t+20m", "t+30m", "close"}
 
 
 def test_close_snapshot_uses_config_delay():
