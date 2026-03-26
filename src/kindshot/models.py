@@ -131,6 +131,7 @@ class EventRecord(BaseModel):
     parent_match_score: Optional[float] = None
     parent_candidate_count: Optional[int] = None
     source: str = "KIND"
+    dorg: str = ""  # 공시/뉴스 제공기관
     rss_guid: Optional[str] = None
     rss_link: Optional[str] = None
     kind_uid: Optional[str] = None

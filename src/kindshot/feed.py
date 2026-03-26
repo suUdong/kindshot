@@ -35,6 +35,7 @@ class RawDisclosure:
     ticker: str
     corp_name: str
     detected_at: datetime
+    dorg: str = ""  # 공시/뉴스 제공기관 (KIS: dorg field)
 
 
 def _extract_ticker_corp(title: str) -> tuple[str, str]:
@@ -422,6 +423,7 @@ class KisFeed:
                     ticker=ticker,
                     corp_name=corp_name,
                     detected_at=now,
+                    dorg=item.dorg,
                 )
             )
 
