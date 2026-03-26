@@ -101,6 +101,8 @@ def format_buy_signal(
     adv_display: str = "",
     mode: str = "paper",
     decision_source: str = "LLM",
+    tp_pct: float | None = None,
+    sl_pct: float | None = None,
 ) -> str:
     """Format a real-time BUY signal notification for Telegram."""
     hold_label = "EOD" if hold_minutes == 0 else f"{hold_minutes}m"
@@ -109,6 +111,9 @@ def format_buy_signal(
         f"{'🟢' if mode == 'live' else '📋'} [{mode.upper()}] BUY {corp_name}({ticker}){source_tag}",
         f"conf={confidence} size={size_hint} hold={hold_label}",
     ]
+    # TP/SL 타겟 표시
+    if tp_pct is not None and sl_pct is not None:
+        lines.append(f"TP={tp_pct:+.1f}% SL={sl_pct:.1f}%")
     # BUY 이유를 가장 눈에 띄게 표시
     if reason:
         lines.append(f">> {reason}")
@@ -191,6 +196,8 @@ def try_send_buy_signal(
     adv_display: str = "",
     mode: str = "paper",
     decision_source: str = "LLM",
+    tp_pct: float | None = None,
+    sl_pct: float | None = None,
 ) -> bool:
     """Best-effort BUY signal telegram notification. Never raises."""
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -205,6 +212,7 @@ def try_send_buy_signal(
             hold_minutes=hold_minutes, ret_today=ret_today,
             spread_bps=spread_bps, adv_display=adv_display, mode=mode,
             decision_source=decision_source,
+            tp_pct=tp_pct, sl_pct=sl_pct,
         )
         return send_telegram_message(text, bot_token, chat_id)
     except Exception:

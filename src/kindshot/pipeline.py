@@ -22,7 +22,7 @@ from kindshot.context_card import (
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError, has_high_conviction_keyword
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -384,6 +384,16 @@ async def execute_bucket_path(
                 raw_data.adv_value_20d / 1e8,
             )
 
+    # Detection delay 기반 confidence 감점 (늦게 감지된 뉴스 = 이미 반영)
+    if decision.action == Action.BUY and delay_ms is not None:
+        original_conf = decision.confidence
+        decision.confidence = apply_delay_confidence_adjustment(decision.confidence, delay_ms)
+        if decision.confidence != original_conf:
+            logger.info(
+                "Delay confidence adj [%s]: %d → %d (delay=%.1fs)",
+                raw.ticker, original_conf, decision.confidence, delay_ms / 1000,
+            )
+
     # 하락장 confidence 감점 (지수 하락폭에 비례)
     if decision.action == Action.BUY:
         market_snapshot = market.snapshot
@@ -519,7 +529,10 @@ async def execute_bucket_path(
     # 실시간 텔레그램 BUY 알림 (best-effort, 실패해도 파이프라인 중단 안 함)
     if decision.action == Action.BUY:
         from kindshot.telegram_ops import try_send_buy_signal
+        from kindshot.guardrails import get_dynamic_tp_pct, get_dynamic_stop_loss_pct
         adv_display = f"{raw_data.adv_value_20d/1e8:.0f}억" if raw_data.adv_value_20d else ""
+        buy_tp = get_dynamic_tp_pct(config, decision.confidence, hold_minutes)
+        buy_sl = get_dynamic_stop_loss_pct(config, decision.confidence, hold_minutes)
         try_send_buy_signal(
             ticker=raw.ticker,
             corp_name=raw.corp_name,
@@ -535,6 +548,8 @@ async def execute_bucket_path(
             adv_display=adv_display,
             mode=mode,
             decision_source=decision.decision_source,
+            tp_pct=buy_tp,
+            sl_pct=buy_sl,
         )
 
     return ProcessOutcome(event_id=processed.event_id, action=decision.action)

@@ -8,6 +8,7 @@ from kindshot.guardrails import (
     check_guardrails, GuardrailResult, GuardrailState,
     get_dynamic_stop_loss_pct, get_dynamic_tp_pct,
     apply_adv_confidence_adjustment, apply_market_confidence_adjustment,
+    apply_delay_confidence_adjustment,
     calculate_position_size,
     downgrade_size_hint, get_kill_switch_size_hint,
 )
@@ -1097,3 +1098,26 @@ def test_position_size_account_risk_constrains():
     size = calculate_position_size(cfg, "M", account_balance=1_000_000)
     expected = 1_000_000 * 0.02 / 0.007
     assert abs(size - expected) < 1  # 부동소수점 허용
+
+
+# ── Detection Delay confidence 조정 테스트 ──────────────────
+
+def test_delay_confidence_fast_detection():
+    """<30초: 조정 없음."""
+    assert apply_delay_confidence_adjustment(80, 15_000) == 80
+    assert apply_delay_confidence_adjustment(80, None) == 80
+
+
+def test_delay_confidence_30s():
+    """30~60초: -1."""
+    assert apply_delay_confidence_adjustment(80, 45_000) == 79
+
+
+def test_delay_confidence_60s():
+    """60~120초: -2."""
+    assert apply_delay_confidence_adjustment(80, 90_000) == 78
+
+
+def test_delay_confidence_120s_plus():
+    """120초+: -3."""
+    assert apply_delay_confidence_adjustment(80, 180_000) == 77

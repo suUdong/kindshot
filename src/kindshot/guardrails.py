@@ -426,6 +426,24 @@ def apply_market_confidence_adjustment(confidence: int, kospi_change_pct: float 
     return max(0, confidence - 5)
 
 
+def apply_delay_confidence_adjustment(confidence: int, delay_ms: int | None) -> int:
+    """Detection delay 기반 confidence 감점.
+
+    뉴스 감지가 늦을수록 가격에 이미 반영됐을 가능성 높음.
+    - <30초: 조정 없음 (빠른 감지)
+    - 30~60초: -1
+    - 60~120초: -2
+    - 120초+: -3
+    """
+    if delay_ms is None or delay_ms < 30_000:
+        return confidence
+    if delay_ms < 60_000:
+        return max(0, confidence - 1)
+    if delay_ms < 120_000:
+        return max(0, confidence - 2)
+    return max(0, confidence - 3)
+
+
 def apply_adv_confidence_adjustment(confidence: int, adv_value_20d: float) -> int:
     """ADV 기반 confidence 캡/페널티/보너스. 소형주 집중 전략."""
     if adv_value_20d >= 500_000_000_000:  # 5000억+: 초대형주 → cap 65 (sell the news)
