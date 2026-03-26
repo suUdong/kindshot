@@ -3,9 +3,9 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `Confidence Distribution Report`
-- Focus: finish the reusable confidence-distribution report so the team can compare pre/post-upgrade confidence shapes and get an explicit `LLM` before/after verdict instead of manually reading two rows.
-- Active hypothesis: a source-split confidence report with collapse flags plus an `LLM` delta verdict will make it obvious whether the LLM upgrade changed confidence behavior in a meaningful way.
+- Phase: `Historical Collection Foundation`
+- Focus: keep the collector replay contract consistent by making replay resolve collector manifests through `data/collector/manifests/index.json` before falling back to legacy per-date paths.
+- Active hypothesis: if replay trusts the collector manifest index as the read entrypoint, relocated or regenerated manifests will stay consumable without forcing every consumer to reconstruct the path convention.
 
 ## Environment
 
@@ -13,23 +13,22 @@
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
-  - `.venv/bin/python -m py_compile scripts/confidence_report.py` passed
-  - `.venv/bin/python -m pytest tests/test_confidence_report.py -q` passed (`5 passed`)
-  - `.venv/bin/python -m pytest -q` passed outside sandbox (`706 passed, 1 warning`)
+  - `.venv/bin/python -m pytest tests/test_replay.py -q` passed (`32 passed`)
+  - `.venv/bin/python -m pytest -q` passed (`708 passed, 1 warning`)
 
 ## Last Completed Step
 
-- Wrote `docs/plans/2026-03-27-confidence-distribution-report.md` for a bounded standalone confidence-analysis surface and extended it with an explicit `LLM` before/after delta verdict.
-- Added `scripts/confidence_report.py` to summarize exact confidence frequencies, bands, source-split cohorts, mode-share collapse flags, and a top-level `LLM` change verdict across selected logs.
-- Added `tests/test_confidence_report.py`, caught a missing-key regression in the delta renderer, and verified the confidence report suite passes.
-- Verified the full repository test suite after the change (`706 passed, 1 warning`).
+- Updated replay's collector-manifest read path to resolve `manifest_path` from `data/collector/manifests/index.json` before falling back to the legacy `YYYYMMDD.json` convention.
+- Added replay coverage for both indexed manifest-path resolution and legacy fallback behavior.
+- Updated the collection-infra design doc so the replay-facing storage contract explicitly says index lookup comes first.
+- Verified the full repository test suite after the change (`708 passed, 1 warning`).
 
 ## Next Intended Step
 
-- Run `python3 scripts/confidence_report.py --log-file <before> --log-file <after>` once a post-upgrade runtime log exists and compare the `LLM` cohort mode-share / band spread.
-- After that evidence is in hand, return to the pending contract-preflight verification task and confirm whether weak `수주` headlines still reach BUY.
+- If a genuine post-upgrade runtime decision log appears, run `python3 scripts/confidence_report.py --log-file <before> --log-file <after>` and close the confidence-comparison evidence gap.
+- Otherwise continue Phase 6 with the next replay-facing collector slice that does not require external runtime evidence.
 
 ## Notes
 
-- This slice changes analysis tooling only; strategy and live-order boundaries remain untouched.
-- The working tree still contains unrelated pre-existing untracked paths that were not part of this slice.
+- This slice changes replay/collector read-path behavior only; strategy and live-order boundaries remain untouched.
+- The confidence-comparison follow-up is still blocked on a genuine post-upgrade runtime log.
