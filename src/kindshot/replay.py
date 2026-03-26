@@ -573,6 +573,27 @@ def _print_replay_ops_summary(report: dict[str, Any]) -> None:
     print("\n" + "=" * 60)
     print("REPLAY OPS SUMMARY")
     print("=" * 60)
+    print(f"Date count: {report.get('date_count', 0)}")
+    print(f"Health counts: {report.get('health_counts', {}) or '-'}")
+    print(f"Warning counts: {report.get('warning_counts', {}) or '-'}")
+    print("\nRows:")
+    for row in report.get("rows", []):
+        print(
+            "%s health=%s warnings=%d merged=%d collector=%s runtime=%s report=%s buys=%d price_trades=%d%s"
+            % (
+                row["date"],
+                row["health"],
+                row["warning_count"],
+                row["merged_event_count"],
+                "yes" if row["collector_available"] else "no",
+                "yes" if row["runtime_available"] else "no",
+                "yes" if row["report_available"] else "no",
+                row["buy_decisions"],
+                row["price_data_trades"],
+                _collector_blocker_suffix(row),
+            )
+        )
+    print("=" * 60)
 
 
 def _collector_blocker_suffix(row: dict[str, Any]) -> str:

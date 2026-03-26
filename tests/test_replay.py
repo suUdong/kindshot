@@ -9,6 +9,7 @@ import pytest
 
 from kindshot.config import Config
 from kindshot.replay import (
+    _print_replay_ops_summary,
     _print_replay_ops_cycle_ready,
     _print_replay_ops_queue_ready,
     _print_replay_ops_run_ready,
@@ -1137,6 +1138,50 @@ def test_print_replay_ops_queue_ready_includes_collector_blocker_details(capsys)
     out = capsys.readouterr().out
     assert "collector_reason=daily_index_missing" in out
     assert "collector_manifest=/tmp/manifests/20260314.json" in out
+
+
+def test_print_replay_ops_summary_includes_counts_and_collector_blockers(capsys):
+    _print_replay_ops_summary(
+        {
+            "date_count": 2,
+            "health_counts": {"ready": 1, "partial_inputs": 1},
+            "warning_counts": {"COLLECTOR_PARTIAL_STATUS": 1},
+            "rows": [
+                {
+                    "date": "20260316",
+                    "health": "ready",
+                    "warning_count": 0,
+                    "merged_event_count": 3,
+                    "collector_available": True,
+                    "runtime_available": True,
+                    "report_available": True,
+                    "buy_decisions": 2,
+                    "price_data_trades": 2,
+                    "collector_status_reason": "",
+                    "collector_manifest_path": "",
+                },
+                {
+                    "date": "20260315",
+                    "health": "partial_inputs",
+                    "warning_count": 2,
+                    "merged_event_count": 0,
+                    "collector_available": True,
+                    "runtime_available": False,
+                    "report_available": False,
+                    "buy_decisions": 0,
+                    "price_data_trades": 0,
+                    "collector_status_reason": "daily_index_missing",
+                    "collector_manifest_path": "/tmp/manifests/20260315.json",
+                },
+            ],
+        }
+    )
+    out = capsys.readouterr().out
+    assert "Date count: 2" in out
+    assert "Health counts: {'ready': 1, 'partial_inputs': 1}" in out
+    assert "Warning counts: {'COLLECTOR_PARTIAL_STATUS': 1}" in out
+    assert "collector_reason=daily_index_missing" in out
+    assert "collector_manifest=/tmp/manifests/20260315.json" in out
 
 
 async def test_replay_ops_run_ready_executes_ready_dates_without_reports(tmp_path):

@@ -338,6 +338,7 @@ python -m kindshot --replay-ops-cycle-ready --replay-ops-run-limit 3 --replay-op
 - 다음 큰 batch는 multi-day ops summary 경로다. `--replay-ops-summary`는 collector/runtime indices를 함께 읽어 여러 날짜의 replay readiness를 한 번에 집계하고, 기존 day status/day report가 있으면 함께 요약해야 한다.
 - ops summary는 최소한 `generated_at`, `date_count`, `health_counts`, `warning_counts`, `rows`를 포함해야 한다. 각 row는 `date`, `health`, `warning_count`, `merged_event_count`, `collector_available`, `runtime_available`, `report_available`, `buy_decisions`, `price_data_trades`를 가져야 한다.
 - collector input이 partial인 row는 `collector_status_reason`과 `collector_manifest_path`도 함께 가져 replay ops summary만 봐도 불완전 원인과 근거 파일을 알 수 있어야 한다.
+- human-readable ops summary 출력도 같은 row 정보를 그대로 보여줘, 저장된 JSON을 열지 않아도 날짜별 blocker와 성과 요약을 바로 읽을 수 있어야 한다.
 - 기본 ops summary 출력은 최신 날짜 우선 limit를 두되, aggregate counts는 전체 대상 날짜 기준을 유지해야 한다.
 - 기본 ops summary 경로는 `data/replay/ops/latest.json`로 두고, 필요 시 CLI output override를 허용한다.
 - 다음 큰 batch는 action-oriented ready queue/run 경로다. `--replay-ops-run-ready`는 ops summary/status를 기반으로 `health=ready`이면서 아직 day report가 없는 날짜를 최신순으로 골라 실제 `replay-day`를 실행해야 한다.

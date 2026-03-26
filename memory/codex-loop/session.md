@@ -4,8 +4,8 @@
 
 - Branch: `main`
 - Phase: `Historical Collection Foundation`
-- Focus: keep collector blocker context visible all the way through replay ops console surfaces, not just JSON artifacts.
-- Active hypothesis: if queue/run/cycle console output prints the same collector reason and manifest path already present in row payloads, operators can triage partial collector days directly from the terminal view.
+- Focus: finish the replay ops console surface so summary output is as informative as queue/run/cycle output.
+- Active hypothesis: if `_print_replay_ops_summary()` prints aggregate counts plus per-row collector blocker details, operators can scan multi-day readiness directly from the terminal without opening JSON artifacts.
 
 ## Environment
 
@@ -13,16 +13,16 @@
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
-  - `.venv/bin/python -m pytest tests/test_replay.py -q` passed (`34 passed`)
-  - `.venv/bin/python -m pytest -q` passed (`710 passed, 1 warning`)
+  - `.venv/bin/python -m pytest tests/test_replay.py -q` passed (`35 passed`)
+  - `.venv/bin/python -m pytest -q` passed (`711 passed, 1 warning`)
 
 ## Last Completed Step
 
-- Added a shared replay-ops print helper so queue/run/cycle console output now prints `collector_reason` and `collector_manifest` whenever those fields are present on a row.
-- Kept the existing enriched row payloads intact and made the terminal view match them instead of hiding collector blocker context.
-- Added replay coverage for queue/run/cycle console output plus the enriched row payloads.
-- Updated the collection-infra design doc so run/cycle surfaces explicitly preserve and show collector blocker fields.
-- Verified the full repository test suite after the change (`708 passed, 1 warning`).
+- Implemented `_print_replay_ops_summary()` so it now prints date counts, health counts, warning counts, and per-row readiness details.
+- Reused the same collector blocker suffix used by queue/run/cycle so summary output also shows `collector_reason` and `collector_manifest` when present.
+- Added replay coverage for the summary printer alongside the prior queue/run/cycle printer coverage.
+- Updated the collection-infra design doc so summary console output is explicitly expected to show the same row-level blocker context as the JSON artifact.
+- Verified the full repository test suite after the change (`711 passed, 1 warning`).
 
 ## Next Intended Step
 
