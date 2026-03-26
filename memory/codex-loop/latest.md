@@ -1,23 +1,16 @@
-Hypothesis: Recent contract/order losers are obvious enough before the LLM call that a narrow deterministic preflight guard can cut the weakest `수주`/contract cohort without removing the cleaner mid-cap confirmed contract winners.
+Hypothesis: The latest verifiable paper-trading window is being dragged down by weak `수주` and article-style / mega-cap contract flow, while the apparent `공급계약` stability is mostly a single-winner illusion.
 
 Changed files:
-- `docs/plans/2026-03-26-contract-preflight-guard.md`
-- `src/kindshot/decision.py`
-- `src/kindshot/pipeline.py`
-- `src/kindshot/replay.py`
-- `tests/test_decision.py`
+- `docs/2026-03-26-fire-performance-analysis.md`
 - `memory/codex-loop/latest.md`
-- `memory/codex-loop/session.md`
 
 Validation:
-- Targeted tests:
-  - `source .venv/bin/activate && python -m pytest tests/test_decision.py tests/test_rule_fallback.py tests/test_pipeline.py -q` passed (`89 passed`)
-- Full tests:
-  - `source .venv/bin/activate && python -m pytest -q` passed (`614 passed, 1 warning`)
-- Design verification:
-  - `docs/plans/2026-03-26-contract-preflight-guard.md` recorded scope, rollout, observability, validation, and rollback before implementation
+- Recomputed BUY coverage, realized returns, bucket breakdowns, and excluded rows directly from `logs/kindshot_20260310.jsonl` through `logs/kindshot_20260319.jsonl`
+- Verified synthetic runtime artifacts from `data/runtime/context_cards/20260322-20260326.jsonl` and `data/runtime/price_snapshots/20260322-20260326.jsonl` were excluded because they are test-fixture pollution
+- Full tests: `source .venv/bin/activate && python -m pytest -q` passed (`614 passed, 1 warning`)
 
 Risk and rollback note:
-- This slice adds a new deterministic `RULE_PREFLIGHT` SKIP path for contract/order-family headlines before the LLM call.
-- The main risk is false negatives if the preflight patterns are too broad; the rules were kept narrow to article-style, incremental-order, chase, downtrend, and large-cap contract cases only.
-- Roll back by reverting the `decision.py` preflight helper, the `pipeline.py` / `replay.py` keyword pass-through, and the matching regression tests.
+- This slice is documentation-only and does not change runtime behavior.
+- The main analytical gap remains incomplete `close` snapshots for `7` of `23` BUY decisions, concentrated on `2026-03-18`.
+- One full-suite run hit a transient timeout in `tests/test_pipeline.py::test_pipeline_passes_quote_risk_state_to_guardrails` before the targeted rerun and the subsequent full rerun both passed, so pipeline-test flakiness remains a minor validation risk.
+- Roll back by reverting the new analysis document and restoring the previous `memory/codex-loop/latest.md`.
