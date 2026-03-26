@@ -190,8 +190,75 @@ class _CacheEntry:
     expires_at: float
 
 
+_HIGH_CONVICTION_KEYWORDS: list[tuple[str, int]] = [
+    # 주주환원: 가장 신뢰도 높음
+    ("자사주 소각", 80), ("자사주소각", 80), ("자기주식 소각", 80), ("자기주식소각", 80),
+    ("자사주 매입", 79), ("자사주매입", 79), ("자기주식 취득", 79), ("자기주식취득", 79),
+    ("공개매수", 80), ("대항 공개매수", 82),
+    ("경영권 분쟁", 80), ("경영권분쟁", 80), ("위임장 대결", 80),
+    # 실적 서프라이즈
+    ("어닝 서프라이즈", 79), ("어닝서프라이즈", 79),
+    ("사상최대 실적", 78), ("사상 최대 실적", 78), ("사상최대 영업이익", 78), ("사상 최대 영업이익", 78),
+    ("흑자전환", 78), ("흑자 전환", 78),
+    ("깜짝 실적", 78),
+    # 계약/수주
+    ("대형 계약", 78), ("대형계약", 78),
+    ("수주", 77), ("공급계약", 77), ("공급 계약", 77),
+    # 바이오
+    ("임상 3상 성공", 79), ("임상3상 성공", 79), ("FDA 승인", 80), ("FDA승인", 80),
+    ("품목허가 승인", 78), ("식약처 허가", 78),
+    ("특허", 77),
+    # M&A
+    ("인수", 77), ("지분 취득", 77), ("지분취득", 77),
+]
+
+
+def _rule_based_decide(
+    bucket: Bucket,
+    headline: str,
+    keyword_hits: list[str],
+    ctx: ContextCard,
+) -> dict:
+    """LLM 없이 키워드 + quant context로 BUY/SKIP 결정.
+
+    보수적 전략: POS_STRONG 중 고확신 키워드만 BUY, 나머지 SKIP.
+    """
+    if bucket != Bucket.POS_STRONG:
+        return {"action": "SKIP", "confidence": 70, "size_hint": "S",
+                "reason": "rule_fallback:weak_bucket"}
+
+    # 고확신 키워드 매칭 (가장 높은 confidence 사용)
+    best_conf = 0
+    matched_kw = ""
+    for kw, conf in _HIGH_CONVICTION_KEYWORDS:
+        if any(kw in hit for hit in keyword_hits) or kw in headline:
+            if conf > best_conf:
+                best_conf = conf
+                matched_kw = kw
+
+    if best_conf < 75:
+        return {"action": "SKIP", "confidence": 72, "size_hint": "S",
+                "reason": "rule_fallback:no_high_conviction_kw"}
+
+    # Quant 보정: 당일 이미 3%+ 상승이면 추격매수 방지
+    if ctx.ret_today is not None and ctx.ret_today > 3.0:
+        return {"action": "SKIP", "confidence": best_conf - 10, "size_hint": "S",
+                "reason": f"rule_fallback:chase_buy ret={ctx.ret_today:.1f}%"}
+
+    # Size hint
+    if best_conf >= 80:
+        size = "M"  # fallback에서는 L 안 줌 (보수적)
+    elif best_conf >= 77:
+        size = "S"
+    else:
+        size = "S"
+
+    return {"action": "BUY", "confidence": best_conf, "size_hint": size,
+            "reason": f"rule_fallback:{matched_kw}"}
+
+
 class DecisionEngine:
-    """LLM 1-shot decision with caching."""
+    """LLM 1-shot decision with caching + rule-based fallback."""
 
     def __init__(self, config: Config) -> None:
         self._config = config
@@ -241,6 +308,35 @@ class DecisionEngine:
             reason=source.reason,
             decision_source="CACHE",
         )
+
+    def fallback_decide(
+        self,
+        ticker: str,
+        headline: str,
+        bucket: Bucket,
+        ctx: ContextCard,
+        keyword_hits: list[str],
+        *,
+        run_id: str = "",
+        schema_version: str = "0.1.2",
+    ) -> DecisionRecord:
+        """Rule-based fallback when LLM is unavailable."""
+        parsed = _rule_based_decide(bucket, headline, keyword_hits, ctx)
+
+        record = DecisionRecord(
+            schema_version=schema_version,
+            run_id=run_id,
+            event_id="",
+            decided_at=datetime.now(timezone.utc),
+            llm_model="rule_fallback",
+            llm_latency_ms=0,
+            action=Action(parsed["action"]),
+            confidence=int(parsed["confidence"]),
+            size_hint=SizeHint(parsed["size_hint"]),
+            reason=parsed.get("reason", ""),
+            decision_source="RULE_FALLBACK",
+        )
+        return record
 
     async def decide(
         self,

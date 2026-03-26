@@ -339,17 +339,29 @@ async def execute_bucket_path(
             _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MAX_POSITIONS")
             return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason="MAX_POSITIONS")
 
-    decision = await decision_engine.decide(
-        ticker=raw.ticker,
-        corp_name=raw.corp_name,
-        headline=raw.title,
-        bucket=bucket,
-        ctx=ctx if ctx else ContextCard(),
-        detected_at_str=detected_at.strftime("%H:%M:%S"),
-        run_id=run_id,
-        schema_version=config.schema_version,
-        market_ctx=market.snapshot,
-    )
+    try:
+        decision = await decision_engine.decide(
+            ticker=raw.ticker,
+            corp_name=raw.corp_name,
+            headline=raw.title,
+            bucket=bucket,
+            ctx=ctx if ctx else ContextCard(),
+            detected_at_str=detected_at.strftime("%H:%M:%S"),
+            run_id=run_id,
+            schema_version=config.schema_version,
+            market_ctx=market.snapshot,
+        )
+    except (LlmCallError, LlmTimeoutError, LlmParseError) as exc:
+        logger.warning("LLM failed for [%s], using rule fallback: %s", raw.ticker, exc)
+        decision = decision_engine.fallback_decide(
+            ticker=raw.ticker,
+            headline=raw.title,
+            bucket=bucket,
+            ctx=ctx if ctx else ContextCard(),
+            keyword_hits=keyword_hits,
+            run_id=run_id,
+            schema_version=config.schema_version,
+        )
     decision.event_id = processed.event_id
     decision.mode = mode
 

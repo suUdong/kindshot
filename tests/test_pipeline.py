@@ -47,6 +47,15 @@ async def _run_pipeline_once(
     mock_engine = MagicMock()
     if decision_side_effect:
         mock_engine.decide = AsyncMock(side_effect=decision_side_effect)
+        # Rule-based fallback for LLM errors
+        from kindshot.models import DecisionRecord, Action, SizeHint
+        mock_engine.fallback_decide = MagicMock(return_value=DecisionRecord(
+            schema_version="0.1.2", run_id="test_run", event_id="",
+            decided_at=datetime.now(timezone.utc), llm_model="rule_fallback",
+            llm_latency_ms=0, action=Action.SKIP, confidence=72,
+            size_hint=SizeHint.S, reason="rule_fallback:test",
+            decision_source="RULE_FALLBACK",
+        ))
     else:
         mock_engine.decide = AsyncMock(return_value=None)
 
@@ -117,44 +126,41 @@ async def test_duplicate_logged_with_skip_stage(tmp_path):
     assert dup_records[0]["skip_reason"] == "DUPLICATE"
 
 
-async def test_llm_timeout_logged(tmp_path):
-    """LLM timeout should produce event with skip_stage=LLM_TIMEOUT."""
+async def test_llm_timeout_uses_fallback(tmp_path):
+    """LLM timeout should trigger rule-based fallback decision."""
     raw = _make_raw()
     records = await _run_pipeline_once(
         tmp_path, [raw],
         decision_side_effect=LlmTimeoutError("timeout"),
     )
 
-    timeout_records = [r for r in records if r.get("skip_stage") == "LLM_TIMEOUT"]
-    assert len(timeout_records) == 1
-
-    # Verify no double-write: only 1 event record total for this event_id
-    event_records = [r for r in records if r.get("type") == "event" and r.get("skip_stage") != "DUPLICATE"]
-    assert len(event_records) == 1
+    # Fallback produces a decision record with RULE_FALLBACK source
+    decision_records = [r for r in records if r.get("type") == "decision" and r.get("decision_source") == "RULE_FALLBACK"]
+    assert len(decision_records) == 1
 
 
-async def test_llm_parse_error_logged(tmp_path):
-    """LLM parse failure should produce event with skip_stage=LLM_PARSE."""
+async def test_llm_parse_error_uses_fallback(tmp_path):
+    """LLM parse failure should trigger rule-based fallback decision."""
     raw = _make_raw()
     records = await _run_pipeline_once(
         tmp_path, [raw],
         decision_side_effect=LlmParseError("bad json"),
     )
 
-    parse_records = [r for r in records if r.get("skip_stage") == "LLM_PARSE"]
-    assert len(parse_records) == 1
+    decision_records = [r for r in records if r.get("type") == "decision" and r.get("decision_source") == "RULE_FALLBACK"]
+    assert len(decision_records) == 1
 
 
-async def test_llm_call_error_logged(tmp_path):
-    """LLM call failure should produce event with skip_stage=LLM_ERROR."""
+async def test_llm_call_error_uses_fallback(tmp_path):
+    """LLM call failure should trigger rule-based fallback decision."""
     raw = _make_raw()
     records = await _run_pipeline_once(
         tmp_path, [raw],
         decision_side_effect=LlmCallError("network error"),
     )
 
-    call_error_records = [r for r in records if r.get("skip_stage") == "LLM_ERROR"]
-    assert len(call_error_records) == 1
+    decision_records = [r for r in records if r.get("type") == "decision" and r.get("decision_source") == "RULE_FALLBACK"]
+    assert len(decision_records) == 1
 
 
 async def test_guardrail_block_logged(tmp_path):
