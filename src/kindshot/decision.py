@@ -347,6 +347,26 @@ def _has_large_contract_signal(headline: str, keyword_hits: list[str]) -> tuple[
         if amt >= 500:
             return True, 77
 
+    # 달러/USD 금액 파싱: 해외 수주
+    # "1.5억달러", "150백만달러", "2억불", "100M USD"
+    usd_eok_match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*억\s*(?:달러|불|USD)", headline)
+    if usd_eok_match:
+        usd_eok = float(usd_eok_match.group(1).replace(",", ""))
+        amt_eok = usd_eok * 1400 / 100  # 1억달러 ≈ 1400억원 (환율 1400원 기준)
+        if amt_eok >= 1000:
+            return True, 80
+        if amt_eok >= 500:
+            return True, 78
+
+    usd_m_match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*(?:백만|million|M)\s*(?:달러|불|USD)", headline, re.IGNORECASE)
+    if usd_m_match:
+        usd_m = float(usd_m_match.group(1).replace(",", ""))
+        amt_eok = usd_m * 1400 / 10000  # 100M USD ≈ 1400억원
+        if amt_eok >= 1000:
+            return True, 80
+        if amt_eok >= 500:
+            return True, 78
+
     # "단일판매ㆍ공급계약체결" 정규 공시는 금액 없어도 신뢰도 있음 (KIND 공시)
     if "단일판매" in headline and "공급계약" in headline:
         return True, 77
