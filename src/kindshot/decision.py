@@ -349,7 +349,7 @@ def _has_large_contract_signal(headline: str, keyword_hits: list[str]) -> tuple[
 
 _ARTICLE_MARKERS = (
     "전망", "보인다", "기대", "파죽지세", "분석", "평가",
-    "…목표", "수혜", "기대감", "가속화", "본격화",
+    "목표", "수혜", "기대감", "가속화", "본격화",
     "CEO ", "대표 ", "회장 ", "의장 ",
     "Preview", "preview", "리뷰", "프리뷰",
     "추진", "검토", "계획", "협의 중", "논의",
