@@ -13,6 +13,7 @@ from kindshot.guardrails import (
     apply_dorg_confidence_adjustment,
     apply_time_session_confidence_adjustment,
     apply_trend_confidence_adjustment,
+    apply_technical_confidence_adjustment,
     calculate_position_size,
     downgrade_size_hint, get_kill_switch_size_hint,
 )
@@ -1334,3 +1335,70 @@ def test_volume_zero_no_change():
     """volume_rate 0.0 → 조정 없음 (None과 동일 처리)."""
     from kindshot.guardrails import apply_volume_confidence_adjustment
     assert apply_volume_confidence_adjustment(80, 0.0) == 80
+
+
+# ── Technical confidence adjustment (RSI/MACD/BB/ATR) ──
+
+
+def test_technical_rsi_overbought():
+    """RSI > 75 → -5."""
+    assert apply_technical_confidence_adjustment(85, rsi_14=80.0, macd_hist=None) == 80
+
+
+def test_technical_rsi_oversold_with_catalyst():
+    """RSI < 30 + catalyst → +3."""
+    assert apply_technical_confidence_adjustment(80, rsi_14=25.0, macd_hist=None, has_catalyst=True) == 83
+
+
+def test_technical_rsi_oversold_no_catalyst():
+    """RSI < 30 without catalyst → no change."""
+    assert apply_technical_confidence_adjustment(80, rsi_14=25.0, macd_hist=None, has_catalyst=False) == 80
+
+
+def test_technical_macd_negative():
+    """MACD hist < 0 → -3."""
+    assert apply_technical_confidence_adjustment(85, rsi_14=None, macd_hist=-5.0) == 82
+
+
+def test_technical_bb_overbought():
+    """BB position > 95 → -3."""
+    assert apply_technical_confidence_adjustment(85, rsi_14=None, macd_hist=None, bb_position=98.0) == 82
+
+
+def test_technical_bb_oversold_with_catalyst():
+    """BB position < 5 + catalyst → +2."""
+    assert apply_technical_confidence_adjustment(80, rsi_14=None, macd_hist=None, bb_position=3.0, has_catalyst=True) == 82
+
+
+def test_technical_bb_oversold_no_catalyst():
+    """BB position < 5 without catalyst → no change."""
+    assert apply_technical_confidence_adjustment(80, rsi_14=None, macd_hist=None, bb_position=3.0, has_catalyst=False) == 80
+
+
+def test_technical_bb_normal_no_change():
+    """BB position in normal range → no change."""
+    assert apply_technical_confidence_adjustment(80, rsi_14=None, macd_hist=None, bb_position=50.0) == 80
+
+
+def test_technical_atr_high_volatility():
+    """ATR > 5% → -2."""
+    assert apply_technical_confidence_adjustment(85, rsi_14=None, macd_hist=None, atr_14=6.5) == 83
+
+
+def test_technical_atr_normal_no_change():
+    """ATR <= 5% → no change."""
+    assert apply_technical_confidence_adjustment(85, rsi_14=None, macd_hist=None, atr_14=3.0) == 85
+
+
+def test_technical_combined_rsi_macd_bb_atr():
+    """RSI overbought + MACD negative + BB overbought + high ATR = cumulative penalty."""
+    # 85 - 5(rsi) - 3(macd) - 3(bb) - 2(atr) = 72
+    result = apply_technical_confidence_adjustment(
+        85, rsi_14=80.0, macd_hist=-5.0, bb_position=98.0, atr_14=7.0,
+    )
+    assert result == 72
+
+
+def test_technical_all_none_no_change():
+    """All indicators None → no change."""
+    assert apply_technical_confidence_adjustment(85, rsi_14=None, macd_hist=None, bb_position=None, atr_14=None) == 85
