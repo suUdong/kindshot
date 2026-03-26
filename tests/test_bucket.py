@@ -149,9 +149,9 @@ def test_unknown_generic_lawsuit_not_negative():
     assert result.bucket == Bucket.UNKNOWN
 
 
-def test_unknown_generic_lawsuit_disclosure_title():
+def test_neg_strong_lawsuit_verdict_disclosure_title():
     result = classify("(주)세아제강 소송등의판결ㆍ결정(자율공시:일정금액미만의청구)")
-    assert result.bucket == Bucket.UNKNOWN
+    assert result.bucket == Bucket.NEG_STRONG
 
 
 def test_neg_strong_lawsuit_filing_phrase():
