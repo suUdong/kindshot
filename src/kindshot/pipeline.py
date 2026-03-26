@@ -497,6 +497,17 @@ async def execute_bucket_path(
             )
             decision.size_hint = SizeHint(adjusted)
 
+    # 09:00~09:30 장 초반 변동성 구간: size_hint 최대 M (L → M 다운그레이드)
+    if decision.action == Action.BUY:
+        now_kst = detected_at.astimezone(_KST) if detected_at.tzinfo else detected_at.replace(tzinfo=_KST)
+        if now_kst.hour == 9 and now_kst.minute < 30 and decision.size_hint.value == "L":
+            from kindshot.models import SizeHint
+            logger.info(
+                "Opening volatility size cap [%s]: L → M (09:00~09:30)",
+                raw.ticker,
+            )
+            decision.size_hint = SizeHint.M
+
     # Inline decision into event_rec (유실 방지)
     event_rec.decision_action = decision.action.value
     event_rec.decision_confidence = decision.confidence
