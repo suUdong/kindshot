@@ -234,8 +234,11 @@ async def run() -> None:
         async def _unknown_review_loop() -> None:
             if unknown_review_engine is None or unknown_review_queue is None:
                 return
-            while True:
-                item = await unknown_review_queue.get()
+            while not stop_event.is_set():
+                try:
+                    item = await asyncio.wait_for(unknown_review_queue.get(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    continue
                 try:
                     if item is None:
                         return
@@ -315,8 +318,12 @@ async def run() -> None:
             except LogWriteError:
                 logger.critical("Close snapshot shutdown flush failed — stopping runtime")
             if unknown_review_queue is not None:
-                await unknown_review_queue.join()
+                # Sentinel 투입 후 최대 5초 대기 (무한 블로킹 방지)
                 await unknown_review_queue.put(None)
+                try:
+                    await asyncio.wait_for(unknown_review_queue.join(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Unknown review queue drain timed out (5s)")
             scheduler.stop()
             for t in tasks:
                 t.cancel()
