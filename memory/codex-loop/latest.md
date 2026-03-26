@@ -19,6 +19,7 @@ Validation:
 - Added regression coverage for cross-source dedup, same-source preservation, day rollover cleanup, expanded KIS noise filtering, added disclosure keyword pass-through, and headline-quality penalties.
 - `python3 -m compileall src/kindshot` passed.
 - `.venv/bin/python -m pytest tests/test_event_registry.py tests/test_feed.py tests/test_guardrails.py -q` passed (`188 passed`)
+- `.venv/bin/python -m pytest -q` passed (`735 passed, 1 warning`)
 
 Risk and rollback note:
 - This slice changes disclosure ingest/evaluation behavior only; it does not touch live execution enablement, deployment paths, or secrets handling.

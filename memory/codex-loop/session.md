@@ -15,6 +15,7 @@
 - Validation status:
   - `python3 -m compileall src/kindshot` passed
   - `.venv/bin/python -m pytest tests/test_event_registry.py tests/test_feed.py tests/test_guardrails.py -q` passed (`188 passed`)
+  - `.venv/bin/python -m pytest -q` passed (`735 passed, 1 warning`)
 
 ## Last Completed Step
 
@@ -26,8 +27,8 @@
 
 ## Next Intended Step
 
-- Run the full repository test suite before closing the slice, then commit/push if green.
 - After this tactical hardening slice, return to the roadmap track and continue the next replay/collector usability improvement unless fresh runtime evidence suggests another profitability guard is higher value.
+- If new runtime logs show recurring false positives in a narrower headline family, add the next deterministic guard as a separate reversible slice with its own design note.
 
 ## Notes
 
