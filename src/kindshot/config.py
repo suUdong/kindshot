@@ -36,7 +36,7 @@ class Config:
     # --- NVIDIA NIM (OpenAI-compatible) ---
     nvidia_api_key: str = field(default_factory=lambda: _env("NVIDIA_API_KEY"))
     nvidia_base_url: str = field(default_factory=lambda: _env("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"))
-    nvidia_model: str = field(default_factory=lambda: _env("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct"))
+    nvidia_model: str = field(default_factory=lambda: _env("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct"))
     # --- Anthropic (fallback) ---
     anthropic_api_key: str = field(default_factory=lambda: _env("ANTHROPIC_API_KEY"))
     llm_fallback_enabled: bool = field(default_factory=lambda: _env_bool("LLM_FALLBACK_ENABLED", True))
