@@ -297,12 +297,15 @@ def check_guardrails(
             return GuardrailResult(passed=False, reason="CHASE_BUY_BLOCKED")
 
     # 6. BUY-side top-of-book liquidity gate.
+    # size_hint별 실제 주문 크기 사용 (S=3M, M=5M, L=7M)
+    _size_hint = str(kwargs.get("decision_size_hint", "M"))
+    _effective_order_size = config.order_size_for_hint(_size_hint)
     if decision_action == Action.BUY and orderbook_snapshot is not None:
         best_ask_notional = orderbook_snapshot.ask_price1 * orderbook_snapshot.ask_size1
-        if best_ask_notional < config.order_size:
+        if best_ask_notional < _effective_order_size:
             return GuardrailResult(passed=False, reason="ORDERBOOK_TOP_LEVEL_LIQUIDITY")
     if decision_action == Action.BUY and top_ask_notional is not None:
-        if top_ask_notional < config.order_size:
+        if top_ask_notional < _effective_order_size:
             return GuardrailResult(passed=False, reason="ORDERBOOK_TOP_LEVEL_LIQUIDITY")
 
     # 7. Participation confirmation (시간 보정: 장 초반은 누적 거래대금 자연히 낮음).

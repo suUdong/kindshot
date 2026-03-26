@@ -486,9 +486,13 @@ async def execute_bucket_path(
                         f"{_br:.2f}" if _br is not None else "N/A")
 
         # 총 감점 상한 적용: LLM 원본 - 10 이하로 떨어지지 않도록
+        # + min_buy_confidence 이하로 떨어지면 LLM BUY 의도 보존 (BUY 유지)
         total_delta = decision.confidence - llm_original_conf
         if total_delta < -_MAX_TOTAL_PENALTY:
             floored = llm_original_conf - _MAX_TOTAL_PENALTY
+            # LLM이 BUY(>=75) 줬으면 min_buy_confidence 이하로 안 떨어지게
+            if llm_original_conf >= config.min_buy_confidence:
+                floored = max(floored, config.min_buy_confidence)
             logger.warning(
                 "Confidence adj floor [%s]: %d → %d (total_delta=%d exceeded -%d cap, llm=%d)",
                 raw.ticker, decision.confidence, floored, total_delta, _MAX_TOTAL_PENALTY, llm_original_conf,
@@ -556,6 +560,7 @@ async def execute_bucket_path(
         decision_time_kst=decision.decided_at,
         decision_hold_minutes=hold_minutes,
         adv_threshold=config.adv_threshold_for_bucket(bucket.value),
+        decision_size_hint=decision.size_hint.value,
     )
     if not gr.passed:
         event_rec.skip_stage = SkipStage.GUARDRAIL
