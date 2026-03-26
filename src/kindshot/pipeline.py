@@ -22,7 +22,7 @@ from kindshot.context_card import (
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError, has_high_conviction_keyword, has_article_pattern
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -439,6 +439,18 @@ async def execute_bucket_path(
             if decision.confidence != before:
                 logger.info("ADV confidence adj [%s]: %d → %d (adv=%.0f억)",
                             raw.ticker, before, decision.confidence, raw_data.adv_value_20d / 1e8)
+
+        # 1b. 추세 감점 (ret_3d 과열 + pos_20d 극저점)
+        if ctx and (ctx.ret_3d is not None or ctx.pos_20d is not None):
+            before = decision.confidence
+            decision.confidence = apply_trend_confidence_adjustment(
+                decision.confidence, ctx.ret_3d, ctx.pos_20d,
+            )
+            if decision.confidence != before:
+                logger.info("Trend confidence adj [%s]: %d → %d (ret_3d=%s, pos_20d=%s)",
+                            raw.ticker, before, decision.confidence,
+                            f"{ctx.ret_3d:+.1f}%" if ctx.ret_3d is not None else "N/A",
+                            f"{ctx.pos_20d:.0f}" if ctx.pos_20d is not None else "N/A")
 
         # 2. 시장 반응 확인 (ret_today)
         if raw_data.ret_today is not None:

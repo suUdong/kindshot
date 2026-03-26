@@ -458,6 +458,20 @@ def apply_market_confidence_adjustment(
     return max(0, confidence - 5)
 
 
+def apply_trend_confidence_adjustment(confidence: int, ret_3d: float | None, pos_20d: float | None) -> int:
+    """3일 수익률 + 20일 위치 기반 추세 감점.
+
+    ret_3d > +10%: -10 (과열 종목)
+    pos_20d < 20: -5 (극저점, 추세 약세)
+    프롬프트 trend_filter 규칙 구현.
+    """
+    if ret_3d is not None and ret_3d > 10.0:
+        confidence = max(0, confidence - 10)
+    if pos_20d is not None and pos_20d < 20:
+        confidence = max(0, confidence - 5)
+    return confidence
+
+
 def apply_price_reaction_adjustment(confidence: int, ret_today: float | None) -> int:
     """뉴스 감지 시점의 당일 수익률 기반 시장 반응 확인.
 
@@ -522,7 +536,7 @@ def apply_volume_confidence_adjustment(confidence: int, prior_volume_rate: float
     - <50%: -3 (거래량 급감, 무관심)
     - <80%: -1 (거래량 감소)
     """
-    if prior_volume_rate is None:
+    if prior_volume_rate is None or prior_volume_rate <= 0:
         return confidence
     if prior_volume_rate >= 300.0:
         return min(confidence + 3, 100)

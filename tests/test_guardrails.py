@@ -12,6 +12,7 @@ from kindshot.guardrails import (
     apply_volume_confidence_adjustment,
     apply_dorg_confidence_adjustment,
     apply_time_session_confidence_adjustment,
+    apply_trend_confidence_adjustment,
     calculate_position_size,
     downgrade_size_hint, get_kill_switch_size_hint,
 )
@@ -1297,3 +1298,37 @@ def test_market_bullish_cap_at_100():
 def test_market_bearish_unchanged_with_breadth():
     """하락장은 breadth 무관하게 기존 로직 유지."""
     assert apply_market_confidence_adjustment(80, -1.5, -0.3, breadth_ratio=0.7) == 77
+
+
+# ── trend confidence adjustment ──
+
+
+def test_trend_overheated_penalty():
+    """ret_3d > 10% → -10 감점."""
+    assert apply_trend_confidence_adjustment(85, 15.0, 50.0) == 75
+
+
+def test_trend_low_pos_penalty():
+    """pos_20d < 20 → -5 감점."""
+    assert apply_trend_confidence_adjustment(80, 2.0, 10.0) == 75
+
+
+def test_trend_both_penalties():
+    """과열 + 극저점 동시 → -15."""
+    assert apply_trend_confidence_adjustment(85, 12.0, 15.0) == 70
+
+
+def test_trend_normal_no_change():
+    """정상 범위 → 조정 없음."""
+    assert apply_trend_confidence_adjustment(80, 5.0, 50.0) == 80
+
+
+def test_trend_none_no_change():
+    """None → 조정 없음."""
+    assert apply_trend_confidence_adjustment(80, None, None) == 80
+
+
+def test_volume_zero_no_change():
+    """volume_rate 0.0 → 조정 없음 (None과 동일 처리)."""
+    from kindshot.guardrails import apply_volume_confidence_adjustment
+    assert apply_volume_confidence_adjustment(80, 0.0) == 80
