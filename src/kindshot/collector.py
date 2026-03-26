@@ -245,6 +245,30 @@ def update_collection_manifest_index(base_dir: Path, manifest: CollectionDayMani
     )
 
 
+def _load_manifest_index_entries(base_dir: Path) -> dict[str, CollectionManifestIndexEntry]:
+    path = _manifest_index_path(base_dir)
+    entries_by_date: dict[str, CollectionManifestIndexEntry] = {}
+    if not path.exists():
+        return entries_by_date
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        logger.warning("Corrupt index JSON: %s", path)
+        return entries_by_date
+    for row in payload.get("entries", []):
+        dt = str(row.get("date", "")).strip()
+        if not dt:
+            continue
+        entries_by_date[dt] = CollectionManifestIndexEntry(
+            date=dt,
+            status=str(row.get("status", "")),
+            has_partial_data=bool(row.get("has_partial_data", False)),
+            generated_at=str(row.get("generated_at", "")),
+            manifest_path=str(row.get("manifest_path", "")),
+        )
+    return entries_by_date
+
+
 def write_collection_day_manifest(
     base_dir: Path,
     *,
@@ -409,6 +433,56 @@ def _record_to_dict(record: CollectionLogRecord) -> dict[str, Any]:
     }
 
 
+def _build_status_detail(
+    record: CollectionLogRecord,
+    *,
+    collector_manifests_dir: Optional[Path] = None,
+    manifest_index_entry: Optional[CollectionManifestIndexEntry] = None,
+) -> dict[str, Any]:
+    detail = _record_to_dict(record)
+    manifest_path = ""
+    manifest: Optional[CollectionDayManifest] = None
+    manifest_exists = False
+    if manifest_index_entry and manifest_index_entry.manifest_path:
+        manifest_path = manifest_index_entry.manifest_path
+        manifest = _load_manifest(Path(manifest_path))
+        manifest_exists = manifest is not None
+    if collector_manifests_dir and not manifest_exists:
+        fallback_path = _manifest_path(collector_manifests_dir, record.date)
+        if not manifest_path:
+            manifest_path = str(fallback_path)
+        if Path(manifest_path) != fallback_path or not manifest_exists:
+            fallback_manifest = _load_manifest(fallback_path)
+            if fallback_manifest is not None:
+                manifest = fallback_manifest
+                manifest_exists = True
+                manifest_path = str(fallback_path)
+
+    detail.update(
+        {
+            "manifest_path": manifest_path,
+            "manifest_exists": manifest_exists,
+            "manifest_status": (
+                manifest.status
+                if manifest is not None
+                else (manifest_index_entry.status if manifest_index_entry is not None else "")
+            ),
+            "manifest_has_partial_data": (
+                manifest.has_partial_data
+                if manifest is not None
+                else (manifest_index_entry.has_partial_data if manifest_index_entry is not None else False)
+            ),
+            "manifest_status_reason": manifest.status_reason if manifest is not None else "",
+            "manifest_generated_at": (
+                manifest.generated_at
+                if manifest is not None
+                else (manifest_index_entry.generated_at if manifest_index_entry is not None else "")
+            ),
+        }
+    )
+    return detail
+
+
 def _compute_status_health(state: CollectorState, summary: CollectionLogSummary) -> str:
     if state.status == "error":
         return "collector_error"
@@ -424,10 +498,16 @@ def _build_status_report(
     summary: CollectionLogSummary,
     *,
     backlog_limit: int,
+    collector_manifests_dir: Optional[Path] = None,
 ) -> dict[str, Any]:
     limited_partial_dates = summary.partial_dates[:backlog_limit]
     limited_error_dates = summary.error_dates[:backlog_limit]
     health = _compute_status_health(state, summary)
+    manifest_entries = (
+        _load_manifest_index_entries(collector_manifests_dir)
+        if collector_manifests_dir is not None
+        else {}
+    )
     return {
         "state": {
             "status": state.status or "idle",
@@ -456,8 +536,22 @@ def _build_status_report(
             "limit": backlog_limit,
             "partial_dates": limited_partial_dates,
             "error_dates": limited_error_dates,
-            "partial_details": [_record_to_dict(summary.latest_records[dt]) for dt in limited_partial_dates],
-            "error_details": [_record_to_dict(summary.latest_records[dt]) for dt in limited_error_dates],
+            "partial_details": [
+                _build_status_detail(
+                    summary.latest_records[dt],
+                    collector_manifests_dir=collector_manifests_dir,
+                    manifest_index_entry=manifest_entries.get(dt),
+                )
+                for dt in limited_partial_dates
+            ],
+            "error_details": [
+                _build_status_detail(
+                    summary.latest_records[dt],
+                    collector_manifests_dir=collector_manifests_dir,
+                    manifest_index_entry=manifest_entries.get(dt),
+                )
+                for dt in limited_error_dates
+            ],
         },
     }
 
@@ -494,6 +588,12 @@ def log_collection_status(config: Config, *, backlog_limit: int = 10) -> Collect
     state = load_collector_state(config.collector_state_path)
     summary = load_collection_log_summary(config.collector_log_path)
     health = _compute_status_health(state, summary)
+    report = _build_status_report(
+        state,
+        summary,
+        backlog_limit=backlog_limit,
+        collector_manifests_dir=config.collector_manifests_dir,
+    )
     logger.info(
         "Collect status: health=%s state=%s cursor=%s finalized=%s last_completed=%s tracked=%d partial=%d error=%d oldest_partial=%s oldest_error=%s oldest_blocked=%s oldest_blocked_age_s=%d blocked_news=%d blocked_classified=%d blocked_prices=%d blocked_index=%d",
         health,
@@ -517,31 +617,34 @@ def log_collection_status(config: Config, *, backlog_limit: int = 10) -> Collect
     limited_error_dates = summary.error_dates[:backlog_limit]
     if limited_partial_dates:
         logger.info("Collect status partial backlog (showing %d): %s", len(limited_partial_dates), ",".join(limited_partial_dates))
-        for dt in limited_partial_dates:
-            record = summary.latest_records[dt]
+        for detail in report["backlog"]["partial_details"]:
             logger.info(
-                "Collect status partial detail: date=%s reason=%s news=%d classified=%d prices=%d index=%d completed_at=%s",
-                dt,
-                record.skip_reason or "-",
-                record.news_count,
-                record.classification_count,
-                record.daily_price_count,
-                record.daily_index_count,
-                record.completed_at or "-",
+                "Collect status partial detail: date=%s reason=%s manifest_reason=%s manifest_status=%s manifest=%s news=%d classified=%d prices=%d index=%d completed_at=%s",
+                detail["date"],
+                detail["skip_reason"] or "-",
+                detail["manifest_status_reason"] or "-",
+                detail["manifest_status"] or "-",
+                detail["manifest_path"] or "-",
+                detail["news_count"],
+                detail["classification_count"],
+                detail["daily_price_count"],
+                detail["daily_index_count"],
+                detail["completed_at"] or "-",
             )
     if limited_error_dates:
         logger.info("Collect status error backlog (showing %d): %s", len(limited_error_dates), ",".join(limited_error_dates))
-        for dt in limited_error_dates:
-            record = summary.latest_records[dt]
+        for detail in report["backlog"]["error_details"]:
             logger.info(
-                "Collect status error detail: date=%s error=%s news=%d classified=%d prices=%d index=%d completed_at=%s",
-                dt,
-                record.error or "-",
-                record.news_count,
-                record.classification_count,
-                record.daily_price_count,
-                record.daily_index_count,
-                record.completed_at or "-",
+                "Collect status error detail: date=%s error=%s manifest_status=%s manifest=%s news=%d classified=%d prices=%d index=%d completed_at=%s",
+                detail["date"],
+                detail["error"] or "-",
+                detail["manifest_status"] or "-",
+                detail["manifest_path"] or "-",
+                detail["news_count"],
+                detail["classification_count"],
+                detail["daily_price_count"],
+                detail["daily_index_count"],
+                detail["completed_at"] or "-",
             )
     return summary
 
@@ -549,7 +652,12 @@ def log_collection_status(config: Config, *, backlog_limit: int = 10) -> Collect
 def print_collection_status_json(config: Config, *, backlog_limit: int = 10, output_path: str = "") -> dict[str, Any]:
     state = load_collector_state(config.collector_state_path)
     summary = load_collection_log_summary(config.collector_log_path)
-    report = _build_status_report(state, summary, backlog_limit=backlog_limit)
+    report = _build_status_report(
+        state,
+        summary,
+        backlog_limit=backlog_limit,
+        collector_manifests_dir=config.collector_manifests_dir,
+    )
     payload = json.dumps(report, ensure_ascii=False)
     print(payload)
     if output_path:

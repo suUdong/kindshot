@@ -1,27 +1,25 @@
-Hypothesis: If KIS/KIND cross-source duplicates are collapsed, KIS noise filtering is stricter, and low-information BUY headlines receive a deterministic post-LLM penalty, the paper-trading pipeline should spend less attention on article noise and duplicate disclosures without weakening confirmed corporate-action events.
+Hypothesis: If `kindshot collect status` reads manifest index/day manifests while building blocked backlog details, operators can understand partial/error collector dates from one status surface without opening raw manifest files separately.
 
 Changed files:
-- `src/kindshot/event_registry.py`
-- `src/kindshot/feed.py`
-- `src/kindshot/guardrails.py`
-- `src/kindshot/pipeline.py`
-- `tests/test_event_registry.py`
-- `tests/test_feed.py`
-- `tests/test_guardrails.py`
-- `docs/plans/2026-03-27-disclosure-quality-hardening.md`
+- `src/kindshot/collector.py`
+- `tests/test_collector.py`
+- `docs/plans/2026-03-27-collector-status-manifest-awareness.md`
+- `.omx/context/collector-status-manifest-awareness-20260326T230615Z.md`
+- `.omx/plans/prd-collector-status-manifest-awareness-20260327.md`
+- `.omx/plans/test-spec-collector-status-manifest-awareness-20260327.md`
 - `memory/codex-loop/latest.md`
 - `memory/codex-loop/session.md`
 
 Validation:
-- `EventRegistry` now skips same-content KIS/KIND duplicates while preserving same-source same-title events.
-- `KisFeed` now filters extra institutional-flow/chart/theme noise and admits several additional disclosure-style corporate-action keywords.
-- BUY decisions now receive an extra headline-quality penalty for very short, speculative, or amount-free contract headlines before downstream confidence flooring.
-- Added regression coverage for cross-source dedup, same-source preservation, day rollover cleanup, expanded KIS noise filtering, added disclosure keyword pass-through, and headline-quality penalties.
+- `collect status` backlog detail rows now carry manifest-aware context (`manifest_path`, existence, status, status_reason, generated_at`) while preserving the prior summary and detail fields.
+- Human-readable `collect status` logs now print manifest status/path context for blocked partial/error rows instead of forcing a second manifest lookup.
+- Added collector regression coverage for the new status-detail helper, stale manifest-index fallback, manifest-aware JSON payloads, and log output.
 - `python3 -m compileall src/kindshot` passed.
-- `.venv/bin/python -m pytest tests/test_event_registry.py tests/test_feed.py tests/test_guardrails.py -q` passed (`188 passed`)
-- `.venv/bin/python -m pytest -q` passed (`735 passed, 1 warning`)
+- `.venv/bin/python -m pytest tests/test_collector.py -q` passed (`44 passed`)
+- LSP diagnostics on `src/kindshot/collector.py` and `tests/test_collector.py` returned `0` errors.
+- `.venv/bin/python -m pytest -q` passed (`739 passed, 1 warning`)
 
 Risk and rollback note:
-- This slice changes disclosure ingest/evaluation behavior only; it does not touch live execution enablement, deployment paths, or secrets handling.
-- The expanded disclosure keyword list is intentionally conservative but could still admit some borderline industry-theme headlines; future runtime logs should confirm whether the extra recall is acceptable.
-- Roll back by reverting the four source files above, their tests, the design note, and the session summary updates.
+- This slice changes collector status read paths only; it does not change backfill write semantics, replay execution, deployment paths, or live-order boundaries.
+- Error backlog rows may legitimately have no manifest yet when backfill failed before manifest write; the new fields expose that absence rather than inventing state.
+- Roll back by reverting `src/kindshot/collector.py`, `tests/test_collector.py`, the design/plan artifacts, and the session summary updates.

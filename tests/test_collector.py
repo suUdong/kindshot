@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -15,6 +16,7 @@ from kindshot.collector import (
     CollectionLogSummary,
     CollectorState,
     _build_status_report,
+    _build_status_detail,
     _compute_status_health,
     _collect_all_news_for_date,
     _collect_daily_index,
@@ -1123,6 +1125,149 @@ def test_build_status_report_returns_limited_machine_readable_payload(tmp_path):
     assert report["backlog"]["error_details"][0]["error"] == "boom"
 
 
+def test_build_status_detail_reads_manifest_context(tmp_path):
+    manifests_dir = tmp_path / "data" / "collector" / "manifests"
+    write_collection_day_manifest(
+        manifests_dir,
+        dt="20260310",
+        status="partial",
+        status_reason="pagination_truncated,daily_index_missing",
+        finalized_date="20260312",
+        items=[],
+        tickers=["005930"],
+        news_count=3,
+        classification_count=3,
+        price_count=1,
+        index_count=0,
+        news_path=tmp_path / "news" / "20260310.jsonl",
+        classifications_path=tmp_path / "classifications" / "20260310.jsonl",
+        daily_prices_path=tmp_path / "prices" / "20260310.jsonl",
+        daily_index_path=tmp_path / "index" / "20260310.jsonl",
+    )
+    detail = _build_status_detail(
+        CollectionLogRecord(
+            date="20260310",
+            status="partial",
+            news_count=3,
+            classification_count=3,
+            daily_price_count=1,
+            daily_index_count=0,
+            completed_at="2026-03-15T00:00:00+09:00",
+            skip_reason="pagination_truncated,daily_index_missing",
+        ),
+        collector_manifests_dir=manifests_dir,
+    )
+
+    assert detail["manifest_exists"] is True
+    assert detail["manifest_status"] == "partial"
+    assert detail["manifest_has_partial_data"] is True
+    assert detail["manifest_status_reason"] == "pagination_truncated,daily_index_missing"
+    assert detail["manifest_path"].endswith("20260310.json")
+
+
+def test_build_status_detail_falls_back_from_stale_index_path(tmp_path):
+    manifests_dir = tmp_path / "data" / "collector" / "manifests"
+    write_collection_day_manifest(
+        manifests_dir,
+        dt="20260310",
+        status="partial",
+        status_reason="daily_index_missing",
+        finalized_date="20260312",
+        items=[],
+        tickers=[],
+        news_count=1,
+        classification_count=1,
+        price_count=1,
+        index_count=0,
+        news_path=tmp_path / "news" / "20260310.jsonl",
+        classifications_path=tmp_path / "classifications" / "20260310.jsonl",
+        daily_prices_path=tmp_path / "prices" / "20260310.jsonl",
+        daily_index_path=tmp_path / "index" / "20260310.jsonl",
+    )
+    detail = _build_status_detail(
+        CollectionLogRecord(
+            date="20260310",
+            status="partial",
+            news_count=1,
+            classification_count=1,
+            daily_price_count=1,
+            daily_index_count=0,
+            completed_at="2026-03-15T00:00:00+09:00",
+            skip_reason="daily_index_missing",
+        ),
+        collector_manifests_dir=manifests_dir,
+        manifest_index_entry=CollectionManifestIndexEntry(
+            date="20260310",
+            status="partial",
+            has_partial_data=True,
+            generated_at="2026-03-15T00:00:00+09:00",
+            manifest_path=str(tmp_path / "stale" / "20260310.json"),
+        ),
+    )
+
+    assert detail["manifest_exists"] is True
+    assert detail["manifest_status"] == "partial"
+    assert detail["manifest_status_reason"] == "daily_index_missing"
+    assert detail["manifest_path"].endswith("data/collector/manifests/20260310.json")
+
+
+def test_build_status_report_includes_manifest_context_for_backlog_details(tmp_path):
+    manifests_dir = tmp_path / "data" / "collector" / "manifests"
+    write_collection_day_manifest(
+        manifests_dir,
+        dt="20260310",
+        status="partial",
+        status_reason="pagination_truncated",
+        finalized_date="20260312",
+        items=[],
+        tickers=[],
+        news_count=3,
+        classification_count=3,
+        price_count=1,
+        index_count=2,
+        news_path=tmp_path / "news" / "20260310.jsonl",
+        classifications_path=tmp_path / "classifications" / "20260310.jsonl",
+        daily_prices_path=tmp_path / "prices" / "20260310.jsonl",
+        daily_index_path=tmp_path / "index" / "20260310.jsonl",
+    )
+    report = _build_status_report(
+        CollectorState(status="idle", cursor_date="20260310"),
+        CollectionLogSummary(
+            latest_statuses={"20260310": "partial"},
+            latest_records={
+                "20260310": CollectionLogRecord(
+                    date="20260310",
+                    status="partial",
+                    news_count=3,
+                    classification_count=3,
+                    daily_price_count=1,
+                    daily_index_count=2,
+                    completed_at="2026-03-15T00:00:00+09:00",
+                    skip_reason="pagination_truncated",
+                ),
+            },
+            partial_dates=["20260310"],
+            error_dates=[],
+            tracked_dates=["20260310"],
+            oldest_partial_date="20260310",
+            oldest_error_date="",
+            oldest_blocked_date="20260310",
+            blocked_news_count=3,
+            blocked_classification_count=3,
+            blocked_price_count=1,
+            blocked_index_count=2,
+            status_generated_at="2026-03-15T00:05:00+09:00",
+            oldest_blocked_age_seconds=240,
+        ),
+        backlog_limit=1,
+        collector_manifests_dir=manifests_dir,
+    )
+
+    assert report["backlog"]["partial_details"][0]["manifest_status"] == "partial"
+    assert report["backlog"]["partial_details"][0]["manifest_status_reason"] == "pagination_truncated"
+    assert report["backlog"]["partial_details"][0]["manifest_path"].endswith("20260310.json")
+
+
 def test_compute_status_health_prefers_collector_error_then_error_then_partial():
     summary = CollectionLogSummary({}, {}, [], [], [], "", "", "", 0, 0, 0, 0, "", 0)
     assert _compute_status_health(CollectorState(status="error"), summary) == "collector_error"
@@ -1135,6 +1280,7 @@ def test_print_collection_status_json_emits_report_and_writes_file(tmp_path, cap
     cfg = Config(
         collector_log_path=tmp_path / "data" / "collector" / "collection_log.jsonl",
         collector_state_path=tmp_path / "data" / "collector_state.json",
+        collector_manifests_dir=tmp_path / "data" / "collector" / "manifests",
     )
     output_path = tmp_path / "data" / "collector" / "status.json"
     save_collector_state(
@@ -1159,6 +1305,23 @@ def test_print_collection_status_json_emits_report_and_writes_file(tmp_path, cap
             skip_reason="pagination_truncated",
         ),
     )
+    write_collection_day_manifest(
+        cfg.collector_manifests_dir,
+        dt="20260310",
+        status="partial",
+        status_reason="pagination_truncated",
+        finalized_date="20260312",
+        items=[],
+        tickers=[],
+        news_count=3,
+        classification_count=3,
+        price_count=1,
+        index_count=2,
+        news_path=tmp_path / "news" / "20260310.jsonl",
+        classifications_path=tmp_path / "classifications" / "20260310.jsonl",
+        daily_prices_path=tmp_path / "prices" / "20260310.jsonl",
+        daily_index_path=tmp_path / "index" / "20260310.jsonl",
+    )
 
     report = print_collection_status_json(cfg, backlog_limit=1, output_path=str(output_path))
     captured = capsys.readouterr()
@@ -1172,6 +1335,59 @@ def test_print_collection_status_json_emits_report_and_writes_file(tmp_path, cap
     assert payload["summary"]["oldest_blocked_age_seconds"] >= 0
     assert payload["summary"]["partial_count"] == 1
     assert payload["backlog"]["partial_dates"] == ["20260310"]
+    assert payload["backlog"]["partial_details"][0]["manifest_status"] == "partial"
+    assert payload["backlog"]["partial_details"][0]["manifest_status_reason"] == "pagination_truncated"
+    assert payload["backlog"]["partial_details"][0]["manifest_path"].endswith("20260310.json")
+
+
+def test_log_collection_status_logs_manifest_context(tmp_path, caplog):
+    cfg = Config(
+        collector_log_path=tmp_path / "data" / "collector" / "collection_log.jsonl",
+        collector_state_path=tmp_path / "data" / "collector_state.json",
+        collector_manifests_dir=tmp_path / "data" / "collector" / "manifests",
+    )
+    save_collector_state(
+        cfg.collector_state_path,
+        CollectorState(cursor_date="20260310", last_completed_date="20260311", finalized_date="20260312", status="idle"),
+    )
+    append_collection_log(
+        cfg.collector_log_path,
+        CollectionLogRecord(
+            date="20260310",
+            status="partial",
+            news_count=3,
+            classification_count=3,
+            daily_price_count=1,
+            daily_index_count=0,
+            completed_at="2026-03-15T00:00:00+09:00",
+            skip_reason="pagination_truncated,daily_index_missing",
+        ),
+    )
+    write_collection_day_manifest(
+        cfg.collector_manifests_dir,
+        dt="20260310",
+        status="partial",
+        status_reason="pagination_truncated,daily_index_missing",
+        finalized_date="20260312",
+        items=[],
+        tickers=[],
+        news_count=3,
+        classification_count=3,
+        price_count=1,
+        index_count=0,
+        news_path=tmp_path / "news" / "20260310.jsonl",
+        classifications_path=tmp_path / "classifications" / "20260310.jsonl",
+        daily_prices_path=tmp_path / "prices" / "20260310.jsonl",
+        daily_index_path=tmp_path / "index" / "20260310.jsonl",
+    )
+
+    with caplog.at_level(logging.INFO):
+        log_collection_status(cfg, backlog_limit=1)
+
+    assert "Collect status partial detail" in caplog.text
+    assert "manifest_reason=pagination_truncated,daily_index_missing" in caplog.text
+    assert "manifest_status=partial" in caplog.text
+    assert "manifest=" in caplog.text
 
 
 async def test_collect_main_dispatches_status(tmp_path):
