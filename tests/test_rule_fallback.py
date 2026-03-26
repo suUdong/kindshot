@@ -111,9 +111,15 @@ class TestRuleFallbackPosStrong:
         result = _rule_based_decide(Bucket.POS_STRONG, "수주 공시", ["수주"], _ctx())
         assert result["action"] == "SKIP"
 
-    def test_standalone_patent_skips(self):
-        """단독 '특허'는 SKIP (너무 일반적)."""
+    def test_standalone_patent_buys(self):
+        """'특허 등록'은 확정 공시 → BUY (rule_fallback 강화)."""
         result = _rule_based_decide(Bucket.POS_STRONG, "특허 등록", ["특허"], _ctx())
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 76
+
+    def test_bare_patent_keyword_skips(self):
+        """단독 '특허' (등록/취득 없음)는 SKIP."""
+        result = _rule_based_decide(Bucket.POS_STRONG, "특허 관련 뉴스", ["특허"], _ctx())
         assert result["action"] == "SKIP"
 
     def test_fda_approval_buys(self):

@@ -106,14 +106,13 @@ def format_buy_signal(
     hold_label = "EOD" if hold_minutes == 0 else f"{hold_minutes}m"
     source_tag = f" [{decision_source}]" if decision_source != "LLM" else ""
     lines = [
-        f"[{mode.upper()}] BUY {corp_name}({ticker}){source_tag}",
+        f"{'🟢' if mode == 'live' else '📋'} [{mode.upper()}] BUY {corp_name}({ticker}){source_tag}",
         f"conf={confidence} size={size_hint} hold={hold_label}",
-        f"bucket={bucket}",
     ]
+    # BUY 이유를 가장 눈에 띄게 표시
     if reason:
-        lines.append(f"why: {reason}")
-    if keyword_hits:
-        lines.append(f"keywords: {', '.join(keyword_hits[:5])}")
+        lines.append(f">> {reason}")
+    # 시장 컨텍스트
     ctx_parts = []
     if ret_today is not None:
         ctx_parts.append(f"ret={ret_today:+.1f}%")
@@ -123,7 +122,9 @@ def format_buy_signal(
         ctx_parts.append(f"adv={adv_display}")
     if ctx_parts:
         lines.append(" ".join(ctx_parts))
-    lines.append(headline[:60])
+    if keyword_hits:
+        lines.append(f"kw: {', '.join(keyword_hits[:5])}")
+    lines.append(headline[:120])
     return "\n".join(lines)
 
 

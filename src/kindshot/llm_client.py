@@ -26,7 +26,7 @@ _PERMANENT_ERROR_PATTERNS = (
 )
 
 # Circuit breaker 쿨다운: 영구 에러 감지 후 이 시간 동안 해당 provider 호출 차단
-_CIRCUIT_BREAKER_COOLDOWN_S = 300  # 5분
+_CIRCUIT_BREAKER_COOLDOWN_S = 3600  # 1시간 (크레딧 부족 등 영구 에러는 짧은 쿨다운 무의미)
 
 
 class LlmTimeoutError(Exception):
