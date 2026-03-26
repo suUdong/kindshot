@@ -839,7 +839,7 @@ def evaluate_unknown_promotion(
 def _build_unknown_review_prompt(request: UnknownReviewRequest) -> str:
     detected_at_kst = request.detected_at.astimezone(_KST).strftime("%Y-%m-%d %H:%M:%S")
     article_text = request.article_text.strip() or "N/A"
-    return f"""task: review UNKNOWN stock-news headline for bucket suggestion only
+    return f"""task: review UNKNOWN Korean stock-news headline for bucket suggestion only
 headline: {request.headline}
 corp_name: {request.corp_name}
 ticker: {request.ticker}
@@ -848,17 +848,29 @@ source: {request.source}
 rss_link: {request.rss_link}
 article_text: {article_text}
 
+Korean stock disclosure domain guide (공시 도메인 가이드):
+POS_STRONG examples: 자사주매입/소각, 대규모 수주, 신약승인/허가, 인수합병(acquirer), 흑자전환, 실적호전, 배당증가, 무상증자, 주식분할, 자기주식처분(소각)
+POS_WEAK examples: MOU/LOI 체결, 해외진출, 신사업진출, 특허취득, 정부과제선정, 임상진입
+NEG_STRONG examples: 유상증자(주식희석=악재), 감사의견거절/한정, 상장폐지, 횡령/배임, 영업정지, 관리종목지정, 대규모손실, CB/BW발행(전환사채=희석)
+NEG_WEAK examples: 소송제기, 벌금/과징금, 대표이사변경, 실적악화, 감자(주식병합)
+IGNORE examples: 주주총회결과, 정기보고서, 임원선임, 사외이사선임, 기업설명회(IR), 단순공시정정
+
+Key principle: 유상증자/CB/BW = dilution = NEG (not positive growth signal)
+
 rules:
 - you are reviewing only UNKNOWN headlines
 - do not assume facts not present in the headline or article_text
 - if headline is ambiguous, keep UNKNOWN or IGNORE
 - paper-only promotion may occur later; promotion suggestion is advisory
 
+confidence guide: 0-100 integer. 85-100=very clear signal, 70-84=likely, 50-69=uncertain, below 50=unclear/UNKNOWN
+promote_now: true only if confidence>=85 and bucket is POS_STRONG or POS_WEAK
+
 output json:
 {{
   "suggested_bucket": "POS_STRONG|POS_WEAK|NEG_STRONG|NEG_WEAK|IGNORE|UNKNOWN",
   "polarity": "POSITIVE|NEGATIVE|NEUTRAL|UNCLEAR",
-  "confidence": 0,
+  "confidence": 75,
   "promote_now": false,
   "needs_article_body": false,
   "canonical_headline": "",
