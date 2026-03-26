@@ -241,7 +241,16 @@ def _has_large_contract_signal(headline: str, keyword_hits: list[str]) -> tuple[
             return True, 78
         # 5% 미만은 무시
 
-    # 금액이 1000억 이상이면 대형 계약
+    # 금액 파싱: 조 단위 + 억 단위
+    # "2.89조원" → 28900억, "1.96조원" → 19600억
+    cho_match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*조", headline)
+    if cho_match:
+        amt_eok = float(cho_match.group(1).replace(",", "")) * 10000
+        if amt_eok >= 10000:  # 1조+
+            return True, 80
+        if amt_eok >= 5000:  # 5000억+
+            return True, 79
+
     amt_match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*억", headline)
     if amt_match:
         amt = float(amt_match.group(1).replace(",", ""))
@@ -249,6 +258,10 @@ def _has_large_contract_signal(headline: str, keyword_hits: list[str]) -> tuple[
             return True, 79
         if amt >= 500:
             return True, 77
+
+    # "단일판매ㆍ공급계약체결" 정규 공시는 금액 없어도 신뢰도 있음 (KIND 공시)
+    if "단일판매" in headline and "공급계약" in headline:
+        return True, 77
 
     return False, 0
 

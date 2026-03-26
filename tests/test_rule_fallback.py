@@ -160,3 +160,23 @@ class TestRuleFallbackPosStrong:
         )
         assert result["action"] == "BUY"
         assert result["confidence"] >= 78
+
+    def test_trillion_won_contract_buys(self):
+        """조 단위 대형 계약 BUY."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "현대건설, 1.96조원 규모 공급계약(수택동 주택재개발 정비사업) 체결",
+            ["공급계약"], _ctx(),
+        )
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 80
+
+    def test_kind_formal_disclosure_buys(self):
+        """단일판매ㆍ공급계약체결 KIND 정규 공시 BUY."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "(주)대우건설 단일판매ㆍ공급계약체결",
+            ["공급계약"], _ctx(),
+        )
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 77
