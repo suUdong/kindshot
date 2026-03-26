@@ -262,6 +262,7 @@ async def execute_bucket_path(
             ctx=ctx,
             raw=raw_data,
             market_ctx=event_rec.market_ctx,
+            keyword_hits=keyword_hits,
         )
 
     if should_track_price:

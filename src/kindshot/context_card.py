@@ -296,6 +296,7 @@ async def append_runtime_context_card(
     ctx: ContextCard,
     raw: ContextCardData,
     market_ctx: object,
+    keyword_hits: Optional[list[str]] = None,
 ) -> None:
     record = {
         "type": "context_card",
@@ -307,6 +308,7 @@ async def append_runtime_context_card(
         "corp_name": corp_name,
         "headline": headline,
         "bucket": bucket,
+        "keyword_hits": keyword_hits or [],
         "detected_at": detected_at.isoformat(),
         "disclosed_at": disclosed_at.isoformat() if disclosed_at is not None else None,
         "delay_ms": delay_ms,
