@@ -19,7 +19,7 @@ from kindshot.context_card import (
     append_runtime_context_card,
     build_context_card,
 )
-from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError, has_high_conviction_keyword
+from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError, has_high_conviction_keyword, has_article_pattern
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
 from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment
@@ -398,6 +398,19 @@ async def execute_bucket_path(
             decision.event_id = processed.event_id
             decision.mode = mode
             decision.decision_source = "LLM_FALLBACK_HYBRID"
+
+    # Post-LLM 기사/미확정 패턴 감점: LLM이 기사 헤드라인에 BUY를 줄 때 conf -10
+    if (
+        decision.action == Action.BUY
+        and decision.decision_source == "LLM"
+        and has_article_pattern(raw.title)
+    ):
+        original_conf = decision.confidence
+        decision.confidence = max(0, decision.confidence - 10)
+        logger.warning(
+            "Post-LLM article filter [%s]: %d → %d (headline has article pattern)",
+            raw.ticker, original_conf, decision.confidence,
+        )
 
     # ── Confidence 조정 파이프라인 (ADV → price reaction → delay → market) ──
     # 총 감점 상한: LLM 원본에서 -10 이상 감점 방지 (과다 감점 = 진짜 촉매 놓침)

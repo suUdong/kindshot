@@ -364,6 +364,11 @@ _ARTICLE_MARKERS = (
 )
 
 
+def has_article_pattern(headline: str) -> bool:
+    """헤드라인에 기사/미확정 패턴이 있으면 True. LLM BUY에도 post-check 적용."""
+    return any(marker in headline for marker in _ARTICLE_MARKERS)
+
+
 def _rule_based_decide(
     bucket: Bucket,
     headline: str,
