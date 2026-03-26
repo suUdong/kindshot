@@ -4,8 +4,8 @@
 
 - Branch: `main`
 - Phase: `Historical Collection Foundation`
-- Focus: carry collector partial-input reasons from day status into replay ops summary/queue rows so multi-day triage does not require opening per-day status files.
-- Active hypothesis: if replay ops rows keep the same collector `status_reason` and `manifest_path` that replay day status already exposes, operators can scan the queue and immediately see why a day is blocked.
+- Focus: keep collector blocker context visible all the way through replay ops console surfaces, not just JSON artifacts.
+- Active hypothesis: if queue/run/cycle console output prints the same collector reason and manifest path already present in row payloads, operators can triage partial collector days directly from the terminal view.
 
 ## Environment
 
@@ -13,15 +13,15 @@
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
-  - `.venv/bin/python -m pytest tests/test_replay.py -q` passed (`32 passed`)
-  - `.venv/bin/python -m pytest -q` passed (`708 passed, 1 warning`)
+  - `.venv/bin/python -m pytest tests/test_replay.py -q` passed (`34 passed`)
+  - `.venv/bin/python -m pytest -q` passed (`710 passed, 1 warning`)
 
 ## Last Completed Step
 
-- Extended replay ops summary rows and queue rows so they now carry collector `status_reason` and `manifest_path` alongside the existing health/selection fields.
-- Kept the day-status shape as the source of truth and only propagated those fields upward into multi-day ops views.
-- Added replay coverage proving partial collector days keep their reason/path signals in both ops summary and queue-ready output.
-- Updated the collection-infra design doc so ops-row expectations match the enriched output shape.
+- Added a shared replay-ops print helper so queue/run/cycle console output now prints `collector_reason` and `collector_manifest` whenever those fields are present on a row.
+- Kept the existing enriched row payloads intact and made the terminal view match them instead of hiding collector blocker context.
+- Added replay coverage for queue/run/cycle console output plus the enriched row payloads.
+- Updated the collection-infra design doc so run/cycle surfaces explicitly preserve and show collector blocker fields.
 - Verified the full repository test suite after the change (`708 passed, 1 warning`).
 
 ## Next Intended Step

@@ -357,6 +357,7 @@ python -m kindshot --replay-ops-cycle-ready --replay-ops-run-limit 3 --replay-op
 - queue row는 최소한 `date`, `health`, `selected`, `selection_reason`, `report_available`, `collector_available`, `runtime_available`, `merged_event_count`를 제공해야 한다.
 - collector partial row가 queue에서 제외될 때도 같은 row에 `collector_status_reason`과 `collector_manifest_path`를 남겨 왜 막혔는지 바로 보이게 한다.
 - run row는 queue row 필드에 더해 `executed`, `report_path`, `summary`를 제공해야 한다.
+- run row가 partial collector day를 carry-over할 때도 `collector_status_reason`과 `collector_manifest_path`를 유지해, 실행 결과 파일만 봐도 이전 blocker 맥락이 남아 있어야 한다.
 - 다음 큰 batch는 higher-level replay ops cycle 경로다. `--replay-ops-cycle-ready`는 같은 selection policy로 queue를 만들고, 선택된 날짜를 실행한 뒤, 마지막에 refreshed ops summary까지 남겨야 한다.
 - cycle artifact 기본 경로는 `data/replay/ops/cycle_ready_latest.json`로 둔다.
 - cycle은 최소한 다음 단계를 한 command 안에서 수행해야 한다:
@@ -365,6 +366,7 @@ python -m kindshot --replay-ops-cycle-ready --replay-ops-run-limit 3 --replay-op
   - post-run ops summary refresh
 - cycle report는 최소한 `generated_at`, `policy`, `queue_path`, `run_path`, `summary_path`, `executed_count`, `failed_count`, `stopped_early`, `continue_on_error`, `rows`를 포함해야 한다.
 - cycle row는 최소한 `date`, `selected`, `executed`, `error`, `report_path`, `summary`를 포함해야 한다.
+- cycle row도 같은 collector blocker 필드를 유지하고, human-readable console output에서도 그 값이 보여야 한다.
 - batch failure policy:
   - 기본은 `stop_on_error`로 두어 첫 replay-day 실패 시 이후 날짜 실행을 멈춘다.
   - `--replay-ops-continue-on-error`가 주어지면 실패 날짜를 기록만 하고 다음 selected 날짜를 계속 실행한다.

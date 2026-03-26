@@ -575,6 +575,19 @@ def _print_replay_ops_summary(report: dict[str, Any]) -> None:
     print("=" * 60)
 
 
+def _collector_blocker_suffix(row: dict[str, Any]) -> str:
+    reason = str(row.get("collector_status_reason", "") or "").strip()
+    manifest_path = str(row.get("collector_manifest_path", "") or "").strip()
+    if not reason and not manifest_path:
+        return ""
+    parts = []
+    if reason:
+        parts.append(f"collector_reason={reason}")
+    if manifest_path:
+        parts.append(f"collector_manifest={manifest_path}")
+    return " " + " ".join(parts)
+
+
 def _print_replay_ops_queue_ready(report: dict[str, Any]) -> None:
     print("\n" + "=" * 60)
     print("REPLAY OPS QUEUE READY")
@@ -586,7 +599,7 @@ def _print_replay_ops_queue_ready(report: dict[str, Any]) -> None:
     print("\nRows:")
     for row in report.get("rows", []):
         print(
-            "%s selected=%s reason=%s health=%s merged=%d collector=%s runtime=%s report=%s"
+            "%s selected=%s reason=%s health=%s merged=%d collector=%s runtime=%s report=%s%s"
             % (
                 row["date"],
                 "yes" if row["selected"] else "no",
@@ -596,6 +609,7 @@ def _print_replay_ops_queue_ready(report: dict[str, Any]) -> None:
                 "yes" if row["collector_available"] else "no",
                 "yes" if row["runtime_available"] else "no",
                 "yes" if row["report_available"] else "no",
+                _collector_blocker_suffix(row),
             )
         )
     print("=" * 60)
@@ -613,7 +627,7 @@ def _print_replay_ops_run_ready(report: dict[str, Any]) -> None:
     print("\nRows:")
     for row in report.get("rows", []):
         print(
-            "%s selected=%s executed=%s reason=%s report=%s buys=%d price_trades=%d"
+            "%s selected=%s executed=%s reason=%s report=%s buys=%d price_trades=%d%s"
             % (
                 row["date"],
                 "yes" if row["selected"] else "no",
@@ -622,6 +636,7 @@ def _print_replay_ops_run_ready(report: dict[str, Any]) -> None:
                 row["report_path"] or "-",
                 row["summary"].get("buy_decisions", 0),
                 row["summary"].get("price_data_trades", 0),
+                _collector_blocker_suffix(row),
             )
         )
     print("=" * 60)
@@ -642,7 +657,7 @@ def _print_replay_ops_cycle_ready(report: dict[str, Any]) -> None:
     print("\nRows:")
     for row in report.get("rows", []):
         print(
-            "%s selected=%s executed=%s error=%s report=%s buys=%d price_trades=%d"
+            "%s selected=%s executed=%s error=%s report=%s buys=%d price_trades=%d%s"
             % (
                 row["date"],
                 "yes" if row["selected"] else "no",
@@ -651,6 +666,7 @@ def _print_replay_ops_cycle_ready(report: dict[str, Any]) -> None:
                 row["report_path"] or "-",
                 row["summary"].get("buy_decisions", 0),
                 row["summary"].get("price_data_trades", 0),
+                _collector_blocker_suffix(row),
             )
         )
     print("=" * 60)

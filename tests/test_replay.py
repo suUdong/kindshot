@@ -9,6 +9,9 @@ import pytest
 
 from kindshot.config import Config
 from kindshot.replay import (
+    _print_replay_ops_cycle_ready,
+    _print_replay_ops_queue_ready,
+    _print_replay_ops_run_ready,
     _load_actionable_events,
     _summarize_returns,
     list_collected_dates,
@@ -1108,6 +1111,34 @@ def test_replay_ops_queue_ready_applies_policy_filters(tmp_path):
     assert (tmp_path / "data" / "replay" / "ops" / "queue_ready_latest.json").exists()
 
 
+def test_print_replay_ops_queue_ready_includes_collector_blocker_details(capsys):
+    _print_replay_ops_queue_ready(
+        {
+            "policy": {"limit": 1},
+            "candidate_count": 0,
+            "selected_count": 0,
+            "skipped_counts": {"health_not_ready": 1},
+            "rows": [
+                {
+                    "date": "20260314",
+                    "selected": False,
+                    "selection_reason": "health_not_ready",
+                    "health": "partial_inputs",
+                    "merged_event_count": 0,
+                    "collector_available": True,
+                    "collector_status_reason": "daily_index_missing",
+                    "collector_manifest_path": "/tmp/manifests/20260314.json",
+                    "runtime_available": False,
+                    "report_available": False,
+                }
+            ],
+        }
+    )
+    out = capsys.readouterr().out
+    assert "collector_reason=daily_index_missing" in out
+    assert "collector_manifest=/tmp/manifests/20260314.json" in out
+
+
 async def test_replay_ops_run_ready_executes_ready_dates_without_reports(tmp_path):
     collector_manifests_dir = tmp_path / "data" / "collector" / "manifests"
     runtime_dir = tmp_path / "data" / "runtime"
@@ -1280,6 +1311,56 @@ async def test_replay_ops_run_ready_can_rerun_reported_dates_with_filters(tmp_pa
     rows = {row["date"]: row for row in report["rows"]}
     assert rows["20260316"]["selection_reason"] == "selected"
     assert rows["20260315"]["selection_reason"] == "missing_collector"
+
+
+def test_print_replay_ops_run_and_cycle_include_collector_blocker_details(capsys):
+    run_report = {
+        "policy": {"limit": 1},
+        "candidate_count": 1,
+        "selected_count": 0,
+        "executed_count": 0,
+        "failed_count": 0,
+        "skipped_counts": {"health_not_ready": 1},
+        "rows": [
+            {
+                "date": "20260314",
+                "selected": False,
+                "executed": False,
+                "selection_reason": "health_not_ready",
+                "report_path": "",
+                "summary": {},
+                "collector_status_reason": "pagination_truncated",
+                "collector_manifest_path": "/tmp/manifests/20260314.json",
+            }
+        ],
+    }
+    _print_replay_ops_run_ready(run_report)
+    cycle_report = {
+        "policy": {"limit": 1},
+        "continue_on_error": False,
+        "executed_count": 0,
+        "failed_count": 1,
+        "stopped_early": True,
+        "queue_path": "/tmp/queue.json",
+        "run_path": "/tmp/run.json",
+        "summary_path": "/tmp/summary.json",
+        "rows": [
+            {
+                "date": "20260314",
+                "selected": False,
+                "executed": False,
+                "error": "RuntimeError: boom",
+                "report_path": "",
+                "summary": {},
+                "collector_status_reason": "pagination_truncated",
+                "collector_manifest_path": "/tmp/manifests/20260314.json",
+            }
+        ],
+    }
+    _print_replay_ops_cycle_ready(cycle_report)
+    out = capsys.readouterr().out
+    assert "collector_reason=pagination_truncated" in out
+    assert "collector_manifest=/tmp/manifests/20260314.json" in out
 
 
 async def test_replay_ops_cycle_ready_stops_on_first_error_by_default(tmp_path):

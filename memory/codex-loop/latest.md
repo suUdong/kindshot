@@ -1,4 +1,4 @@
-Hypothesis: Replay ops views should preserve the collector partial reason that replay day status already knows. If ops summary and ready-queue rows carry `collector_status_reason` and `collector_manifest_path`, multi-day replay triage stays actionable without opening per-day status artifacts.
+Hypothesis: Replay ops console output should preserve the same collector blocker context that the row JSON already carries. If queue/run/cycle terminal output prints `collector_status_reason` and `collector_manifest_path`, operators can triage blocked replay days without opening saved JSON artifacts.
 
 Changed files:
 - `src/kindshot/replay.py`
@@ -8,16 +8,15 @@ Changed files:
 - `memory/codex-loop/session.md`
 
 Validation:
-- Replay ops summary rows now preserve `collector_status_reason` and `collector_manifest_path` from the underlying day-status payload.
-- Replay ready-queue rows now preserve the same fields, so excluded partial days still show their concrete blocker reason and source manifest.
-- Kept the prior day-status and index-first manifest-resolution behavior intact; this slice only propagates existing signals upward into multi-day ops views.
+- Replay ops queue/run/cycle console output now prints collector blocker details when present on a row.
+- Kept the prior enriched row payloads intact; this slice only makes the human-readable terminal surface match the existing JSON data.
 - Added replay coverage for:
-  - ops summary rows exposing `collector_status_reason`
-  - ops summary rows exposing `collector_manifest_path`
-  - queue-ready rows preserving the same partial collector fields
-- Updated the Phase 6 design doc to state the replay-ops visibility contract explicitly.
-- `.venv/bin/python -m pytest tests/test_replay.py -q` passed (`32 passed`)
-- `.venv/bin/python -m pytest -q` passed (`708 passed, 1 warning`)
+  - queue console output exposing collector blocker details
+  - run console output exposing collector blocker details
+  - cycle console output exposing collector blocker details
+- Updated the Phase 6 design doc to state the replay-ops console visibility contract explicitly.
+- `.venv/bin/python -m pytest tests/test_replay.py -q` passed (`34 passed`)
+- `.venv/bin/python -m pytest -q` passed (`710 passed, 1 warning`)
 
 Risk and rollback note:
 - This slice changes replay ops/output visibility only; it does not change collector writes, trading logic, or deployment paths.
