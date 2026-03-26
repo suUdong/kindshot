@@ -373,55 +373,56 @@ async def execute_bucket_path(
     decision.event_id = processed.event_id
     decision.mode = mode
 
-    # ADV 기반 confidence 조정 (소형주 집중 전략)
-    if decision.action == Action.BUY and raw_data.adv_value_20d is not None:
-        original_conf = decision.confidence
-        decision.confidence = apply_adv_confidence_adjustment(decision.confidence, raw_data.adv_value_20d)
-        if decision.confidence != original_conf:
-            logger.info(
-                "ADV confidence adj [%s]: %d → %d (adv=%.0f억)",
-                raw.ticker, original_conf, decision.confidence,
-                raw_data.adv_value_20d / 1e8,
-            )
-
-    # 시장 반응 확인: 당일 수익률 기반 confidence 보정
-    if decision.action == Action.BUY and raw_data.ret_today is not None:
-        original_conf = decision.confidence
-        decision.confidence = apply_price_reaction_adjustment(decision.confidence, raw_data.ret_today)
-        if decision.confidence != original_conf:
-            logger.info(
-                "Price reaction adj [%s]: %d → %d (ret_today=%+.1f%%)",
-                raw.ticker, original_conf, decision.confidence, raw_data.ret_today,
-            )
-
-    # Detection delay 기반 confidence 감점 (늦게 감지된 뉴스 = 이미 반영)
-    if decision.action == Action.BUY and delay_ms is not None:
-        original_conf = decision.confidence
-        decision.confidence = apply_delay_confidence_adjustment(decision.confidence, delay_ms)
-        if decision.confidence != original_conf:
-            logger.info(
-                "Delay confidence adj [%s]: %d → %d (delay=%.1fs)",
-                raw.ticker, original_conf, decision.confidence, delay_ms / 1000,
-            )
-
-    # 하락장 confidence 감점 (지수 하락폭에 비례)
+    # ── Confidence 조정 파이프라인 (ADV → price reaction → delay → market) ──
+    # 총 감점 상한: LLM 원본에서 -10 이상 감점 방지 (과다 감점 = 진짜 촉매 놓침)
     if decision.action == Action.BUY:
+        llm_original_conf = decision.confidence
+        _MAX_TOTAL_PENALTY = 10
+
+        # 1. ADV 기반 (소형주 집중 전략)
+        if raw_data.adv_value_20d is not None:
+            before = decision.confidence
+            decision.confidence = apply_adv_confidence_adjustment(decision.confidence, raw_data.adv_value_20d)
+            if decision.confidence != before:
+                logger.info("ADV confidence adj [%s]: %d → %d (adv=%.0f억)",
+                            raw.ticker, before, decision.confidence, raw_data.adv_value_20d / 1e8)
+
+        # 2. 시장 반응 확인 (ret_today)
+        if raw_data.ret_today is not None:
+            before = decision.confidence
+            decision.confidence = apply_price_reaction_adjustment(decision.confidence, raw_data.ret_today)
+            if decision.confidence != before:
+                logger.info("Price reaction adj [%s]: %d → %d (ret_today=%+.1f%%)",
+                            raw.ticker, before, decision.confidence, raw_data.ret_today)
+
+        # 3. Detection delay
+        if delay_ms is not None:
+            before = decision.confidence
+            decision.confidence = apply_delay_confidence_adjustment(decision.confidence, delay_ms)
+            if decision.confidence != before:
+                logger.info("Delay confidence adj [%s]: %d → %d (delay=%.1fs)",
+                            raw.ticker, before, decision.confidence, delay_ms / 1000)
+
+        # 4. 하락장 감점
         market_snapshot = market.snapshot
-        original_conf = decision.confidence
+        before = decision.confidence
         decision.confidence = apply_market_confidence_adjustment(
-            decision.confidence,
-            market_snapshot.kospi_change_pct,
-            market_snapshot.kosdaq_change_pct,
+            decision.confidence, market_snapshot.kospi_change_pct, market_snapshot.kosdaq_change_pct,
         )
-        if decision.confidence != original_conf:
-            worst = min(
-                market_snapshot.kospi_change_pct or 0.0,
-                market_snapshot.kosdaq_change_pct or 0.0,
+        if decision.confidence != before:
+            worst = min(market_snapshot.kospi_change_pct or 0.0, market_snapshot.kosdaq_change_pct or 0.0)
+            logger.info("Market confidence adj [%s]: %d → %d (worst_idx=%.1f%%)",
+                        raw.ticker, before, decision.confidence, worst)
+
+        # 총 감점 상한 적용: LLM 원본 - 10 이하로 떨어지지 않도록
+        total_delta = decision.confidence - llm_original_conf
+        if total_delta < -_MAX_TOTAL_PENALTY:
+            floored = llm_original_conf - _MAX_TOTAL_PENALTY
+            logger.warning(
+                "Confidence adj floor [%s]: %d → %d (total_delta=%d exceeded -%d cap, llm=%d)",
+                raw.ticker, decision.confidence, floored, total_delta, _MAX_TOTAL_PENALTY, llm_original_conf,
             )
-            logger.info(
-                "Market confidence adj [%s]: %d → %d (worst_idx=%.1f%%)",
-                raw.ticker, original_conf, decision.confidence, worst,
-            )
+            decision.confidence = floored
 
     # 킬 스위치: 연패 시 size_hint 다운그레이드
     if decision.action == Action.BUY and guardrail_state is not None:
