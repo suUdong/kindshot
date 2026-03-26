@@ -91,3 +91,48 @@ def test_resolve_hold_profile_returns_match():
     minutes, matched = resolve_hold_profile("삼성전자 1000억 규모 공급계약 체결", ["공급계약"], cfg)
     assert minutes == 15
     assert matched == "공급계약"
+
+
+def test_treasury_purchase_eod():
+    """자사주 매입 → EOD (0분)."""
+    cfg = Config()
+    assert get_max_hold_minutes("자사주 매입 결정", ["자사주 매입"], cfg) == 0
+    assert get_max_hold_minutes("자사주매입 공시", ["자사주매입"], cfg) == 0
+
+
+def test_treasury_purchase_additional_eod():
+    """자사주 추가 매입 → EOD (0분)."""
+    cfg = Config()
+    assert get_max_hold_minutes("자사주 추가 매입 결정", ["자사주 추가 매입"], cfg) == 0
+
+
+def test_own_share_cancel_eod():
+    """자기주식 소각 → EOD (0분)."""
+    cfg = Config()
+    assert get_max_hold_minutes("자기주식 소각 결정", ["자기주식 소각"], cfg) == 0
+    assert get_max_hold_minutes("자기주식소각 공시", ["자기주식소각"], cfg) == 0
+
+
+def test_own_share_acquire_eod():
+    """자기주식 취득 → EOD (0분)."""
+    cfg = Config()
+    assert get_max_hold_minutes("자기주식 취득 결정", ["자기주식 취득"], cfg) == 0
+    assert get_max_hold_minutes("자기주식취득 공시", ["자기주식취득"], cfg) == 0
+
+
+def test_cdmo_20min():
+    """CDMO 계약 → 20분."""
+    cfg = Config()
+    assert get_max_hold_minutes("CDMO 계약 체결", ["CDMO 계약"], cfg) == 20
+
+
+def test_tech_transfer_20min():
+    """기술이전 → 20분."""
+    cfg = Config()
+    assert get_max_hold_minutes("기술이전 계약 체결", ["기술이전 계약"], cfg) == 20
+
+
+def test_license_out_20min():
+    """라이선스 아웃 → 20분."""
+    cfg = Config()
+    assert get_max_hold_minutes("라이선스 아웃 계약", ["라이선스 아웃"], cfg) == 20
