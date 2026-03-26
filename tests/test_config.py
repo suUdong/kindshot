@@ -65,7 +65,7 @@ def test_trailing_stop_defaults():
         assert cfg.trailing_stop_mid_pct == 0.5
         assert cfg.trailing_stop_late_pct == 0.7
         assert cfg.max_hold_minutes == 20
-        assert cfg.fast_profile_hold_minutes == 15
+        assert cfg.fast_profile_hold_minutes == 20
         assert cfg.fast_profile_no_buy_after_kst_hour == 14
         assert cfg.fast_profile_no_buy_after_kst_minute == 0
 
