@@ -1,16 +1,19 @@
-Hypothesis: The latest verifiable paper-trading window is being dragged down by weak `수주` and article-style / mega-cap contract flow, while the apparent `공급계약` stability is mostly a single-winner illusion.
+Hypothesis: In the current environment, the replay bottleneck is operational rather than strategic: fresh LLM reruns are blocked by missing NVIDIA credentials and exhausted Anthropic credits, while `rule_fallback` remains executable and materially reduces loss by trading far less.
 
 Changed files:
-- `docs/2026-03-26-fire-performance-analysis.md`
+- `docs/replay-2weeks.md`
 - `memory/codex-loop/latest.md`
 
 Validation:
-- Recomputed BUY coverage, realized returns, bucket breakdowns, and excluded rows directly from `logs/kindshot_20260310.jsonl` through `logs/kindshot_20260319.jsonl`
-- Verified synthetic runtime artifacts from `data/runtime/context_cards/20260322-20260326.jsonl` and `data/runtime/price_snapshots/20260322-20260326.jsonl` were excluded because they are test-fixture pollution
-- Full tests: `source .venv/bin/activate && python -m pytest -q` passed (`614 passed, 1 warning`)
+- Re-ran `replay.py` over the reliable recent-window logs: `20260313`, `20260316`, `20260317`, `20260318`, `20260319`
+- Verified `20260322` through `20260326` runtime artifacts are polluted (`run_id=test_run`, repeated single `event_id`) and excluded them from the comparison window
+- Built local comparison artifacts under `.omc/replay_2weeks/` for:
+  - current replay rerun status
+  - full-window `rule_fallback` replay
+  - historical logged LLM vs current `rule_fallback` on the same `27` decided events
 
 Risk and rollback note:
 - This slice is documentation-only and does not change runtime behavior.
-- The main analytical gap remains incomplete `close` snapshots for `7` of `23` BUY decisions, concentrated on `2026-03-18`.
-- One full-suite run hit a transient timeout in `tests/test_pipeline.py::test_pipeline_passes_quote_risk_state_to_guardrails` before the targeted rerun and the subsequent full rerun both passed, so pipeline-test flakiness remains a minor validation risk.
-- Roll back by reverting the new analysis document and restoring the previous `memory/codex-loop/latest.md`.
+- The requested fresh `NVIDIA LLM vs rule_fallback` replay could not complete because `NVIDIA_API_KEY` is unset and the Anthropic fallback account returned low-credit `400` errors.
+- The historical logged LLM benchmark is only comparable on the `27` events that actually have local decision records, so it should not be read as a full-window rerun substitute.
+- Roll back by reverting `docs/replay-2weeks.md` and restoring the previous `memory/codex-loop/latest.md`.
