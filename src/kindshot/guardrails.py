@@ -305,9 +305,19 @@ def check_guardrails(
         if top_ask_notional < config.order_size:
             return GuardrailResult(passed=False, reason="ORDERBOOK_TOP_LEVEL_LIQUIDITY")
 
-    # 7. Participation confirmation.
+    # 7. Participation confirmation (시간 보정: 장 초반은 누적 거래대금 자연히 낮음).
     if decision_action == Action.BUY and intraday_value_vs_adv20d is not None:
-        if intraday_value_vs_adv20d < config.min_intraday_value_vs_adv20d:
+        now_kst = _resolve_decision_time_kst(decision_time_kst)
+        h, m = now_kst.hour, now_kst.minute
+        # 09:00~09:30: 개장 직후 → 임계값 1/5로 완화
+        # 09:30~10:00: 초반 → 임계값 1/2로 완화
+        if h == 9 and m < 30:
+            effective_threshold = config.min_intraday_value_vs_adv20d * 0.2
+        elif h == 9:
+            effective_threshold = config.min_intraday_value_vs_adv20d * 0.5
+        else:
+            effective_threshold = config.min_intraday_value_vs_adv20d
+        if intraday_value_vs_adv20d < effective_threshold:
             return GuardrailResult(passed=False, reason="INTRADAY_VALUE_TOO_THIN")
 
     # 8-11: Portfolio-level guardrails (require state tracking)
