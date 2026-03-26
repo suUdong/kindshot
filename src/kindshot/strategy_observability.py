@@ -32,7 +32,7 @@ class StrategyReportConfig:
     trailing_stop_early_pct: float = 0.3
     trailing_stop_mid_pct: float = 0.5
     trailing_stop_late_pct: float = 0.7
-    max_hold_minutes: int = 20
+    max_hold_minutes: int = 10
 
 
 def _ret_pct(snapshots: dict[str, dict[str, Any]], horizon: str) -> float | None:
