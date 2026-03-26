@@ -882,7 +882,7 @@ def test_opening_low_confidence_blocked():
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
         r = check_guardrails(
             "005930", cfg, spread_bps=10.0, adv_value_20d=10e9, ret_today=1.0,
-            decision_action=Action.BUY, decision_confidence=75,
+            decision_action=Action.BUY, decision_confidence=79,
         )
     assert r.passed is False
     assert r.reason == "OPENING_LOW_CONFIDENCE"

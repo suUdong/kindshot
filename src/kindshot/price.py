@@ -104,9 +104,9 @@ class SnapshotScheduler:
         self._event_confidence: dict[str, int] = {}
         # 이벤트별 실제 포지션 사이즈 (P&L 계산용)
         self._event_order_size: dict[str, float] = {}
-        # Stale position 감지: 5분 경과 후 모멘텀 소멸 시 exit
+        # Stale position 감지: 3분 경과 후 모멘텀 소멸 시 exit (5분→3분 타이트닝)
         self._stale_threshold_pct_default: float = 0.2
-        self._stale_min_elapsed_s: float = 300.0  # 5분
+        self._stale_min_elapsed_s: float = 180.0  # 3분
 
     def _get_trailing_stop_pct(self, event_id: str) -> float:
         """시간대 + hold profile별 trailing stop 폭 반환.

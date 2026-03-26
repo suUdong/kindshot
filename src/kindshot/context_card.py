@@ -69,7 +69,7 @@ async def _pykrx_features(ticker: str) -> dict:
             from pykrx import stock
 
             today = datetime.now(_KST).strftime("%Y%m%d")
-            start_20d = (datetime.now(_KST) - timedelta(days=40)).strftime("%Y%m%d")
+            start_20d = (datetime.now(_KST) - timedelta(days=70)).strftime("%Y%m%d")
 
             df = stock.get_market_ohlcv(start_20d, today, ticker)
             if df.empty or len(df) < 2:
@@ -117,8 +117,10 @@ async def _pykrx_features(ticker: str) -> dict:
                 cur_vol = volume.iloc[-1]
                 vol_pct = (vol_20 < cur_vol).sum() / len(vol_20) * 100 if len(vol_20) > 0 else None
 
-            # RSI-14
+            # RSI-14 — 15거래일 이상 필요
             rsi_14 = None
+            if len(close) < 15:
+                logger.debug("RSI skipped for %s: only %d rows (need 15)", ticker, len(close))
             if len(close) >= 15:
                 delta = close.diff()
                 gain = delta.clip(lower=0)
@@ -133,8 +135,10 @@ async def _pykrx_features(ticker: str) -> dict:
                 elif last_avg_gain > 0:
                     rsi_14 = 100.0
 
-            # MACD histogram (12/26/9)
+            # MACD histogram (12/26/9) — 26거래일 이상 필요
             macd_hist = None
+            if len(close) < 26:
+                logger.debug("MACD skipped for %s: only %d rows (need 26)", ticker, len(close))
             if len(close) >= 26:
                 ema12 = close.ewm(span=12, adjust=False).mean()
                 ema26 = close.ewm(span=26, adjust=False).mean()
