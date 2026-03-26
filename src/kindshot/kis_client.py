@@ -627,7 +627,7 @@ class KisClient:
         Returns list of dicts with keys: cntt_usiq_srno, data_dt, data_tm,
         hts_pbnt_titl_cntt, iscd1..iscd5, news_ofer_entp_code, dorg.
         """
-        token = await self._ensure_token()
+        token, use_real = await self._market_data_token()
         if not token:
             return NewsDisclosureFetchResult(items=[])
 
@@ -651,7 +651,7 @@ class KisClient:
         request_tr_cont = ""
 
         for _ in range(10):
-            response = await self._get_json(token, spec, params, tr_cont=request_tr_cont)
+            response = await self._get_json(token, spec, params, tr_cont=request_tr_cont, use_real=use_real)
             if response is None:
                 return NewsDisclosureFetchResult(items=self._normalize_news_items(items))
 
