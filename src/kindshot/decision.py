@@ -212,6 +212,20 @@ def _looks_like_incremental_order(headline: str) -> bool:
     return any(marker in headline for marker in _INCREMENTAL_ORDER_MARKERS)
 
 
+def _parse_contract_amount_eok(headline: str) -> float | None:
+    """헤드라인에서 계약/수주 금액(억원)을 파싱. 없으면 None."""
+    import re
+    # 조 단위
+    cho_match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*조", headline)
+    if cho_match:
+        return float(cho_match.group(1).replace(",", "")) * 10000
+    # 억 단위
+    eok_match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*억", headline)
+    if eok_match:
+        return float(eok_match.group(1).replace(",", ""))
+    return None
+
+
 def _contract_preflight_skip(
     headline: str,
     keyword_hits: list[str],
@@ -225,6 +239,11 @@ def _contract_preflight_skip(
 
     if _looks_like_incremental_order(headline):
         return {"confidence": 45, "reason": "rule_preflight:contract_incremental"}
+
+    # 소규모 계약 (<100억): SKIP — 주가 영향 미미
+    amt_eok = _parse_contract_amount_eok(headline)
+    if amt_eok is not None and amt_eok < 100:
+        return {"confidence": 45, "reason": f"rule_preflight:small_contract {amt_eok:.0f}억"}
 
     if ctx.ret_today is not None and ctx.ret_today >= 3.0:
         return {"confidence": 40, "reason": f"rule_preflight:contract_chase ret={ctx.ret_today:.1f}%"}

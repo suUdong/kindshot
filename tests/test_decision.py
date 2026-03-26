@@ -577,3 +577,57 @@ def test_prompt_pos_weak_bias_conservative():
     prompt = _build_prompt(Bucket.POS_WEAK, "목표가 상향", "005930", "삼성전자", "09:00:00", ctx)
     assert "POS_WEAK" in prompt
     assert "SKIP" in prompt
+
+
+@pytest.mark.asyncio
+async def test_small_contract_preflight_skip():
+    """소규모 계약(<100억) → preflight SKIP."""
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    engine._llm._anthropic_client = mock_client
+
+    ctx = ContextCard(ret_today=0.5, ret_3d=1.0, adv_value_20d=80_000_000_000)
+    result = await engine.decide(
+        "123456",
+        "테스트주",
+        "테스트주, 50억원 규모 공급계약 체결",
+        Bucket.POS_STRONG,
+        ctx,
+        "10:00:00",
+        keyword_hits=["공급계약"],
+    )
+
+    assert result.action == Action.SKIP
+    assert result.decision_source == "RULE_PREFLIGHT"
+    assert "small_contract" in result.reason
+    assert mock_client.messages.create.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_large_contract_passes_preflight():
+    """대형 계약(500억+) → preflight 통과 → LLM 호출."""
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+
+    mock_client = AsyncMock()
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text='{"action":"BUY","confidence":80,"size_hint":"M","reason":"large contract"}')]
+    mock_msg.usage = MagicMock(input_tokens=100, output_tokens=50)
+    mock_client.messages.create = AsyncMock(return_value=mock_msg)
+    engine._llm._anthropic_client = mock_client
+
+    ctx = ContextCard(ret_today=0.5, ret_3d=1.0, adv_value_20d=80_000_000_000)
+    result = await engine.decide(
+        "123456",
+        "테스트주",
+        "테스트주, 500억원 규모 공급계약 체결",
+        Bucket.POS_STRONG,
+        ctx,
+        "10:00:00",
+        keyword_hits=["공급계약"],
+    )
+
+    assert result.decision_source == "LLM"
+    assert mock_client.messages.create.call_count == 1
