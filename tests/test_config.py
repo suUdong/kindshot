@@ -21,7 +21,7 @@ def test_default_config_creates_without_error():
         assert cfg.llm_model == "claude-haiku-4-5-20251001"
         assert cfg.kis_is_paper is True
         assert cfg.adv_threshold == 500_000_000
-        assert cfg.pos_strong_adv_threshold == 1_000_000_000
+        assert cfg.pos_strong_adv_threshold == 300_000_000
 
 
 def test_env_override_string():
