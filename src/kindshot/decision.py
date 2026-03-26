@@ -45,7 +45,11 @@ class LlmParseError(Exception):
 
 _MAX_HEADLINE_LEN = 500
 _CONTRACT_FAMILY_KEYWORDS = ("수주", "공급계약", "공급 계약", "납품계약", "단일판매")
-_CONTRACT_ARTICLE_MARKERS = ("[카드]", "[종합]", "[TOP's Pick]", "[클릭e종목]", "[특징주]", "파죽지세", "보인다", "전망")
+_CONTRACT_ARTICLE_MARKERS = (
+    "[카드]", "[종합]", "[TOP's Pick]", "[클릭e종목]", "[특징주]",
+    "파죽지세", "보인다", "전망", "목표",
+    "추진", "검토", "계획", "예정", "Preview",
+)
 _INCREMENTAL_ORDER_MARKERS = ("1척 추가", "추가 수주", "추가 공급", "추가 계약")
 
 
