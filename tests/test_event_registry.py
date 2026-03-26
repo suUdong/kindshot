@@ -336,3 +336,80 @@ def test_unmark_does_not_affect_different_events():
     # r1 재처리 가능, r2는 여전히 DUPLICATE
     assert reg.process(r1) is not None
     assert reg.process(r2) is None
+
+
+# ── Cross-source content-hash dedup 테스트 ──────────────────
+
+
+def test_cross_source_content_hash_dedup():
+    """동일 공시가 KIS와 KIND에서 올 때 content-hash로 중복 제거."""
+    reg = EventRegistry()
+    # KIS에서 먼저 도착
+    r_kis = RawDisclosure(
+        title="삼성전자(005930) - 대규모 수주 체결",
+        link="kis://news/KIS001",
+        rss_guid="KIS001",
+        published="2026-03-27T09:12:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=datetime.now(timezone.utc),
+    )
+    # KIND에서 동일 공시 도착 (다른 link/guid, 같은 내용)
+    r_kind = RawDisclosure(
+        title="삼성전자(005930) - 대규모 수주 체결",
+        link="https://kind.krx.co.kr/?rcpNo=20260327000001",
+        rss_guid="guid_kind_001",
+        published="2026-03-27T09:12:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=datetime.now(timezone.utc),
+    )
+    assert reg.process(r_kis) is not None
+    assert reg.process(r_kind) is None  # cross-source dedup
+
+
+def test_same_source_same_title_not_content_deduped():
+    """동일 소스 내 같은 제목 다른 공시는 content-hash dedup 하지 않음."""
+    reg = EventRegistry()
+    r1 = RawDisclosure(
+        title="삼성전자(005930) - 임원 변경",
+        link="https://kind.krx.co.kr/?rcpNo=20260327000010",
+        rss_guid="guid10",
+        published="2026-03-27T09:00:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=datetime.now(timezone.utc),
+    )
+    r2 = RawDisclosure(
+        title="삼성전자(005930) - 임원 변경",
+        link="https://kind.krx.co.kr/?rcpNo=20260327000011",
+        rss_guid="guid11",
+        published="2026-03-27T09:05:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=datetime.now(timezone.utc) + timedelta(minutes=11),
+    )
+    assert reg.process(r1) is not None
+    assert reg.process(r2) is not None  # 같은 소스 → dedup 안 함
+
+
+def test_content_hash_clears_on_new_day():
+    """날짜 변경 시 content_hashes도 초기화."""
+    reg = EventRegistry()
+    day1 = datetime(2026, 3, 27, 10, 0, 0, tzinfo=timezone.utc)
+    r1 = RawDisclosure(
+        title="삼성전자(005930) - 공급계약 체결",
+        link="kis://news/D001",
+        rss_guid="D001",
+        published="2026-03-27T09:00:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=day1,
+    )
+    reg.process(r1)
+    assert len(reg._content_hashes) > 0
+
+    # 날짜 변경
+    day2 = datetime(2026, 3, 28, 10, 0, 0, tzinfo=timezone.utc)
+    reg._prune_if_new_day(day2)
+    assert len(reg._content_hashes) == 0

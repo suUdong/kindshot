@@ -14,6 +14,7 @@ from kindshot.guardrails import (
     apply_time_session_confidence_adjustment,
     apply_trend_confidence_adjustment,
     apply_technical_confidence_adjustment,
+    apply_headline_quality_adjustment,
     calculate_position_size,
     downgrade_size_hint, get_kill_switch_size_hint,
 )
@@ -1402,3 +1403,31 @@ def test_technical_combined_rsi_macd_bb_atr():
 def test_technical_all_none_no_change():
     """All indicators None → no change."""
     assert apply_technical_confidence_adjustment(85, rsi_14=None, macd_hist=None, bb_position=None, atr_14=None) == 85
+
+
+# ── Headline quality adjustment 테스트 ──
+
+
+def test_headline_quality_short_title_penalty():
+    """15자 미만 짧은 제목 → -5 감점."""
+    assert apply_headline_quality_adjustment(85, "A사 수주") == 77  # -5(short) -3(수주 without number)
+
+
+def test_headline_quality_question_mark_penalty():
+    """물음표 포함 추측성 기사 → -5, 수주+숫자없음 → -3, 합계 -8."""
+    assert apply_headline_quality_adjustment(85, "삼성전자, 반도체 수주 대박 가능성 있을까?") == 77
+
+
+def test_headline_quality_contract_without_amount():
+    """수주/계약에 금액 미기재 → -3 감점."""
+    assert apply_headline_quality_adjustment(85, "삼성전자, 대규모 공급계약 체결 발표") == 82
+
+
+def test_headline_quality_contract_with_amount_no_penalty():
+    """수주+금액 포함 → 감점 없음."""
+    assert apply_headline_quality_adjustment(85, "삼성전자, 500억원 규모 수주 체결") == 85
+
+
+def test_headline_quality_normal_headline_no_penalty():
+    """일반적인 양호한 제목 → 감점 없음."""
+    assert apply_headline_quality_adjustment(85, "삼성전자(005930) - 합병 결정 공시") == 85

@@ -604,6 +604,34 @@ def apply_technical_confidence_adjustment(
     return confidence
 
 
+def apply_headline_quality_adjustment(confidence: int, headline: str) -> int:
+    """헤드라인 품질 기반 confidence 감점.
+
+    - 너무 짧은 제목 (15자 미만): -5 (정보 부족 → false positive 가능성)
+    - 물음표 포함 (추측성 기사): -5
+    - 숫자 없는 수주/계약 제목: -3 (금액 미기재 → 소규모 가능성)
+    """
+    penalty = 0
+    stripped = headline.strip()
+
+    # 짧은 제목: 정보량 부족
+    if len(stripped) < 15:
+        penalty += 5
+
+    # 추측성/질문형 기사
+    if "?" in stripped or "?" in stripped:
+        penalty += 5
+
+    # 수주/계약인데 금액 정보 없음 (숫자 미포함)
+    import re
+    contract_keywords = ("수주", "공급계약", "계약체결", "계약 체결")
+    if any(kw in stripped for kw in contract_keywords):
+        if not re.search(r"\d", stripped):
+            penalty += 3
+
+    return max(0, confidence - penalty)
+
+
 def apply_adv_confidence_adjustment(confidence: int, adv_value_20d: float) -> int:
     """ADV 기반 confidence 캡/페널티/보너스. 소형주 집중 전략."""
     if adv_value_20d >= 500_000_000_000:  # 5000억+: 초대형주 → cap 65 (sell the news)

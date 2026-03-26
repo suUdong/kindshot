@@ -91,6 +91,18 @@ def _is_withdrawal(title: str) -> bool:
     return "철회" in title or "취소" in title or "정정(취소)" in title
 
 
+def _content_hash(ticker: str, title: str) -> str:
+    """Cross-source content hash: 동일 공시가 KIS/KIND 양쪽에서 올 때 중복 제거.
+
+    종목코드 + 정규화된 제목(corp name/ticker 제거)으로 해시 생성.
+    """
+    norm = _normalize_title(title)
+    # 회사명(종목코드) 패턴 제거 — 소스별 포맷 차이 흡수
+    norm = re.sub(r"[^0-9A-Za-z가-힣\s]", " ", norm)
+    norm = re.sub(r"\s+", " ", norm).strip()
+    return hashlib.sha256(f"{ticker}|{norm}".encode()).hexdigest()[:16]
+
+
 class EventRegistry:
     """Tracks seen events for dedup and links corrections to parents.
 
@@ -107,6 +119,7 @@ class EventRegistry:
         related_title_min_shared_tokens: int = 2,
     ) -> None:
         self._seen_ids: dict[str, datetime] = {}  # event_id -> detected_at
+        self._content_hashes: dict[str, tuple[str, str]] = {}  # content_hash -> (event_id, source)
         self._history: dict[str, list[_HistoryEntry]] = {}
         self._reeval_ids: set[str] = set()  # unmark된 event_id — related_title_dup 우회
         self._current_date: Optional[str] = None  # YYYYMMDD for TTL
@@ -211,6 +224,7 @@ class EventRegistry:
         today = now.astimezone(_KST).strftime("%Y%m%d")
         if self._current_date is not None and self._current_date != today:
             self._seen_ids.clear()
+            self._content_hashes.clear()
             self._history.clear()
         self._current_date = today
 
@@ -244,6 +258,24 @@ class EventRegistry:
         # Exact dedup
         if event_id in self._seen_ids:
             return None
+
+        # Cross-source content-hash dedup: 동일 공시가 KIS/KIND 양쪽에서 올 때
+        # 동일 소스 내 다른 공시는 dedup하지 않음 (같은 제목 다른 rcpNo 가능)
+        source = "KIS" if is_kis else "KIND"
+        if raw.ticker:
+            c_hash = _content_hash(raw.ticker, raw.title)
+            if c_hash in self._content_hashes:
+                prev_event_id, prev_source = self._content_hashes[c_hash]
+                if prev_source != source:
+                    logger.debug(
+                        "Content-hash dedup: %s (%s) already seen as %s (%s) (ticker=%s)",
+                        event_id, source, prev_event_id, prev_source, raw.ticker,
+                    )
+                    self._seen_ids[event_id] = raw.detected_at
+                    self._persist_id(event_id, raw.detected_at)
+                    return None
+            else:
+                self._content_hashes[c_hash] = (event_id, source)
 
         # Determine event_kind
         if _is_withdrawal(raw.title):

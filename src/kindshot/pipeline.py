@@ -23,7 +23,7 @@ from kindshot.context_card import (
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError, has_high_conviction_keyword, has_article_pattern
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -426,6 +426,13 @@ async def execute_bucket_path(
                 "Post-LLM article filter [%s]: %d → %d (headline has article pattern)",
                 raw.ticker, before, decision.confidence,
             )
+
+        # 0a-2. 헤드라인 품질 감점: 짧은 제목, 추측성, 금액 미기재
+        before = decision.confidence
+        decision.confidence = apply_headline_quality_adjustment(decision.confidence, raw.title)
+        if decision.confidence != before:
+            logger.info("Headline quality adj [%s]: %d → %d (title=%s)",
+                        raw.ticker, before, decision.confidence, raw.title[:50])
 
         # 0b. 시간대별 조정: 장전 공시 +5, 비유동 시간대 -3
         before = decision.confidence

@@ -349,3 +349,61 @@ async def test_kis_feed_state_resets_on_new_day():
 
     assert feed._last_time == ""
     assert feed._seen_ids == OrderedDict()
+
+
+# ── 뉴스 파이프라인 개선: 확장 노이즈 패턴 테스트 ──
+
+
+async def test_kis_feed_filters_institutional_flow_noise():
+    """기관/외인 수급 뉴스는 노이즈로 필터링."""
+    cfg = Config()
+    kis = AsyncMock()
+    kis.get_news_disclosure_items = AsyncMock(return_value=[
+        _news_item("NOISE010", "20260327", "100000", "삼성전자(005930) 기관 순매수 상위"),
+    ])
+    feed = KisFeed(cfg, kis)
+    results = await feed.poll_once()
+    assert results == []
+
+
+async def test_kis_feed_filters_chart_pattern_noise():
+    """차트/기술적 패턴 기사 노이즈 필터링."""
+    cfg = Config()
+    kis = AsyncMock()
+    kis.get_news_disclosure_items = AsyncMock(return_value=[
+        _news_item("NOISE011", "20260327", "100100", "삼성전자(005930) 골든크로스 임박", dorg="연합뉴스"),
+    ])
+    feed = KisFeed(cfg, kis)
+    results = await feed.poll_once()
+    assert results == []
+
+
+async def test_kis_feed_filters_theme_stock_noise():
+    """테마주/관련주 뉴스 노이즈 필터링."""
+    cfg = Config()
+    kis = AsyncMock()
+    kis.get_news_disclosure_items = AsyncMock(return_value=[
+        _news_item("NOISE012", "20260327", "100200", "[특징주] AI 관련주 일제히 강세", dorg="이데일리"),
+    ])
+    feed = KisFeed(cfg, kis)
+    results = await feed.poll_once()
+    assert results == []
+
+
+async def test_kis_feed_keeps_new_disclosure_keywords():
+    """새로 추가된 disclosure 키워드(MOU, 무상증자 등) 통과 확인."""
+    cfg = Config()
+    kis = AsyncMock()
+    kis.get_news_disclosure_items = AsyncMock(return_value=[
+        _news_item("DISC010", "20260327", "100300", "A사, B사와 양해각서(MOU) 체결", ticker="123456", dorg="연합뉴스"),
+    ])
+    feed = KisFeed(cfg, kis)
+    results = await feed.poll_once()
+    assert len(results) == 1
+
+    kis.get_news_disclosure_items = AsyncMock(return_value=[
+        _news_item("DISC011", "20260327", "100400", "C사, 무상증자 결정", ticker="654321", dorg="연합뉴스"),
+    ])
+    feed2 = KisFeed(cfg, kis)
+    results2 = await feed2.poll_once()
+    assert len(results2) == 1
