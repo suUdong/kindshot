@@ -664,6 +664,9 @@ async def process_registered_event(
         )
         await log.write(err_rec)
         _mark_skip(counters, stage=SkipStage.LLM_TIMEOUT.value, reason="LLM_TIMEOUT")
+        # 안전망: LLM 실패해도 반사실 데이터 수집
+        if bucket_result.bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
+            scheduler.schedule_t0(event_id=processed.event_id, ticker=raw.ticker, t0_basis=T0Basis.DETECTED_AT, t0_ts=detected_at, run_id=run_id, mode=mode)
     except LlmCallError:
         if _tracer and _t_llm is not None:
             _tracer.llm_end(_t_llm, raw.ticker, error="call_error")
@@ -678,6 +681,8 @@ async def process_registered_event(
         )
         await log.write(err_rec)
         _mark_skip(counters, stage=SkipStage.LLM_ERROR.value, reason="LLM_ERROR")
+        if bucket_result.bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
+            scheduler.schedule_t0(event_id=processed.event_id, ticker=raw.ticker, t0_basis=T0Basis.DETECTED_AT, t0_ts=detected_at, run_id=run_id, mode=mode)
     except LlmParseError:
         if _tracer and _t_llm is not None:
             _tracer.llm_end(_t_llm, raw.ticker, error="parse_error")
@@ -692,6 +697,8 @@ async def process_registered_event(
         )
         await log.write(err_rec)
         _mark_skip(counters, stage=SkipStage.LLM_PARSE.value, reason="LLM_PARSE")
+        if bucket_result.bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
+            scheduler.schedule_t0(event_id=processed.event_id, ticker=raw.ticker, t0_basis=T0Basis.DETECTED_AT, t0_ts=detected_at, run_id=run_id, mode=mode)
     except Exception:
         logger.exception("Unexpected error processing %s [%s]", processed.event_id, raw.ticker)
         if _tracer and _t_llm is not None:

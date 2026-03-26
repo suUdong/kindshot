@@ -112,7 +112,7 @@ class Config:
     min_market_breadth_ratio: float = field(default_factory=lambda: _env_float("MIN_MARKET_BREADTH_RATIO", 0.3))
 
     # --- Price snapshots ---
-    snapshot_horizons: tuple[str, ...] = ("t0", "t+30s", "t+1m", "t+2m", "t+5m", "t+15m", "t+20m", "t+30m", "close")
+    snapshot_horizons: tuple[str, ...] = ("t0", "t+30s", "t+1m", "t+2m", "t+5m", "t+10m", "t+15m", "t+20m", "t+30m", "close")
     close_snapshot_delay_s: float = 300.0  # 15:31~15:35
 
     # --- Health ---
