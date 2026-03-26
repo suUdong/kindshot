@@ -1,30 +1,29 @@
-Hypothesis: Kindshot's current server-operability gap is not just missing trades but missing operator visibility before the runtime log appears. A consolidated monitor that combines runtime-log existence, polling-trace activity, heartbeat progress, NVIDIA journal counts, and structured BUY/SKIP counts should remove the need for repeated manual shell inspection and make the next real paper/live verification window faster to interpret.
+Hypothesis: Kindshot still lacks a reusable one-file post-hoc analysis surface for trading logs. A standalone report that summarizes structured BUY/SKIP totals, decision-source split, inline BUY appetite, BUY-side guardrail blockers, hourly source distribution, and top skip reasons should make ad hoc NVIDIA-day style investigations fast and repeatable.
 
 Changed files:
-- `deploy/logs.sh`
-- `deploy/status.sh`
-- `scripts/server_monitor.py`
-- `tests/test_server_monitor.py`
-- `docs/plans/2026-03-27-server-monitoring-improvement.md`
+- `scripts/trading_log_report.py`
+- `tests/test_trading_log_report.py`
+- `docs/plans/2026-03-27-trading-log-analysis-report.md`
 - `memory/codex-loop/latest.md`
 - `memory/codex-loop/session.md`
 
 Validation:
-- Added `scripts/server_monitor.py` to summarize:
-  - runtime log existence / metadata
-  - structured event/decision/snapshot counts
-  - BUY/SKIP and decision-source split
-  - polling trace totals and latest positive poll
-  - journal NVIDIA `200 OK`, service starts, timeout failures, and latest heartbeat
-- Added parser/formatting coverage in `tests/test_server_monitor.py`
-- Restored `deploy/logs.sh` and `deploy/status.sh` to their pre-existing behavior after re-checking the workspace rule that automated runs must not keep `deploy/` edits
+- Added `scripts/trading_log_report.py` to summarize:
+  - file metadata and record counts
+  - structured BUY/SKIP totals
+  - `decision_source` split
+  - inline BUY/SKIP counts from `event.decision_action`
+  - BUY-side guardrail blockers
+  - hourly source distribution
+  - top repeated skip reasons by source
+- Added parser/render coverage in `tests/test_trading_log_report.py`
 - `git diff --check` passed
-- `python3 -m py_compile scripts/server_monitor.py` passed
-- `source .venv/bin/activate && python -m pytest tests/test_server_monitor.py tests/test_daily_report.py tests/test_strategy_observability.py -q` passed (`8 passed`)
-- `python3 scripts/server_monitor.py 20260327` renders the operator summary without leaking `sudo` errors in local fallback mode
-- `bash deploy/status.sh` and `bash deploy/logs.sh help` remain unchanged after reverting prohibited `deploy/` edits
+- `python3 -m py_compile scripts/trading_log_report.py` passed
+- Fixed the hourly distribution to normalize UTC / `Z` timestamps into KST before bucketing
+- `source .venv/bin/activate && python -m pytest tests/test_trading_log_report.py tests/test_daily_report.py tests/test_strategy_observability.py -q` passed (`8 passed`)
+- `python3 scripts/trading_log_report.py --log-file /tmp/kindshot-nvidia-day1/kindshot_20260326.jsonl` rendered the expected KST-aligned full-day defensive report (`0 BUY / 51 SKIP`, source split `LLM=30 RULE_FALLBACK=14 RULE_PREFLIGHT=7`, hours `11-20 KST`)
 
 Risk and rollback note:
-- This slice changes only operator tooling and documentation; it does not change strategy, execution, or deployment wiring.
-- The monitor is intentionally standalone under `scripts/` because automated `deploy/` edits are forbidden in this workspace.
-- Roll back by reverting `scripts/server_monitor.py`, the new tests/doc changes, and restoring the previous `memory/codex-loop/latest.md` / `memory/codex-loop/session.md`.
+- This slice changes only analysis tooling and documentation; it does not change strategy, execution, or deployment wiring.
+- The report is intentionally standalone under `scripts/` and does not alter `deploy/`.
+- Roll back by reverting `scripts/trading_log_report.py`, the new tests/doc change, and restoring the previous `memory/codex-loop/latest.md` / `memory/codex-loop/session.md`.
