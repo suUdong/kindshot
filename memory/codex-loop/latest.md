@@ -1,27 +1,26 @@
-Hypothesis: Replay ops summary should be a real operator surface, not just a JSON writer with a blank printer. If the summary printer shows aggregate counts and the same collector blocker details already present on row payloads, multi-day readiness triage becomes possible directly from the terminal.
+Hypothesis: If KIS/KIND cross-source duplicates are collapsed, KIS noise filtering is stricter, and low-information BUY headlines receive a deterministic post-LLM penalty, the paper-trading pipeline should spend less attention on article noise and duplicate disclosures without weakening confirmed corporate-action events.
 
 Changed files:
-- `src/kindshot/replay.py`
-- `tests/test_replay.py`
-- `docs/plans/2026-03-13-data-collection-infra.md`
+- `src/kindshot/event_registry.py`
+- `src/kindshot/feed.py`
+- `src/kindshot/guardrails.py`
+- `src/kindshot/pipeline.py`
+- `tests/test_event_registry.py`
+- `tests/test_feed.py`
+- `tests/test_guardrails.py`
+- `docs/plans/2026-03-27-disclosure-quality-hardening.md`
 - `memory/codex-loop/latest.md`
 - `memory/codex-loop/session.md`
 
 Validation:
-- `_print_replay_ops_summary()` now prints aggregate counts and per-row readiness details instead of only a header.
-- Replay ops summary console output now includes collector blocker details when present on a row.
-- Kept the prior enriched row payloads intact; this slice only makes the human-readable summary surface match the existing JSON data.
-- Added replay coverage for:
-  - summary console output exposing aggregate counts and collector blocker details
-  - queue console output exposing collector blocker details
-  - run console output exposing collector blocker details
-  - cycle console output exposing collector blocker details
-- Updated the Phase 6 design doc to state the replay-ops summary console contract explicitly.
-- `.venv/bin/python -m pytest tests/test_replay.py -q` passed (`35 passed`)
-- `.venv/bin/python -m pytest -q` passed (`711 passed, 1 warning`)
+- `EventRegistry` now skips same-content KIS/KIND duplicates while preserving same-source same-title events.
+- `KisFeed` now filters extra institutional-flow/chart/theme noise and admits several additional disclosure-style corporate-action keywords.
+- BUY decisions now receive an extra headline-quality penalty for very short, speculative, or amount-free contract headlines before downstream confidence flooring.
+- Added regression coverage for cross-source dedup, same-source preservation, day rollover cleanup, expanded KIS noise filtering, added disclosure keyword pass-through, and headline-quality penalties.
+- `python3 -m compileall src/kindshot` passed.
+- `.venv/bin/python -m pytest tests/test_event_registry.py tests/test_feed.py tests/test_guardrails.py -q` passed (`188 passed`)
 
 Risk and rollback note:
-- This slice changes replay ops/output visibility only; it does not change collector writes, trading logic, or deployment paths.
-- Existing replay consumers remain compatible because the enriched fields are additive.
-- The confidence comparison is still evidence-blocked until a genuine post-upgrade runtime log is captured.
-- Roll back by reverting `src/kindshot/replay.py`, `tests/test_replay.py`, the design-doc note, and the session summary updates.
+- This slice changes disclosure ingest/evaluation behavior only; it does not touch live execution enablement, deployment paths, or secrets handling.
+- The expanded disclosure keyword list is intentionally conservative but could still admit some borderline industry-theme headlines; future runtime logs should confirm whether the extra recall is acceptable.
+- Roll back by reverting the four source files above, their tests, the design note, and the session summary updates.

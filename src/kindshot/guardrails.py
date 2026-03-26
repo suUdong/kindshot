@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -619,11 +620,10 @@ def apply_headline_quality_adjustment(confidence: int, headline: str) -> int:
         penalty += 5
 
     # 추측성/질문형 기사
-    if "?" in stripped or "?" in stripped:
+    if "?" in stripped:
         penalty += 5
 
     # 수주/계약인데 금액 정보 없음 (숫자 미포함)
-    import re
     contract_keywords = ("수주", "공급계약", "계약체결", "계약 체결")
     if any(kw in stripped for kw in contract_keywords):
         if not re.search(r"\d", stripped):

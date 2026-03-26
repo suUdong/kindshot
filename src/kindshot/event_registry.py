@@ -94,10 +94,10 @@ def _is_withdrawal(title: str) -> bool:
 def _content_hash(ticker: str, title: str) -> str:
     """Cross-source content hash: 동일 공시가 KIS/KIND 양쪽에서 올 때 중복 제거.
 
-    종목코드 + 정규화된 제목(corp name/ticker 제거)으로 해시 생성.
+    종목코드 + 정규화된 제목으로 해시 생성.
     """
     norm = _normalize_title(title)
-    # 회사명(종목코드) 패턴 제거 — 소스별 포맷 차이 흡수
+    # 구두점/여백 차이를 접어 소스별 제목 포맷 차이를 줄인다.
     norm = re.sub(r"[^0-9A-Za-z가-힣\s]", " ", norm)
     norm = re.sub(r"\s+", " ", norm).strip()
     return hashlib.sha256(f"{ticker}|{norm}".encode()).hexdigest()[:16]

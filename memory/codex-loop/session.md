@@ -3,9 +3,9 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `Historical Collection Foundation`
-- Focus: finish the replay ops console surface so summary output is as informative as queue/run/cycle output.
-- Active hypothesis: if `_print_replay_ops_summary()` prints aggregate counts plus per-row collector blocker details, operators can scan multi-day readiness directly from the terminal without opening JSON artifacts.
+- Phase: `Tactical Quality Hardening`
+- Focus: tighten disclosure ingest quality by collapsing KIS/KIND duplicates, filtering more KIS article noise, and penalizing low-information BUY headlines.
+- Active hypothesis: if cross-source duplicate disclosures are removed and low-signal KIS headlines are downgraded earlier, paper-trading review quality improves without suppressing real corporate-action events.
 
 ## Environment
 
@@ -13,23 +13,23 @@
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
-  - `.venv/bin/python -m pytest tests/test_replay.py -q` passed (`35 passed`)
-  - `.venv/bin/python -m pytest -q` passed (`711 passed, 1 warning`)
+  - `python3 -m compileall src/kindshot` passed
+  - `.venv/bin/python -m pytest tests/test_event_registry.py tests/test_feed.py tests/test_guardrails.py -q` passed (`188 passed`)
 
 ## Last Completed Step
 
-- Implemented `_print_replay_ops_summary()` so it now prints date counts, health counts, warning counts, and per-row readiness details.
-- Reused the same collector blocker suffix used by queue/run/cycle so summary output also shows `collector_reason` and `collector_manifest` when present.
-- Added replay coverage for the summary printer alongside the prior queue/run/cycle printer coverage.
-- Updated the collection-infra design doc so summary console output is explicitly expected to show the same row-level blocker context as the JSON artifact.
-- Verified the full repository test suite after the change (`711 passed, 1 warning`).
+- Added cross-source content-hash dedup in `EventRegistry` so the same disclosure arriving from KIS and KIND is processed once per day.
+- Hardened `KisFeed` noise filtering for institutional-flow/chart/theme headlines while expanding disclosure-style keywords for real corporate actions.
+- Added `apply_headline_quality_adjustment()` and wired it into the BUY confidence adjustment pipeline.
+- Added regression coverage for the new dedup, filter, and penalty behaviors.
+- Wrote a dedicated design note in `docs/plans/2026-03-27-disclosure-quality-hardening.md`.
 
 ## Next Intended Step
 
-- If a genuine post-upgrade runtime decision log appears, run `python3 scripts/confidence_report.py --log-file <before> --log-file <after>` and close the confidence-comparison evidence gap.
-- Otherwise continue Phase 6 with the next replay-facing collector slice that improves operator/replay usability without needing new external runtime evidence.
+- Run the full repository test suite before closing the slice, then commit/push if green.
+- After this tactical hardening slice, return to the roadmap track and continue the next replay/collector usability improvement unless fresh runtime evidence suggests another profitability guard is higher value.
 
 ## Notes
 
-- This slice changes replay/collector read-path behavior only; strategy and live-order boundaries remain untouched.
-- The confidence-comparison follow-up is still blocked on a genuine post-upgrade runtime log.
+- This slice changes ingest/evaluation read paths only; live-order boundaries and deployment paths remain untouched.
+- The roadmap’s primary track is still Historical Collection Foundation; this run is a narrow out-of-band quality hardening slice.
