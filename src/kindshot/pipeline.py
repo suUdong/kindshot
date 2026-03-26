@@ -373,6 +373,32 @@ async def execute_bucket_path(
     decision.event_id = processed.event_id
     decision.mode = mode
 
+    # LLM-rule_fallback 하이브리드: LLM이 BUY를 SKIP하거나 낮은 conf를 줬지만
+    # HIGH_CONVICTION 키워드 매칭 시, rule_fallback이 더 높은 conf를 주면 오버라이드
+    if (
+        decision.decision_source == "LLM"
+        and decision.confidence < config.min_buy_confidence
+        and bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK)
+    ):
+        fallback = decision_engine.fallback_decide(
+            ticker=raw.ticker,
+            headline=raw.title,
+            bucket=bucket,
+            ctx=ctx if ctx else ContextCard(),
+            keyword_hits=keyword_hits,
+            run_id=run_id,
+            schema_version=config.schema_version,
+        )
+        if fallback.action == Action.BUY and fallback.confidence >= config.min_buy_confidence:
+            logger.info(
+                "LLM-fallback hybrid [%s]: LLM conf=%d → fallback conf=%d (reason=%s)",
+                raw.ticker, decision.confidence, fallback.confidence, fallback.reason,
+            )
+            decision = fallback
+            decision.event_id = processed.event_id
+            decision.mode = mode
+            decision.decision_source = "LLM_FALLBACK_HYBRID"
+
     # ── Confidence 조정 파이프라인 (ADV → price reaction → delay → market) ──
     # 총 감점 상한: LLM 원본에서 -10 이상 감점 방지 (과다 감점 = 진짜 촉매 놓침)
     if decision.action == Action.BUY:
