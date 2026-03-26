@@ -467,13 +467,23 @@ async def execute_bucket_path(
         # 5. 하락장 감점
         market_snapshot = market.snapshot
         before = decision.confidence
+        # breadth_ratio: 두 시장 중 더 좋은 쪽 사용 (상승장 부스트 판단용)
+        _br = None
+        if market_snapshot.kospi_breadth_ratio is not None or market_snapshot.kosdaq_breadth_ratio is not None:
+            _br = max(
+                market_snapshot.kospi_breadth_ratio or 0.0,
+                market_snapshot.kosdaq_breadth_ratio or 0.0,
+            )
         decision.confidence = apply_market_confidence_adjustment(
             decision.confidence, market_snapshot.kospi_change_pct, market_snapshot.kosdaq_change_pct,
+            breadth_ratio=_br,
         )
         if decision.confidence != before:
             worst = min(market_snapshot.kospi_change_pct or 0.0, market_snapshot.kosdaq_change_pct or 0.0)
-            logger.info("Market confidence adj [%s]: %d → %d (worst_idx=%.1f%%)",
-                        raw.ticker, before, decision.confidence, worst)
+            best = max(market_snapshot.kospi_change_pct or 0.0, market_snapshot.kosdaq_change_pct or 0.0)
+            logger.info("Market confidence adj [%s]: %d → %d (best_idx=%+.1f%% worst_idx=%+.1f%% br=%s)",
+                        raw.ticker, before, decision.confidence, best, worst,
+                        f"{_br:.2f}" if _br is not None else "N/A")
 
         # 총 감점 상한 적용: LLM 원본 - 10 이하로 떨어지지 않도록
         total_delta = decision.confidence - llm_original_conf

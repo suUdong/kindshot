@@ -411,19 +411,35 @@ def get_dynamic_tp_pct(config: Config, confidence: int, hold_minutes: int = 0) -
     return tp
 
 
-def apply_market_confidence_adjustment(confidence: int, kospi_change_pct: float | None, kosdaq_change_pct: float | None) -> int:
-    """하락장 confidence 감점. 지수 하락폭에 비례해 BUY 문턱을 높임.
+def apply_market_confidence_adjustment(
+    confidence: int,
+    kospi_change_pct: float | None,
+    kosdaq_change_pct: float | None,
+    *,
+    breadth_ratio: float | None = None,
+) -> int:
+    """시장 환경 기반 confidence 조정. 하락 감점 + 상승 부스트.
 
-    기존 -8 일괄 감점은 폭락장에서 모든 BUY를 차단해 진짜 촉매(FDA 승인, 대형 수주 등)도
-    놓치게 함. 세분화된 감점으로 LLM 고확신 시그널은 통과 가능하도록 조정.
+    하락장: 지수 하락폭에 비례해 BUY 문턱을 높임.
+    상승장: KOSPI>+1% and breadth_ratio>0.6이면 +3 부스트.
     """
     if kospi_change_pct is None and kosdaq_change_pct is None:
         return confidence
-    # 두 지수 중 더 나쁜 쪽 기준
+
+    # 두 지수 중 더 좋은 쪽 / 나쁜 쪽
+    best = max(
+        kospi_change_pct if kospi_change_pct is not None else 0.0,
+        kosdaq_change_pct if kosdaq_change_pct is not None else 0.0,
+    )
     worst = min(
         kospi_change_pct if kospi_change_pct is not None else 0.0,
         kosdaq_change_pct if kosdaq_change_pct is not None else 0.0,
     )
+
+    # 상승장 부스트: 지수 +1%+ and breadth_ratio > 0.6
+    if best >= 1.0 and breadth_ratio is not None and breadth_ratio > 0.6:
+        return min(confidence + 3, 100)
+
     if worst >= -0.5:
         return confidence
     if worst >= -1.0:

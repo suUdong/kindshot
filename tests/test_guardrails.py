@@ -1269,3 +1269,31 @@ def test_time_premarket_cap_at_100():
     from kindshot.tz import KST
     t0700 = datetime(2026, 3, 27, 7, 0, tzinfo=KST)
     assert apply_time_session_confidence_adjustment(98, t0700) == 100
+
+
+# ── market bullish boost ──
+
+
+def test_market_bullish_boost():
+    """지수 +1%+ and breadth_ratio>0.6 → +3."""
+    assert apply_market_confidence_adjustment(80, 1.2, 0.8, breadth_ratio=0.65) == 83
+
+
+def test_market_bullish_no_boost_low_breadth():
+    """지수 상승이지만 breadth 낮으면 부스트 없음."""
+    assert apply_market_confidence_adjustment(80, 1.2, 0.8, breadth_ratio=0.5) == 80
+
+
+def test_market_bullish_no_boost_low_index():
+    """breadth 높지만 지수 상승 미달이면 부스트 없음."""
+    assert apply_market_confidence_adjustment(80, 0.5, 0.3, breadth_ratio=0.7) == 80
+
+
+def test_market_bullish_cap_at_100():
+    """상승장 부스트 100 캡."""
+    assert apply_market_confidence_adjustment(99, 1.5, 1.2, breadth_ratio=0.7) == 100
+
+
+def test_market_bearish_unchanged_with_breadth():
+    """하락장은 breadth 무관하게 기존 로직 유지."""
+    assert apply_market_confidence_adjustment(80, -1.5, -0.3, breadth_ratio=0.7) == 77
