@@ -10,6 +10,7 @@ from kindshot.guardrails import (
     apply_adv_confidence_adjustment, apply_market_confidence_adjustment,
     apply_delay_confidence_adjustment, apply_price_reaction_adjustment,
     apply_volume_confidence_adjustment,
+    apply_dorg_confidence_adjustment,
     calculate_position_size,
     downgrade_size_hint, get_kill_switch_size_hint,
 )
@@ -1188,3 +1189,33 @@ def test_volume_none():
 def test_volume_cap_at_100():
     """상한 100 초과 방지."""
     assert apply_volume_confidence_adjustment(99, 400.0) == 100
+
+
+# ── dorg confidence adjustment ──
+
+
+def test_dorg_disclosure_source_no_penalty():
+    """거래소/금감원 공시 출처 → 감점 없음."""
+    assert apply_dorg_confidence_adjustment(80, "거래소공시") == 80
+    assert apply_dorg_confidence_adjustment(80, "금감원전자공시") == 80
+    assert apply_dorg_confidence_adjustment(80, "한국거래소") == 80
+    assert apply_dorg_confidence_adjustment(80, "코스닥시장본부") == 80
+    assert apply_dorg_confidence_adjustment(80, "KIND") == 80
+
+
+def test_dorg_news_source_penalty():
+    """뉴스 출처 → -5 감점."""
+    assert apply_dorg_confidence_adjustment(80, "한국경제") == 75
+    assert apply_dorg_confidence_adjustment(80, "매일경제") == 75
+    assert apply_dorg_confidence_adjustment(80, "연합뉴스") == 75
+    assert apply_dorg_confidence_adjustment(80, "이데일리") == 75
+
+
+def test_dorg_empty_no_penalty():
+    """dorg 비어있으면 조정 없음."""
+    assert apply_dorg_confidence_adjustment(80, "") == 80
+
+
+def test_dorg_floor_at_zero():
+    """감점 후 0 미만 방지."""
+    assert apply_dorg_confidence_adjustment(3, "매일경제") == 0

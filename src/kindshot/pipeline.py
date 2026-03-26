@@ -22,7 +22,7 @@ from kindshot.context_card import (
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError, has_high_conviction_keyword, has_article_pattern
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -415,6 +415,14 @@ async def execute_bucket_path(
                 "Post-LLM article filter [%s]: %d → %d (headline has article pattern)",
                 raw.ticker, before, decision.confidence,
             )
+
+        # 0b. dorg 기반 감점: 뉴스 출처(거래소/금감원 아닌)면 -5
+        if raw.dorg:
+            before = decision.confidence
+            decision.confidence = apply_dorg_confidence_adjustment(decision.confidence, raw.dorg)
+            if decision.confidence != before:
+                logger.info("Dorg confidence adj [%s]: %d → %d (dorg=%s)",
+                            raw.ticker, before, decision.confidence, raw.dorg)
 
         # 1. ADV 기반 (소형주 집중 전략)
         if raw_data.adv_value_20d is not None:

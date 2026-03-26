@@ -470,6 +470,24 @@ def apply_delay_confidence_adjustment(confidence: int, delay_ms: int | None) -> 
     return max(0, confidence - 3)
 
 
+_DISCLOSURE_DORGS = ("거래소", "금감원", "한국거래소", "코스닥", "KIND")
+
+
+def apply_dorg_confidence_adjustment(confidence: int, dorg: str) -> int:
+    """dorg(공시 제공기관) 기반 confidence 조정.
+
+    KIND/거래소/금감원 공시 = 신뢰도 높음 → 조정 없음.
+    뉴스 기사 출처(매경, 한경 등) = false positive 리스크 → -5.
+    dorg 비어있으면 조정 없음 (KIND RSS 등 dorg 정보 없는 소스).
+    """
+    if not dorg:
+        return confidence
+    if any(dorg.startswith(prefix) for prefix in _DISCLOSURE_DORGS):
+        return confidence
+    # 뉴스 출처 → 감점
+    return max(0, confidence - 5)
+
+
 def apply_volume_confidence_adjustment(confidence: int, prior_volume_rate: float | None) -> int:
     """전일대비 거래량 비율 기반 confidence 조정.
 
