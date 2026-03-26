@@ -312,9 +312,12 @@ def check_guardrails(
     if decision_action == Action.BUY and intraday_value_vs_adv20d is not None:
         now_kst = _resolve_decision_time_kst(decision_time_kst)
         h, m = now_kst.hour, now_kst.minute
+        # 06:00~09:00: 장전 공시 → 거래대금 0이므로 체크 비활성
         # 09:00~09:30: 개장 직후 → 임계값 1/5로 완화
         # 09:30~10:00: 초반 → 임계값 1/2로 완화
-        if h == 9 and m < 30:
+        if h < 9:
+            effective_threshold = 0.0  # 장전: participation check 비활성
+        elif h == 9 and m < 30:
             effective_threshold = config.min_intraday_value_vs_adv20d * 0.2
         elif h == 9:
             effective_threshold = config.min_intraday_value_vs_adv20d * 0.5
