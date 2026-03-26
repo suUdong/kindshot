@@ -460,6 +460,31 @@ def apply_delay_confidence_adjustment(confidence: int, delay_ms: int | None) -> 
     return max(0, confidence - 3)
 
 
+def apply_volume_confidence_adjustment(confidence: int, prior_volume_rate: float | None) -> int:
+    """전일대비 거래량 비율 기반 confidence 조정.
+
+    거래량 급증 = 시장이 뉴스에 반응 중 → 부스트.
+    거래량 평이 = 시장 무관심 → 감점.
+
+    prior_volume_rate: 전일 대비 % (e.g. 200.0 = 전일 2배)
+    - >=300%: +3 (거래량 폭증, 강한 반응)
+    - >=150%: +1 (거래량 증가, 반응 확인)
+    - <50%: -3 (거래량 급감, 무관심)
+    - <80%: -1 (거래량 감소)
+    """
+    if prior_volume_rate is None:
+        return confidence
+    if prior_volume_rate >= 300.0:
+        return min(confidence + 3, 100)
+    if prior_volume_rate >= 150.0:
+        return min(confidence + 1, 100)
+    if prior_volume_rate < 50.0:
+        return max(0, confidence - 3)
+    if prior_volume_rate < 80.0:
+        return max(0, confidence - 1)
+    return confidence
+
+
 def apply_adv_confidence_adjustment(confidence: int, adv_value_20d: float) -> int:
     """ADV 기반 confidence 캡/페널티/보너스. 소형주 집중 전략."""
     if adv_value_20d >= 500_000_000_000:  # 5000억+: 초대형주 → cap 65 (sell the news)

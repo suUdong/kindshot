@@ -22,7 +22,7 @@ from kindshot.context_card import (
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError, has_high_conviction_keyword, has_article_pattern
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -431,7 +431,15 @@ async def execute_bucket_path(
                 logger.info("Price reaction adj [%s]: %d → %d (ret_today=%+.1f%%)",
                             raw.ticker, before, decision.confidence, raw_data.ret_today)
 
-        # 3. Detection delay
+        # 3. 거래량 확인 (전일대비)
+        if raw_data.prior_volume_rate is not None:
+            before = decision.confidence
+            decision.confidence = apply_volume_confidence_adjustment(decision.confidence, raw_data.prior_volume_rate)
+            if decision.confidence != before:
+                logger.info("Volume confidence adj [%s]: %d → %d (vol_rate=%.0f%%)",
+                            raw.ticker, before, decision.confidence, raw_data.prior_volume_rate)
+
+        # 4. Detection delay
         if delay_ms is not None:
             before = decision.confidence
             decision.confidence = apply_delay_confidence_adjustment(decision.confidence, delay_ms)
@@ -439,7 +447,7 @@ async def execute_bucket_path(
                 logger.info("Delay confidence adj [%s]: %d → %d (delay=%.1fs)",
                             raw.ticker, before, decision.confidence, delay_ms / 1000)
 
-        # 4. 하락장 감점
+        # 5. 하락장 감점
         market_snapshot = market.snapshot
         before = decision.confidence
         decision.confidence = apply_market_confidence_adjustment(
