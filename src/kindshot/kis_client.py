@@ -172,6 +172,15 @@ class KisClient:
             logger.exception("KIS token fetch failed")
             return None
 
+    async def _market_data_token(self) -> tuple[Optional[str], bool]:
+        """시세 조회용 토큰 반환. (token, use_real). 실전 서버 우선, 없으면 기본 서버."""
+        if self._has_real_market_data:
+            token = await self._ensure_real_token()
+            if token:
+                return token, True
+        token = await self._ensure_token()
+        return token, False
+
     async def _ensure_real_token(self) -> Optional[str]:
         """실전 서버 토큰 발급 (시세 조회용)."""
         if not self._has_real_market_data:
@@ -315,13 +324,7 @@ class KisClient:
         Paper mode dual-server: 실전 서버 credentials가 있으면 실전 서버에서 실시간 시세 조회.
         VTS(모의투자) 서버는 전일 종가만 반환하는 문제 회피.
         """
-        # 실전 서버 시세 조회 우선 시도
-        use_real = False
-        if self._has_real_market_data:
-            token = await self._ensure_real_token()
-            use_real = token is not None
-        if not use_real:
-            token = await self._ensure_token()
+        token, use_real = await self._market_data_token()
         if not token:
             return None
 
@@ -460,7 +463,7 @@ class KisClient:
 
     async def get_index_info(self, iscd: str = "0001") -> Optional[IndexInfo]:
         """Get normalized index info by ISCD. '0001'=KOSPI, '2001'=KOSDAQ."""
-        token = await self._ensure_token()
+        token, use_real = await self._market_data_token()
         if not token:
             return None
 
@@ -474,7 +477,7 @@ class KisClient:
             "FID_COND_MRKT_DIV_CODE": "U",
             "FID_INPUT_ISCD": iscd,
         }
-        response = await self._get_json(token, spec, params)
+        response = await self._get_json(token, spec, params, use_real=use_real)
         if response is None:
             return None
 
@@ -506,7 +509,7 @@ class KisClient:
 
     async def get_index_daily_info(self, iscd: str, date: str) -> Optional[IndexDailyInfo]:
         """Get historical daily index OHLCV for an exact business date via KIS."""
-        token = await self._ensure_token()
+        token, use_real = await self._market_data_token()
         if not token:
             return None
 
@@ -522,7 +525,7 @@ class KisClient:
             "FID_INPUT_ISCD": iscd,
             "FID_INPUT_DATE_1": date,
         }
-        response = await self._get_json(token, spec, params)
+        response = await self._get_json(token, spec, params, use_real=use_real)
         if response is None:
             return None
 
