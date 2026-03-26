@@ -122,3 +122,41 @@ class TestRuleFallbackPosStrong:
         )
         assert result["action"] == "BUY"
         assert result["confidence"] >= 77
+
+    def test_stock_cancel_decision_buys(self):
+        """'주식 소각 결정' 키워드 BUY."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG, "에스케이스퀘어 주식회사 주식 소각 결정",
+            ["주식 소각 결정"], _ctx(),
+        )
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 80
+
+    def test_fda_permit_buys(self):
+        """'FDA 허가' 키워드 BUY."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG, "제이엘케이, 뇌졸중 AI 美 FDA 허가",
+            ["FDA 허가"], _ctx(),
+        )
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 80
+
+    def test_dev_contract_large_amount_buys(self):
+        """대형 개발 계약 (금액 기반) BUY."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "알테오젠, 바이오젠과 최대 8200억원대 개발 계약 체결",
+            ["개발 계약"], _ctx(),
+        )
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 77
+
+    def test_cdmo_contract_buys(self):
+        """CDMO 계약 키워드 BUY."""
+        result = _rule_based_decide(
+            Bucket.POS_STRONG,
+            "마티카 바이오, 북미 대형 의료연구기관과 CDMO 계약 체결",
+            ["CDMO 계약"], _ctx(),
+        )
+        assert result["action"] == "BUY"
+        assert result["confidence"] >= 78

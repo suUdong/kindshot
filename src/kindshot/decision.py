@@ -193,7 +193,9 @@ class _CacheEntry:
 _HIGH_CONVICTION_KEYWORDS: list[tuple[str, int]] = [
     # 주주환원: 가장 신뢰도 높음
     ("자사주 소각", 80), ("자사주소각", 80), ("자기주식 소각", 80), ("자기주식소각", 80),
+    ("주식 소각 결정", 80), ("주식소각결정", 80), ("주식 소각", 80),
     ("자사주 매입", 79), ("자사주매입", 79), ("자기주식 취득", 79), ("자기주식취득", 79),
+    ("자기주식취득 신탁계약", 79),
     ("공개매수", 80), ("대항 공개매수", 82),
     ("경영권 분쟁", 80), ("경영권분쟁", 80), ("위임장 대결", 80),
     # 실적 서프라이즈
@@ -205,22 +207,25 @@ _HIGH_CONVICTION_KEYWORDS: list[tuple[str, int]] = [
     # 계약/수주 — 금액 규모가 큰 것만 (단독 '수주'/'공급계약'은 너무 일반적)
     ("대형 계약", 78), ("대형계약", 78), ("대규모 수주", 78), ("대규모수주", 78),
     # 바이오
-    ("임상 3상 성공", 79), ("임상3상 성공", 79), ("FDA 승인", 80), ("FDA승인", 80),
+    ("임상 3상 성공", 79), ("임상3상 성공", 79),
+    ("FDA 승인", 80), ("FDA승인", 80), ("FDA 허가", 80), ("FDA허가", 80),
     ("품목허가 승인", 78), ("품목허가 획득", 78), ("식약처 허가", 78),
+    ("CDMO 계약", 78), ("CDMO계약", 78),
     # M&A — 구체적 표현만
     ("지분 취득", 78), ("지분취득", 78),
 ]
 
 
 def _has_large_contract_signal(headline: str, keyword_hits: list[str]) -> tuple[bool, int]:
-    """공급계약/수주 + 금액 규모가 매출액 대비 큰 경우만 BUY.
+    """공급계약/수주/개발계약 + 금액 규모가 매출액 대비 큰 경우만 BUY.
 
     Returns (is_large, confidence).
     """
+    _CONTRACT_KW = ("공급계약", "공급 계약", "수주", "개발 계약", "개발계약", "설계 계약", "설계계약")
     has_contract = any(
-        kw in headline for kw in ("공급계약", "공급 계약", "수주")
+        kw in headline for kw in _CONTRACT_KW
     ) or any(
-        kw in hit for hit in keyword_hits for kw in ("공급계약", "수주")
+        kw in hit for hit in keyword_hits for kw in _CONTRACT_KW
     )
     if not has_contract:
         return False, 0
