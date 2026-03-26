@@ -8,7 +8,7 @@ from typing import Any
 
 from kindshot.hold_profile import resolve_hold_profile
 
-_HORIZON_ORDER = ["t+30s", "t+1m", "t+2m", "t+5m", "t+15m", "t+20m", "t+30m", "close"]
+_HORIZON_ORDER = ["t+30s", "t+1m", "t+2m", "t+5m", "t+10m", "t+15m", "t+20m", "t+30m", "close"]
 _CONTRACT_CANCEL_TERMS = (
     "공급계약 해지",
     "공급계약 해제",
@@ -46,7 +46,7 @@ def _ret_pct(snapshots: dict[str, dict[str, Any]], horizon: str) -> float | None
 def _trail_pct_for_horizon(horizon: str, config: StrategyReportConfig) -> float:
     if horizon in {"t+30s", "t+1m", "t+2m"}:
         return config.trailing_stop_early_pct
-    if horizon in {"t+5m", "t+15m", "t+20m"}:
+    if horizon in {"t+5m", "t+10m", "t+15m", "t+20m"}:
         return config.trailing_stop_mid_pct
     return config.trailing_stop_late_pct
 
