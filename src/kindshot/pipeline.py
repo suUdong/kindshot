@@ -399,24 +399,21 @@ async def execute_bucket_path(
             decision.mode = mode
             decision.decision_source = "LLM_FALLBACK_HYBRID"
 
-    # Post-LLM 기사/미확정 패턴 감점: LLM이 기사 헤드라인에 BUY를 줄 때 conf -10
-    if (
-        decision.action == Action.BUY
-        and decision.decision_source == "LLM"
-        and has_article_pattern(raw.title)
-    ):
-        original_conf = decision.confidence
-        decision.confidence = max(0, decision.confidence - 10)
-        logger.warning(
-            "Post-LLM article filter [%s]: %d → %d (headline has article pattern)",
-            raw.ticker, original_conf, decision.confidence,
-        )
-
-    # ── Confidence 조정 파이프라인 (ADV → price reaction → delay → market) ──
+    # ── Confidence 조정 파이프라인 ──
     # 총 감점 상한: LLM 원본에서 -10 이상 감점 방지 (과다 감점 = 진짜 촉매 놓침)
+    # llm_original_conf를 모든 감점 전에 캡처해야 article(-10) + pipeline(-10) = -20 방지
     if decision.action == Action.BUY:
         llm_original_conf = decision.confidence
         _MAX_TOTAL_PENALTY = 10
+
+        # 0. Post-LLM 기사/미확정 패턴 감점: LLM이 기사 헤드라인에 BUY를 줄 때 conf -10
+        if decision.decision_source == "LLM" and has_article_pattern(raw.title):
+            before = decision.confidence
+            decision.confidence = max(0, decision.confidence - 10)
+            logger.warning(
+                "Post-LLM article filter [%s]: %d → %d (headline has article pattern)",
+                raw.ticker, before, decision.confidence,
+            )
 
         # 1. ADV 기반 (소형주 집중 전략)
         if raw_data.adv_value_20d is not None:
