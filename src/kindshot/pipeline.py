@@ -594,6 +594,8 @@ async def execute_bucket_path(
 
         # 8. v68: 종목별 학습 기반 confidence 조정
         learner = _get_ticker_learner(config)
+        if learner is not None and learner.total_trades == 0:
+            logger.debug("TickerLearner active but no historical trades loaded")
         if learner is not None:
             before = decision.confidence
             adj = learner.get_adjustment(raw.ticker)
@@ -615,6 +617,9 @@ async def execute_bucket_path(
                 logger.info("MTF alignment adj [%s]: %d → %d (alignment=%d, %s)",
                             raw.ticker, before, decision.confidence,
                             mtf_result.alignment_score, mtf_result.detail)
+            else:
+                logger.debug("MTF neutral [%s]: alignment=%d (%s)",
+                             raw.ticker, mtf_result.alignment_score, mtf_result.detail)
 
         # graduated penalty cap: 강한 시그널은 보호, 약한 시그널은 감점 허용
         # LLM 88+ (대형촉매): cap 8 → 최악 80 (BUY 유지)

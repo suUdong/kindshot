@@ -180,4 +180,4 @@ class PerformanceTracker:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(asdict(record), ensure_ascii=False, default=str) + "\n")
         except Exception:
-            logger.debug("Failed to append trade log")
+            logger.warning("Failed to append trade log to %s", path, exc_info=True)

@@ -116,6 +116,10 @@ class SnapshotScheduler:
         # Stale position 감지: 3분 경과 후 모멘텀 소멸 시 exit (5분→3분 타이트닝)
         self._stale_threshold_pct_default: float = 0.2
         self._stale_min_elapsed_s: float = 180.0  # 3분
+        # VTS 모드: real API 키 없으면 가격이 항상 stale → 모멘텀 기반 exit 비활성화
+        self._using_vts = not config.kis_real_app_key
+        if self._using_vts:
+            logger.warning("VTS mode detected — stale exit and T5M loss exit disabled (prices are not real-time)")
         # Live sell 추적: 이미 매도 주문한 event_id (close P&L 중복 방지)
         self._sell_triggered: set[str] = set()
 
@@ -441,6 +445,7 @@ class SnapshotScheduler:
                 )
             elif (
                 self._config.t5m_loss_exit_enabled
+                and not self._using_vts  # VTS 스테일 가격에서는 T5M 비활성화
                 and is_past_5m
                 and self._t5m_profitable.get(snap.event_id) is False
                 and ret_pct <= 0
@@ -485,7 +490,8 @@ class SnapshotScheduler:
                     )
                 # Stale position exit: 3분+ 경과 후 모멘텀 소멸
                 # confidence 기반 동적 threshold: 고확신(85+)은 SL 밴드 내 조기 exit 방지
-                elif event_max_raw != 0:  # EOD hold는 stale 판정 제외
+                # VTS 모드에서는 stale exit 비활성화 (가격이 항상 0%로 보이므로 의미 없음)
+                elif event_max_raw != 0 and not self._using_vts:  # EOD hold 및 VTS 제외
                     if entry_time is not None:
                         stale_pct = self._stale_threshold_pct_default
                         if evt_conf >= 85:

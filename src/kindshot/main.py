@@ -17,7 +17,7 @@ from kindshot.order import OrderExecutor
 from kindshot.context_card import configure_cache as configure_context_card_cache
 from kindshot.decision import DecisionEngine
 from kindshot.event_registry import EventRegistry
-from kindshot.feed import DartFeed, KindFeed, KisFeed, MultiFeed
+from kindshot.feed import AnalystFeed, DartFeed, KindFeed, KisFeed, MultiFeed
 from kindshot.guardrails import GuardrailState
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -182,6 +182,14 @@ def _build_feed(config, feed_source: str, kis, session, state_dir):
             elif src == "DART" and not config.dart_api_key:
                 logger.warning("DART feed requested but DART_API_KEY not set — skipping")
 
+    # v68: AnalystFeed 보조 피드 추가 (KIS 필요)
+    if config.analyst_feed_enabled and kis:
+        feeds.append(AnalystFeed(config, kis))
+        labels.append("AnalystFeed")
+        logger.info("AnalystFeed enabled (interval=%.0fs)", config.analyst_feed_interval_s)
+    elif config.analyst_feed_enabled and not kis:
+        logger.warning("AnalystFeed requested but KIS client disabled — skipping")
+
     if not feeds:
         logger.warning("No valid feed sources — falling back to KIND RSS")
         feeds.append(KindFeed(config, session))
@@ -291,16 +299,19 @@ async def run() -> None:
                 guardrail_state.record_stop_loss()
             else:
                 guardrail_state.record_profitable_exit()
-            performance_tracker.record_trade(
-                ticker,
-                entry_px,
-                exit_px,
-                ret_pct,
-                size_won=size_won,
-                hold_seconds=hold_seconds,
-                exit_type=exit_type,
-                confidence=confidence,
-            )
+            try:
+                performance_tracker.record_trade(
+                    ticker,
+                    entry_px,
+                    exit_px,
+                    ret_pct,
+                    size_won=size_won,
+                    hold_seconds=hold_seconds,
+                    exit_type=exit_type,
+                    confidence=confidence,
+                )
+            except Exception:
+                logger.warning("Failed to record trade for %s", ticker, exc_info=True)
             try_send_sell_signal(
                 ticker=ticker,
                 exit_type=exit_type,

@@ -489,6 +489,7 @@ async def test_t5m_loss_exit_triggers():
         trailing_stop_enabled=False,
         t5m_loss_exit_enabled=True,
         max_hold_minutes=30,
+        kis_real_app_key="test",  # VTS 모드 비활성화 (실가격 테스트)
     )
     scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
 
@@ -516,6 +517,7 @@ async def test_t5m_loss_exit_skips_eod_hold():
         trailing_stop_enabled=False,
         t5m_loss_exit_enabled=True,
         max_hold_minutes=30,
+        kis_real_app_key="test",
     )
     scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
     scheduler._entry_times["evt1"] = time.monotonic() - 310
@@ -704,6 +706,7 @@ async def test_t5m_gap_down_hits_stop_loss_before_loss_checkpoint():
         trailing_stop_enabled=False,
         t5m_loss_exit_enabled=True,
         max_hold_minutes=30,
+        kis_real_app_key="test",
     )
     scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
     scheduler._entry_times["evt1"] = time.monotonic() - 310
@@ -732,6 +735,7 @@ async def test_t5m_gap_up_marks_profitable_checkpoint():
         trailing_stop_mid_pct=0.5,
         t5m_loss_exit_enabled=True,
         max_hold_minutes=30,
+        kis_real_app_key="test",
     )
     scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
     scheduler._entry_times["evt1"] = time.monotonic() - 310
