@@ -128,6 +128,11 @@ class Config:
     fast_profile_hold_minutes: int = field(default_factory=lambda: _env_int("FAST_PROFILE_HOLD_MINUTES", 20))  # fast-decay hold profile 기준값 (수주/공급계약)
     fast_profile_no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("FAST_PROFILE_NO_BUY_AFTER_KST_HOUR", 14))  # 14:00+ fast profile BUY 차단
     fast_profile_no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("FAST_PROFILE_NO_BUY_AFTER_KST_MINUTE", 0))
+    dynamic_guardrails_enabled: bool = field(default_factory=lambda: _env_bool("DYNAMIC_GUARDRAILS_ENABLED", True))
+    dynamic_guardrail_supportive_index_change_pct: float = field(default_factory=lambda: _env_float("DYNAMIC_GUARDRAIL_SUPPORTIVE_INDEX_CHANGE_PCT", 0.3))
+    dynamic_guardrail_supportive_breadth_ratio: float = field(default_factory=lambda: _env_float("DYNAMIC_GUARDRAIL_SUPPORTIVE_BREADTH_RATIO", 0.55))
+    dynamic_guardrail_confidence_relaxation: int = field(default_factory=lambda: _env_int("DYNAMIC_GUARDRAIL_CONFIDENCE_RELAXATION", 2))
+    dynamic_fast_profile_extension_minutes: int = field(default_factory=lambda: _env_int("DYNAMIC_FAST_PROFILE_EXTENSION_MINUTES", 60))
 
     # --- Market ---
     kospi_halt_pct: float = field(default_factory=lambda: _env_float("KOSPI_HALT_PCT", -8.0))
@@ -140,6 +145,8 @@ class Config:
     # --- Health ---
     health_host: str = field(default_factory=lambda: _env("HEALTH_HOST", "127.0.0.1"))
     health_port: int = field(default_factory=lambda: _env_int("HEALTH_PORT", 8080))
+    macro_api_base_url: str = field(default_factory=lambda: _env("MACRO_API_BASE_URL", ""))
+    macro_api_timeout_s: float = field(default_factory=lambda: _env_float("MACRO_API_TIMEOUT_S", 5.0))
 
     # --- Logging ---
     log_dir: Path = field(default_factory=lambda: Path(_env("LOG_DIR", "logs")))

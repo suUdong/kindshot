@@ -41,6 +41,10 @@ def test_analyze_paths_builds_matrices_and_recommendations(tmp_path):
                 '{"type":"price_snapshot","event_id":"e3","horizon":"t0","px":100.0,"ret_long_vs_t0":0.0}',
                 '{"type":"price_snapshot","event_id":"e3","horizon":"t+30s","px":100.5,"ret_long_vs_t0":0.005}',
                 '{"type":"price_snapshot","event_id":"e3","horizon":"t+10m","px":102.5,"ret_long_vs_t0":0.025}',
+                '{"type":"event","event_id":"e4","ticker":"444444","headline":"D사 자사주 소각 결정","bucket":"POS_STRONG","keyword_hits":["자사주 소각"],"decision_action":"BUY","skip_stage":"GUARDRAIL","skip_reason":"LOW_CONFIDENCE","decision_confidence":77,"detected_at":"2026-03-27T14:40:00+09:00","source":"KIS","dorg":"연합뉴스"}',
+                '{"type":"price_snapshot","event_id":"shadow_e4","horizon":"t0","px":100.0,"ret_long_vs_t0":0.0}',
+                '{"type":"price_snapshot","event_id":"shadow_e4","horizon":"t+30s","px":101.0,"ret_long_vs_t0":0.01}',
+                '{"type":"price_snapshot","event_id":"shadow_e4","horizon":"t+5m","px":102.0,"ret_long_vs_t0":0.02}',
             ]
         ),
         encoding="utf-8",
@@ -56,6 +60,9 @@ def test_analyze_paths_builds_matrices_and_recommendations(tmp_path):
     assert stats["condition_scores"]["entry"]
     assert stats["condition_scores"]["exit"]["candidates"]
     assert stats["recommended_conditions"]["exit"]["params"]["paper_take_profit_pct"] >= 1.5
+    assert stats["guardrail_review"]["blocked_buy_count"] == 1
+    assert stats["guardrail_review"]["shadow_blocked_buy_count"] == 1
+    assert stats["guardrail_review"]["by_reason"]["LOW_CONFIDENCE"]["count"] == 1
 
 
 def test_render_report_includes_new_sections():
@@ -106,12 +113,27 @@ def test_render_report_includes_new_sections():
         "by_confidence": {"81-85": {"count": 1, "win_rate": 100.0, "avg_pnl": 3.0, "total_pnl": 3.0, "avg_win": 3.0, "avg_loss": 0.0, "profit_factor": None, "median_pnl": 3.0, "mdd_pct": 0.0}},
         "by_ticker": {"111111": {"count": 1, "win_rate": 100.0, "avg_pnl": 3.0, "total_pnl": 3.0, "avg_win": 3.0, "avg_loss": 0.0, "profit_factor": None, "median_pnl": 3.0, "mdd_pct": 0.0}},
         "condition_scores": {"entry": [{"category": "news_type", "label": "contract", "count": 1, "win_rate": 100.0, "avg_pnl": 3.0, "total_pnl": 3.0, "avg_win": 3.0, "avg_loss": 0.0, "profit_factor": None, "median_pnl": 3.0, "mdd_pct": 0.0, "score": 1.0}], "exit": {"candidates": [{"params": {"paper_take_profit_pct": 2.0, "paper_stop_loss_pct": -1.5, "trailing_stop_activation_pct": 0.5, "max_hold_minutes": 15, "t5m_loss_exit_enabled": True}, "win_rate": 100.0, "avg_pnl": 3.0, "total_pnl": 3.0, "score": 1.0}]}},
+        "guardrail_review": {
+            "inline_buy_total": 2,
+            "passed_buy_count": 1,
+            "blocked_buy_count": 1,
+            "block_rate_pct": 50.0,
+            "replayed_passed_buy_count": 1,
+            "shadow_blocked_buy_count": 1,
+            "shadow_coverage_pct": 100.0,
+            "blocked_shadow_summary": {"count": 1, "win_rate": 100.0, "avg_pnl": 2.0, "total_pnl": 2.0},
+            "by_reason": {"LOW_CONFIDENCE": {"count": 1, "share_pct": 100.0, "shadow_count": 1, "shadow_summary": {"avg_pnl": 2.0}}},
+            "by_confidence_band": {"75-77": 1},
+            "by_hour_bucket": {"afternoon": 1},
+        },
         "by_exit_type": {"TP": {"count": 1, "win_rate": 100.0, "avg_pnl": 3.0, "total_pnl": 3.0, "avg_win": 3.0, "avg_loss": 0.0, "profit_factor": None, "median_pnl": 3.0, "mdd_pct": 0.0}},
         "horizon_returns": {"t+30s": {"count": 1, "win_rate": 100.0, "avg": 1.0, "median": 1.0}},
         "profit_leakage": [],
     }
 
     rendered = mod.render_report(stats, [trade])
+    assert "Guardrail Review" in rendered
+    assert "Blockers By Reason" in rendered
     assert "By News Type" in rendered
     assert "Top Entry Conditions" in rendered
     assert "Exit Optimization Candidates" in rendered

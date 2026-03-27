@@ -177,6 +177,38 @@ class Trade:
         }
 
 
+@dataclass
+class GuardrailBlockRecord:
+    event_id: str
+    date: str
+    ticker: str
+    headline: str
+    bucket: str
+    confidence: int
+    skip_reason: str
+    detected_at: str
+    news_type: str
+    hour: int
+    hour_bucket: str
+    shadow_available: bool = False
+
+    def to_row(self) -> dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "date": self.date,
+            "ticker": self.ticker,
+            "headline": self.headline,
+            "bucket": self.bucket,
+            "confidence": self.confidence,
+            "skip_reason": self.skip_reason,
+            "detected_at": self.detected_at,
+            "news_type": self.news_type,
+            "hour": self.hour,
+            "hour_bucket": self.hour_bucket,
+            "shadow_available": self.shadow_available,
+        }
+
+
 def _parse_kst_datetime(ts: str) -> datetime | None:
     if not ts:
         return None
@@ -527,6 +559,50 @@ def build_shadow_trades(
     return trades
 
 
+def build_guardrail_blocks(
+    events: list[dict[str, Any]],
+    date_str: str,
+    *,
+    shadow_source_ids: set[str] | None = None,
+) -> list[GuardrailBlockRecord]:
+    shadow_source_ids = shadow_source_ids or set()
+    blocks: list[GuardrailBlockRecord] = []
+    for ev in events:
+        if ev.get("decision_action") != "BUY":
+            continue
+        if ev.get("skip_stage") != "GUARDRAIL":
+            continue
+        detected_at = str(ev.get("detected_at", ""))
+        headline = str(ev.get("headline", ""))
+        bucket = str(ev.get("bucket", ""))
+        keyword_hits = ev.get("keyword_hits", [])
+        if not isinstance(keyword_hits, list):
+            keyword_hits = []
+        blocks.append(
+            GuardrailBlockRecord(
+                event_id=str(ev.get("event_id", "")),
+                date=date_str,
+                ticker=str(ev.get("ticker", "")),
+                headline=headline,
+                bucket=bucket,
+                confidence=int(ev.get("decision_confidence") or 0),
+                skip_reason=str(ev.get("skip_reason") or ev.get("guardrail_result") or "UNKNOWN"),
+                detected_at=detected_at,
+                news_type=classify_news_type(
+                    headline,
+                    keyword_hits,
+                    bucket,
+                    str(ev.get("source", "")),
+                    str(ev.get("dorg", "")),
+                ),
+                hour=_parse_kst_hour(detected_at),
+                hour_bucket=_hour_bucket(_parse_kst_hour(detected_at)),
+                shadow_available=str(ev.get("event_id", "")) in shadow_source_ids,
+            )
+        )
+    return blocks
+
+
 def _summarize_pnls(pnls: list[float], ordered_pnls: list[float]) -> dict[str, Any]:
     total = len(pnls)
     if total == 0:
@@ -615,6 +691,62 @@ def _nested_group_stats(trades: list[Trade], outer_key_fn, inner_key_fn) -> dict
     for outer_key in sorted(grouped):
         result[outer_key] = {inner_key: _stats_dict(grouped[outer_key][inner_key]) for inner_key in sorted(grouped[outer_key])}
     return result
+
+
+def _count_group(rows: list[Any], key_fn) -> dict[str, int]:
+    grouped: Counter[str] = Counter()
+    for row in rows:
+        grouped[str(key_fn(row))] += 1
+    return dict(sorted(grouped.items()))
+
+
+def build_guardrail_review(
+    trades: list[Trade],
+    guardrail_blocks: list[GuardrailBlockRecord],
+    shadow_trades: list[Trade],
+) -> dict[str, Any]:
+    total_inline_buy = len(trades) + len(guardrail_blocks)
+    shadow_by_source: dict[str, list[Trade]] = defaultdict(list)
+    for trade in shadow_trades:
+        shadow_by_source[trade.event_id.replace("shadow_", "", 1)].append(trade)
+
+    by_reason: dict[str, Any] = {}
+    reason_groups: dict[str, list[GuardrailBlockRecord]] = defaultdict(list)
+    for row in guardrail_blocks:
+        reason_groups[row.skip_reason].append(row)
+    for reason, group in sorted(reason_groups.items()):
+        shadow_group: list[Trade] = []
+        for row in group:
+            shadow_group.extend(shadow_by_source.get(row.event_id, []))
+        by_reason[reason] = {
+            "count": len(group),
+            "share_pct": round(len(group) / len(guardrail_blocks) * 100, 1) if guardrail_blocks else 0.0,
+            "shadow_count": len(shadow_group),
+            "shadow_summary": _stats_dict(shadow_group) if shadow_group else None,
+        }
+
+    return {
+        "inline_buy_total": total_inline_buy,
+        "passed_buy_count": len(trades),
+        "blocked_buy_count": len(guardrail_blocks),
+        "block_rate_pct": round(len(guardrail_blocks) / total_inline_buy * 100, 1) if total_inline_buy else 0.0,
+        "replayed_passed_buy_count": len(trades),
+        "shadow_blocked_buy_count": len(shadow_trades),
+        "shadow_coverage_pct": round(len(shadow_trades) / len(guardrail_blocks) * 100, 1) if guardrail_blocks else 0.0,
+        "passed_summary": _stats_dict(trades),
+        "blocked_shadow_summary": _stats_dict(shadow_trades) if shadow_trades else None,
+        "by_reason": by_reason,
+        "by_confidence_band": _count_group(guardrail_blocks, lambda row: _confidence_band(row.confidence)),
+        "by_hour": _count_group(guardrail_blocks, lambda row: f"{row.hour:02d}" if row.hour >= 0 else "unknown"),
+        "by_hour_bucket": _count_group(guardrail_blocks, lambda row: row.hour_bucket),
+        "by_news_type": _count_group(guardrail_blocks, lambda row: row.news_type),
+        "near_threshold": [
+            row.to_row()
+            for row in sorted(guardrail_blocks, key=lambda item: item.detected_at)
+            if 75 <= row.confidence <= 80
+        ][:10],
+        "blocked_rows": [row.to_row() for row in sorted(guardrail_blocks, key=lambda item: item.detected_at)],
+    }
 
 
 def _condition_score(candidate_stats: dict[str, Any], baseline_stats: dict[str, Any]) -> float:
@@ -794,6 +926,7 @@ def _evaluate_exit_candidates(
 def analyze_trades(
     trades: list[Trade],
     *,
+    guardrail_blocks: list[GuardrailBlockRecord] | None = None,
     shadow_trades: list[Trade] | None = None,
     log_paths: Iterable[Path] | None = None,
     runtime_defaults: ExitSimulationConfig | None = None,
@@ -803,6 +936,7 @@ def analyze_trades(
 
     runtime_defaults = runtime_defaults or ExitSimulationConfig.from_runtime_defaults()
     runtime_cfg = Config()
+    guardrail_blocks = guardrail_blocks or []
     shadow_trades = shadow_trades or []
     baseline = summarize_trade_group(trades)
     by_date = _group_stats(trades, lambda trade: trade.date)
@@ -846,6 +980,7 @@ def analyze_trades(
     entry_conditions = rank_entry_conditions(trades, baseline)
     baseline_exit, exit_candidates = _evaluate_exit_candidates(trades, runtime_defaults)
     shadow_summary = _stats_dict(shadow_trades) if shadow_trades else None
+    guardrail_review = build_guardrail_review(trades, guardrail_blocks, shadow_trades)
 
     return {
         "analysis_window": {
@@ -861,6 +996,11 @@ def analyze_trades(
             "fast_profile_hold_minutes": runtime_cfg.fast_profile_hold_minutes,
             "fast_profile_no_buy_after_kst_hour": runtime_cfg.fast_profile_no_buy_after_kst_hour,
             "fast_profile_no_buy_after_kst_minute": runtime_cfg.fast_profile_no_buy_after_kst_minute,
+            "dynamic_guardrails_enabled": runtime_cfg.dynamic_guardrails_enabled,
+            "dynamic_guardrail_supportive_index_change_pct": runtime_cfg.dynamic_guardrail_supportive_index_change_pct,
+            "dynamic_guardrail_supportive_breadth_ratio": runtime_cfg.dynamic_guardrail_supportive_breadth_ratio,
+            "dynamic_guardrail_confidence_relaxation": runtime_cfg.dynamic_guardrail_confidence_relaxation,
+            "dynamic_fast_profile_extension_minutes": runtime_cfg.dynamic_fast_profile_extension_minutes,
         },
         "total_trades": baseline["count"],
         "wins": baseline["wins"],
@@ -903,6 +1043,7 @@ def analyze_trades(
             "entry": [row for row in entry_conditions if row["score"] > 0][:5],
             "exit": exit_candidates[0] if exit_candidates else baseline_exit,
         },
+        "guardrail_review": guardrail_review,
         "shadow_summary": shadow_summary,
         "trade_rows": [trade.to_row() for trade in sorted(trades, key=lambda item: item.detected_at)],
     }
@@ -917,6 +1058,7 @@ def analyze_paths(
     runtime_defaults = runtime_defaults or ExitSimulationConfig.from_runtime_defaults()
     trades: list[Trade] = []
     shadow_trades: list[Trade] = []
+    guardrail_blocks: list[GuardrailBlockRecord] = []
     for path in paths:
         if not path.exists():
             print(f"  SKIP (not found): {path}", file=sys.stderr)
@@ -926,13 +1068,22 @@ def analyze_paths(
         _append_runtime_snapshots(date_str, snapshots, snapshot_dir)
         day_trades = build_trades(events, decisions, snapshots, date_str, runtime_defaults)
         day_shadow = build_shadow_trades(events, snapshots, date_str, runtime_defaults)
+        shadow_source_ids = {trade.event_id.replace("shadow_", "", 1) for trade in day_shadow}
+        day_blocks = build_guardrail_blocks(events, date_str, shadow_source_ids=shadow_source_ids)
         print(
-            f"  {date_str}: {len(day_trades)} executed BUY, {len(day_shadow)} shadow trades",
+            f"  {date_str}: {len(day_trades)} executed BUY, {len(day_blocks)} blocked BUY, {len(day_shadow)} shadow trades",
             file=sys.stderr,
         )
         trades.extend(day_trades)
         shadow_trades.extend(day_shadow)
-    stats = analyze_trades(trades, shadow_trades=shadow_trades, log_paths=paths, runtime_defaults=runtime_defaults)
+        guardrail_blocks.extend(day_blocks)
+    stats = analyze_trades(
+        trades,
+        guardrail_blocks=guardrail_blocks,
+        shadow_trades=shadow_trades,
+        log_paths=paths,
+        runtime_defaults=runtime_defaults,
+    )
     return stats, trades, shadow_trades
 
 
@@ -960,6 +1111,50 @@ def render_report(stats: dict[str, Any], trades: list[Trade]) -> str:
     w(f"  MDD: {stats['mdd_pct']:+.3f}%")
     w("")
 
+    guardrail_review = stats.get("guardrail_review", {})
+    if guardrail_review:
+        w("## 2. Guardrail Review")
+        w(
+            f"  Inline BUY total: {guardrail_review['inline_buy_total']} | "
+            f"passed={guardrail_review['passed_buy_count']} blocked={guardrail_review['blocked_buy_count']} "
+            f"(block_rate={guardrail_review['block_rate_pct']}%)"
+        )
+        w(
+            f"  Replay coverage: passed={guardrail_review['replayed_passed_buy_count']} trades | "
+            f"blocked shadow={guardrail_review['shadow_blocked_buy_count']} "
+            f"({guardrail_review['shadow_coverage_pct']}% of blocked BUYs)"
+        )
+        blocked_shadow = guardrail_review.get("blocked_shadow_summary")
+        if blocked_shadow:
+            w(
+                f"  Shadow blocked avg={blocked_shadow['avg_pnl']:+.3f}% "
+                f"win={blocked_shadow['win_rate']}% total={blocked_shadow['total_pnl']:+.3f}%"
+            )
+        w("")
+
+        w("## 3. Blockers By Reason")
+        w(f"  {'Reason':<28} {'Cnt':>4} {'Share':>7} {'Shadow':>7} {'ShadowAvg':>10}")
+        w(f"  {'-' * 28} {'-' * 4} {'-' * 7} {'-' * 7} {'-' * 10}")
+        for reason, row in guardrail_review["by_reason"].items():
+            shadow_summary = row["shadow_summary"]
+            shadow_avg = "-" if shadow_summary is None else f"{shadow_summary['avg_pnl']:+.3f}%"
+            w(
+                f"  {reason[:28]:<28} {row['count']:>4} {row['share_pct']:>6.1f}% "
+                f"{row['shadow_count']:>7} {shadow_avg:>10}"
+            )
+        w("")
+
+        def write_count_group(title: str, rows: dict[str, int]) -> None:
+            w(title)
+            w(f"  {'Label':<24} {'Cnt':>4}")
+            w(f"  {'-' * 24} {'-' * 4}")
+            for label, count in rows.items():
+                w(f"  {label:<24} {count:>4}")
+            w("")
+
+        write_count_group("## 4. Blockers By Confidence Band", guardrail_review["by_confidence_band"])
+        write_count_group("## 5. Blockers By Hour Bucket", guardrail_review["by_hour_bucket"])
+
     def write_group(title: str, rows: dict[str, Any], limit: int | None = None) -> None:
         w(title)
         w(f"  {'Label':<24} {'Cnt':>4} {'Win%':>7} {'Avg':>8} {'Total':>9} {'PF':>6}")
@@ -976,13 +1171,13 @@ def render_report(stats: dict[str, Any], trades: list[Trade]) -> str:
             )
         w("")
 
-    write_group("## 2. By News Type", stats["by_news_type"])
-    write_group("## 3. By Hour", stats["by_hour"])
-    write_group("## 4. By Hour Bucket", stats["by_hour_bucket"])
-    write_group("## 5. By Confidence Band", stats["by_confidence"])
-    write_group("## 6. By Ticker (Top 10 by count)", stats["by_ticker"], limit=10)
+    write_group("## 6. By News Type", stats["by_news_type"])
+    write_group("## 7. By Hour", stats["by_hour"])
+    write_group("## 8. By Hour Bucket", stats["by_hour_bucket"])
+    write_group("## 9. By Confidence Band", stats["by_confidence"])
+    write_group("## 10. By Ticker (Top 10 by count)", stats["by_ticker"], limit=10)
 
-    w("## 7. Top Entry Conditions")
+    w("## 11. Top Entry Conditions")
     w(f"  {'Category':<24} {'Label':<26} {'Cnt':>4} {'Win%':>7} {'Avg':>8} {'Score':>7}")
     w(f"  {'-' * 24} {'-' * 26} {'-' * 4} {'-' * 7} {'-' * 8} {'-' * 7}")
     for row in stats["condition_scores"]["entry"][:10]:
@@ -992,7 +1187,7 @@ def render_report(stats: dict[str, Any], trades: list[Trade]) -> str:
         )
     w("")
 
-    w("## 8. Exit Optimization Candidates")
+    w("## 12. Exit Optimization Candidates")
     w(f"  {'TP':>4} {'SL':>5} {'Act':>5} {'Hold':>5} {'T5M':>5} {'Win%':>7} {'Avg':>8} {'Total':>9} {'Score':>7}")
     w(f"  {'-' * 4} {'-' * 5} {'-' * 5} {'-' * 5} {'-' * 5} {'-' * 7} {'-' * 8} {'-' * 9} {'-' * 7}")
     for row in stats["condition_scores"]["exit"]["candidates"][:5]:
@@ -1005,9 +1200,9 @@ def render_report(stats: dict[str, Any], trades: list[Trade]) -> str:
         )
     w("")
 
-    write_group("## 9. By Exit Type", stats["by_exit_type"])
+    write_group("## 13. By Exit Type", stats["by_exit_type"])
 
-    w("## 10. Horizon Returns")
+    w("## 14. Horizon Returns")
     w(f"  {'Horizon':<10} {'Cnt':>4} {'Win%':>7} {'Avg':>8} {'Median':>8}")
     w(f"  {'-' * 10} {'-' * 4} {'-' * 7} {'-' * 8} {'-' * 8}")
     for horizon in HORIZON_ORDER:
@@ -1021,14 +1216,14 @@ def render_report(stats: dict[str, Any], trades: list[Trade]) -> str:
     w("")
 
     if stats["profit_leakage"]:
-        w("## 11. Top Profit Leakage")
+        w("## 15. Top Profit Leakage")
         w(f"  {'Ticker':<8} {'Leak':>7} {'Exit':<12} {'Headline'}")
         w(f"  {'-' * 8} {'-' * 7} {'-' * 12} {'-' * 40}")
         for row in stats["profit_leakage"]:
             w(f"  {row['ticker']:<8} {row['leaked']:>+6.2f}% {row['exit_type']:<12} {row['headline']}")
         w("")
 
-    w("## 12. Trades Detail")
+    w("## 16. Trades Detail")
     w(f"  {'Date':<10} {'Ticker':<8} {'NewsType':<22} {'Hour':>4} {'Conf':>4} {'PnL':>8} {'Exit':<12} {'Headline'}")
     w(f"  {'-' * 10} {'-' * 8} {'-' * 22} {'-' * 4} {'-' * 4} {'-' * 8} {'-' * 12} {'-' * 40}")
     for trade in sorted(trades, key=lambda item: item.detected_at):
@@ -1040,7 +1235,7 @@ def render_report(stats: dict[str, Any], trades: list[Trade]) -> str:
     shadow_summary = stats.get("shadow_summary")
     if shadow_summary:
         w("")
-        w("## 13. Shadow Summary")
+        w("## 17. Shadow Summary")
         w(
             f"  Shadow trades: {shadow_summary['count']} | win={shadow_summary['win_rate']}% "
             f"| avg={shadow_summary['avg_pnl']:+.3f}% | total={shadow_summary['total_pnl']:+.3f}%"

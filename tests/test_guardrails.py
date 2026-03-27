@@ -17,6 +17,7 @@ from kindshot.guardrails import (
     apply_headline_quality_adjustment,
     calculate_position_size,
     downgrade_size_hint, get_kill_switch_size_hint,
+    resolve_dynamic_guardrail_profile,
 )
 from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
 from kindshot.models import Action
@@ -1439,3 +1440,125 @@ def test_headline_quality_normal_headline_no_penalty():
 
 def test_headline_quality_contract_commentary_gets_extra_penalty():
     assert apply_headline_quality_adjustment(85, "삼성전자 추가 상승 여력 충분 장기공급계약 요구 큰 폭 증가") == 78
+
+
+def test_resolve_dynamic_guardrail_profile_relaxes_supportive_market():
+    cfg = _cfg(
+        min_buy_confidence=78,
+        opening_min_confidence=82,
+        afternoon_min_confidence=80,
+        fast_profile_no_buy_after_kst_hour=14,
+        fast_profile_no_buy_after_kst_minute=0,
+        no_buy_after_kst_hour=15,
+        no_buy_after_kst_minute=0,
+        dynamic_guardrail_confidence_relaxation=2,
+        dynamic_fast_profile_extension_minutes=60,
+    )
+    profile = resolve_dynamic_guardrail_profile(
+        cfg,
+        kospi_change_pct=0.4,
+        kosdaq_change_pct=0.8,
+        kospi_breadth_ratio=0.58,
+        kosdaq_breadth_ratio=0.61,
+    )
+    assert profile.supportive_market is True
+    assert profile.min_buy_confidence == 76
+    assert profile.opening_min_confidence == 81
+    assert profile.afternoon_min_confidence == 78
+    assert (profile.fast_profile_no_buy_after_kst_hour, profile.fast_profile_no_buy_after_kst_minute) == (15, 0)
+
+
+def test_dynamic_fast_profile_cutoff_never_exceeds_market_close():
+    cfg = _cfg(
+        fast_profile_no_buy_after_kst_hour=14,
+        fast_profile_no_buy_after_kst_minute=0,
+        no_buy_after_kst_hour=14,
+        no_buy_after_kst_minute=45,
+        dynamic_fast_profile_extension_minutes=60,
+    )
+    profile = resolve_dynamic_guardrail_profile(
+        cfg,
+        kospi_change_pct=0.5,
+        kosdaq_change_pct=0.7,
+        kospi_breadth_ratio=0.6,
+        kosdaq_breadth_ratio=0.62,
+    )
+    assert (profile.fast_profile_no_buy_after_kst_hour, profile.fast_profile_no_buy_after_kst_minute) == (14, 45)
+
+
+def test_dynamic_profile_relaxes_borderline_low_confidence_in_supportive_market():
+    cfg = _cfg(min_buy_confidence=78)
+    profile = resolve_dynamic_guardrail_profile(
+        cfg,
+        kospi_change_pct=0.5,
+        kosdaq_change_pct=0.7,
+        kospi_breadth_ratio=0.57,
+        kosdaq_breadth_ratio=0.63,
+    )
+    decision_time = _kst_dt(12, 0)
+    base = check_guardrails(
+        "005930",
+        cfg,
+        decision_action=Action.BUY,
+        decision_confidence=76,
+        decision_time_kst=decision_time,
+        decision_hold_minutes=15,
+        **_base_args(),
+    )
+    relaxed = check_guardrails(
+        "005930",
+        cfg,
+        decision_action=Action.BUY,
+        decision_confidence=76,
+        decision_time_kst=decision_time,
+        decision_hold_minutes=15,
+        dynamic_profile=profile,
+        **_base_args(),
+    )
+    assert base.passed is False
+    assert base.reason == "LOW_CONFIDENCE"
+    assert relaxed.passed is True
+
+
+def test_dynamic_profile_extends_fast_profile_window_in_supportive_market():
+    cfg = _cfg(
+        min_buy_confidence=78,
+        afternoon_min_confidence=80,
+        fast_profile_hold_minutes=20,
+        fast_profile_no_buy_after_kst_hour=14,
+        fast_profile_no_buy_after_kst_minute=0,
+        no_buy_after_kst_hour=15,
+        no_buy_after_kst_minute=0,
+        dynamic_guardrail_confidence_relaxation=2,
+        dynamic_fast_profile_extension_minutes=60,
+    )
+    profile = resolve_dynamic_guardrail_profile(
+        cfg,
+        kospi_change_pct=0.5,
+        kosdaq_change_pct=0.7,
+        kospi_breadth_ratio=0.57,
+        kosdaq_breadth_ratio=0.63,
+    )
+    decision_time = _kst_dt(14, 20)
+    base = check_guardrails(
+        "005930",
+        cfg,
+        decision_action=Action.BUY,
+        decision_confidence=78,
+        decision_time_kst=decision_time,
+        decision_hold_minutes=20,
+        **_base_args(),
+    )
+    relaxed = check_guardrails(
+        "005930",
+        cfg,
+        decision_action=Action.BUY,
+        decision_confidence=78,
+        decision_time_kst=decision_time,
+        decision_hold_minutes=20,
+        dynamic_profile=profile,
+        **_base_args(),
+    )
+    assert base.passed is False
+    assert base.reason == "FAST_PROFILE_LATE_ENTRY"
+    assert relaxed.passed is True

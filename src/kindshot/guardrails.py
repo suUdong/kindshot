@@ -30,6 +30,28 @@ class GuardrailResult:
     reason: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class DynamicGuardrailProfile:
+    min_buy_confidence: int
+    opening_min_confidence: int
+    afternoon_min_confidence: int
+    closing_min_confidence: int
+    fast_profile_no_buy_after_kst_hour: int
+    fast_profile_no_buy_after_kst_minute: int
+    supportive_market: bool = False
+
+    @classmethod
+    def from_config(cls, config: Config) -> "DynamicGuardrailProfile":
+        return cls(
+            min_buy_confidence=config.min_buy_confidence,
+            opening_min_confidence=config.opening_min_confidence,
+            afternoon_min_confidence=config.afternoon_min_confidence,
+            closing_min_confidence=config.closing_min_confidence,
+            fast_profile_no_buy_after_kst_hour=config.fast_profile_no_buy_after_kst_hour,
+            fast_profile_no_buy_after_kst_minute=config.fast_profile_no_buy_after_kst_minute,
+        )
+
+
 class GuardrailState:
     """Tracks intra-day trading state for portfolio-level guardrails."""
 
@@ -178,6 +200,61 @@ def _resolve_decision_time_kst(decision_time_kst: Optional[datetime]) -> datetim
     return decision_time_kst.astimezone(_KST)
 
 
+def _hhmm_to_minutes(hour: int, minute: int) -> int:
+    return max(0, hour * 60 + minute)
+
+
+def _minutes_to_hhmm(total_minutes: int) -> tuple[int, int]:
+    normalized = max(0, total_minutes)
+    return normalized // 60, normalized % 60
+
+
+def resolve_dynamic_guardrail_profile(
+    config: Config,
+    *,
+    kospi_change_pct: float | None = None,
+    kosdaq_change_pct: float | None = None,
+    kospi_breadth_ratio: float | None = None,
+    kosdaq_breadth_ratio: float | None = None,
+) -> DynamicGuardrailProfile:
+    profile = DynamicGuardrailProfile.from_config(config)
+    if not config.dynamic_guardrails_enabled:
+        return profile
+
+    changes = [value for value in (kospi_change_pct, kosdaq_change_pct) if value is not None]
+    breadths = [value for value in (kospi_breadth_ratio, kosdaq_breadth_ratio) if value is not None]
+    if not changes or not breadths:
+        return profile
+
+    best_change = max(changes)
+    best_breadth = max(breadths)
+    supportive_market = (
+        best_change >= config.dynamic_guardrail_supportive_index_change_pct
+        and best_breadth >= config.dynamic_guardrail_supportive_breadth_ratio
+    )
+    if not supportive_market:
+        return profile
+
+    relax = max(0, config.dynamic_guardrail_confidence_relaxation)
+    fast_cutoff_minutes = min(
+        _hhmm_to_minutes(config.no_buy_after_kst_hour, config.no_buy_after_kst_minute),
+        _hhmm_to_minutes(
+            config.fast_profile_no_buy_after_kst_hour,
+            config.fast_profile_no_buy_after_kst_minute,
+        ) + max(0, config.dynamic_fast_profile_extension_minutes),
+    )
+    fast_hour, fast_minute = _minutes_to_hhmm(fast_cutoff_minutes)
+    return DynamicGuardrailProfile(
+        min_buy_confidence=max(76, config.min_buy_confidence - relax),
+        opening_min_confidence=max(80, config.opening_min_confidence - min(relax, 1)),
+        afternoon_min_confidence=max(78, config.afternoon_min_confidence - relax),
+        closing_min_confidence=config.closing_min_confidence,
+        fast_profile_no_buy_after_kst_hour=fast_hour,
+        fast_profile_no_buy_after_kst_minute=fast_minute,
+        supportive_market=True,
+    )
+
+
 def check_guardrails(
     ticker: str,
     config: Config,
@@ -199,9 +276,11 @@ def check_guardrails(
     decision_time_kst: Optional[datetime] = None,
     decision_hold_minutes: Optional[int] = None,
     adv_threshold: Optional[float] = None,
+    dynamic_profile: Optional[DynamicGuardrailProfile] = None,
     **kwargs: object,
 ) -> GuardrailResult:
     """Final safety checks before order execution."""
+    profile = dynamic_profile or DynamicGuardrailProfile.from_config(config)
 
     # 1. Spread check
     if config.spread_check_enabled:
@@ -241,12 +320,12 @@ def check_guardrails(
         decision_action == Action.BUY
         and decision_hold_minutes is not None
         and decision_hold_minutes == config.fast_profile_hold_minutes
-        and config.fast_profile_no_buy_after_kst_hour < 24
+        and profile.fast_profile_no_buy_after_kst_hour < 24
     ):
         now_kst = _resolve_decision_time_kst(decision_time_kst)
         fast_cutoff = now_kst.replace(
-            hour=config.fast_profile_no_buy_after_kst_hour,
-            minute=config.fast_profile_no_buy_after_kst_minute,
+            hour=profile.fast_profile_no_buy_after_kst_hour,
+            minute=profile.fast_profile_no_buy_after_kst_minute,
             second=0,
             microsecond=0,
         )
@@ -255,7 +334,7 @@ def check_guardrails(
 
     # 5b. Minimum confidence for BUY
     if decision_action == Action.BUY and decision_confidence is not None:
-        if decision_confidence < config.min_buy_confidence:
+        if decision_confidence < profile.min_buy_confidence:
             return GuardrailResult(passed=False, reason="LOW_CONFIDENCE")
 
     # 5c. No BUY after cutoff time (장 마감 임박 시 진입 차단)
@@ -284,16 +363,16 @@ def check_guardrails(
         now_kst = _resolve_decision_time_kst(decision_time_kst)
         h, m = now_kst.hour, now_kst.minute
         # v65: 08:30~09:00 장 직전 — 08시대 worst(-0.49%) 데이터, 높은 확신만
-        if h == 8 and m >= 30 and decision_confidence < config.opening_min_confidence:
+        if h == 8 and m >= 30 and decision_confidence < profile.opening_min_confidence:
             return GuardrailResult(passed=False, reason="PRE_OPENING_LOW_CONFIDENCE")
         # 09:00~09:30: 변동성 최고, 높은 확신만 진입
-        if h == 9 and m < 30 and decision_confidence < config.opening_min_confidence:
+        if h == 9 and m < 30 and decision_confidence < profile.opening_min_confidence:
             return GuardrailResult(passed=False, reason="OPENING_LOW_CONFIDENCE")
         # 13:00~14:30: 오후 회복기, 승률 저조 구간 — 높은 확신만
-        if (h == 13 or (h == 14 and m < 30)) and decision_confidence < config.afternoon_min_confidence:
+        if (h == 13 or (h == 14 and m < 30)) and decision_confidence < profile.afternoon_min_confidence:
             return GuardrailResult(passed=False, reason="AFTERNOON_LOW_CONFIDENCE")
         # 14:30~15:00: 마감 임박, 확실한 촉매만
-        if (h == 14 and m >= 30) and decision_confidence < config.closing_min_confidence:
+        if (h == 14 and m >= 30) and decision_confidence < profile.closing_min_confidence:
             return GuardrailResult(passed=False, reason="CLOSING_LOW_CONFIDENCE")
 
     # 5f. Chase-buy prevention: 당일 이미 크게 상승한 종목은 BUY 차단

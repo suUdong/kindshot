@@ -24,7 +24,7 @@ from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, Llm
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
 from kindshot.headline_parser import normalize_analysis_headline
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -612,6 +612,23 @@ async def execute_bucket_path(
     event_rec.decision_reason = decision.reason
 
     hold_minutes = get_max_hold_minutes(analysis_headline, keyword_hits, config) if decision.action == Action.BUY else 0
+    guardrail_profile = resolve_dynamic_guardrail_profile(
+        config,
+        kospi_change_pct=market_snapshot.kospi_change_pct,
+        kosdaq_change_pct=market_snapshot.kosdaq_change_pct,
+        kospi_breadth_ratio=market_snapshot.kospi_breadth_ratio,
+        kosdaq_breadth_ratio=market_snapshot.kosdaq_breadth_ratio,
+    )
+    if decision.action == Action.BUY and guardrail_profile.supportive_market:
+        logger.info(
+            "Dynamic guardrail profile [%s]: min=%d opening=%d afternoon=%d fast_cutoff=%02d:%02d",
+            raw.ticker,
+            guardrail_profile.min_buy_confidence,
+            guardrail_profile.opening_min_confidence,
+            guardrail_profile.afternoon_min_confidence,
+            guardrail_profile.fast_profile_no_buy_after_kst_hour,
+            guardrail_profile.fast_profile_no_buy_after_kst_minute,
+        )
 
     gr = check_guardrails(
         ticker=raw.ticker,
@@ -631,6 +648,7 @@ async def execute_bucket_path(
         decision_hold_minutes=hold_minutes,
         adv_threshold=config.adv_threshold_for_bucket(bucket.value),
         decision_size_hint=decision.size_hint.value,
+        dynamic_profile=guardrail_profile,
     )
     if not gr.passed:
         event_rec.skip_stage = SkipStage.GUARDRAIL

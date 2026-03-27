@@ -26,6 +26,7 @@ async def _run_pipeline_once(
     paper=False,
     ctx_raw=None,
     config_overrides=None,
+    market_snapshot_overrides=None,
     capture_guardrail_calls=False,
 ):
     """Helper: run one iteration of the pipeline and return logged records."""
@@ -41,6 +42,9 @@ async def _run_pipeline_once(
     # Simulate initialized market for pipeline tests
     market._initialized = True
     market._halted = False
+    if market_snapshot_overrides:
+        for attr, value in market_snapshot_overrides.items():
+            setattr(market, f"_{attr}", value)
     fetcher = PriceFetcher(kis=None)
     scheduler = SnapshotScheduler(cfg, fetcher, log)
 
@@ -235,6 +239,56 @@ async def test_pipeline_passes_time_and_hold_profile_to_guardrails(tmp_path):
     kwargs = guardrail_calls[0].kwargs
     assert kwargs["decision_time_kst"] == decided_at
     assert kwargs["decision_hold_minutes"] == 20
+
+
+async def test_pipeline_passes_supportive_dynamic_guardrail_profile(tmp_path):
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    detected_at = datetime(2026, 3, 24, 4, 50, 0, tzinfo=timezone.utc)
+    decided_at = datetime(2026, 3, 24, 4, 50, 5, tzinfo=timezone.utc)
+    raw = RawDisclosure(
+        title="삼성전자(005930) - 공급계약 체결",
+        link="https://kind.krx.co.kr/?rcpNo=20260305000001",
+        rss_guid="guid1",
+        published="2026-03-24T13:50:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=detected_at,
+    )
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=decided_at,
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=77,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+
+    _records, guardrail_calls = await _run_pipeline_once(
+        tmp_path,
+        [raw],
+        decision_side_effect=[mock_decision],
+        paper=True,
+        config_overrides={"dynamic_fast_profile_extension_minutes": 60},
+        market_snapshot_overrides={
+            "kospi_change": 0.4,
+            "kosdaq_change": 0.7,
+            "kospi_breadth_ratio": 0.56,
+            "kosdaq_breadth_ratio": 0.61,
+        },
+        capture_guardrail_calls=True,
+    )
+
+    profile = guardrail_calls[0].kwargs["dynamic_profile"]
+    assert profile.supportive_market is True
+    assert profile.min_buy_confidence == 76
+    assert profile.afternoon_min_confidence == 78
+    assert (profile.fast_profile_no_buy_after_kst_hour, profile.fast_profile_no_buy_after_kst_minute) == (15, 0)
 
 
 async def test_pipeline_passes_normalized_analysis_headline_to_decision(tmp_path):
