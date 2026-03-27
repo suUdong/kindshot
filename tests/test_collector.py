@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from kindshot.collector import (
+    BackfillResult,
     CollectionDayManifest,
     CollectionManifestIndexEntry,
     CollectionLogRecord,
@@ -22,6 +23,7 @@ from kindshot.collector import (
     _collect_daily_index,
     _is_trusted_complete_date,
     _load_latest_collection_statuses,
+    _parse_collect_args,
     _parse_status_args,
     _resolve_backfill_range,
     _collect_news_for_date_with_retry,
@@ -29,12 +31,14 @@ from kindshot.collector import (
     _manifest_path,
     append_news_items,
     append_collection_log,
+    build_collection_backfill_report,
     collect_main,
     compute_finalized_date,
     log_collection_status,
     load_collection_log_summary,
     load_collection_status_report,
     load_collector_state,
+    print_collection_backfill_json,
     print_collection_status_json,
     run_backfill,
     save_collector_state,
@@ -117,6 +121,18 @@ def test_parse_status_args_defaults_and_rejects_invalid():
         _parse_status_args(["--output", "status.json"])
     with pytest.raises(SystemExit, match="Usage: kindshot collect status"):
         _parse_status_args(["--bad"])
+
+
+def test_parse_collect_args_defaults_and_rejects_invalid():
+    assert _parse_collect_args([]) == ("", "", "", False, "")
+    assert _parse_collect_args(["--cursor", "20260310"]) == ("20260310", "", "", False, "")
+    assert _parse_collect_args(["--from", "20260301", "--to", "20260313"]) == ("", "20260301", "20260313", False, "")
+    assert _parse_collect_args(["--cursor", "20260310", "--json"]) == ("20260310", "", "", True, "")
+    assert _parse_collect_args(["--json", "--output", "backfill.json"]) == ("", "", "", True, "backfill.json")
+    with pytest.raises(SystemExit, match="--output requires --json"):
+        _parse_collect_args(["--output", "backfill.json"])
+    with pytest.raises(SystemExit, match="Usage: kindshot collect backfill"):
+        _parse_collect_args(["--bad"])
 
 
 def test_append_collection_log_writes_jsonl(tmp_path):
@@ -1394,6 +1410,172 @@ def test_load_collection_status_report_reuses_state_summary_and_manifest_context
     assert report["backlog"]["partial_details"][0]["manifest_path"].endswith("20260310.json")
 
 
+def test_build_collection_backfill_report_includes_rows_and_collector_status(tmp_path):
+    cfg = Config(
+        collector_log_path=tmp_path / "data" / "collector" / "collection_log.jsonl",
+        collector_state_path=tmp_path / "data" / "collector_state.json",
+        collector_manifests_dir=tmp_path / "data" / "collector" / "manifests",
+    )
+    state = CollectorState(
+        cursor_date="20260310",
+        last_completed_date="20260311",
+        finalized_date="20260312",
+        status="idle",
+    )
+    save_collector_state(cfg.collector_state_path, state)
+    append_collection_log(
+        cfg.collector_log_path,
+        CollectionLogRecord(
+            date="20260310",
+            status="partial",
+            news_count=3,
+            classification_count=3,
+            daily_price_count=1,
+            daily_index_count=0,
+            completed_at="2026-03-15T00:00:00+09:00",
+            skip_reason="pagination_truncated,daily_index_missing",
+        ),
+    )
+    append_collection_log(
+        cfg.collector_log_path,
+        CollectionLogRecord(
+            date="20260309",
+            status="skipped",
+            news_count=0,
+            classification_count=0,
+            daily_price_count=0,
+            daily_index_count=0,
+            completed_at="2026-03-15T00:01:00+09:00",
+            skip_reason="already_complete",
+        ),
+    )
+    write_collection_day_manifest(
+        cfg.collector_manifests_dir,
+        dt="20260310",
+        status="partial",
+        status_reason="pagination_truncated,daily_index_missing",
+        finalized_date="20260312",
+        items=[],
+        tickers=[],
+        news_count=3,
+        classification_count=3,
+        price_count=1,
+        index_count=0,
+        news_path=tmp_path / "news" / "20260310.jsonl",
+        classifications_path=tmp_path / "classifications" / "20260310.jsonl",
+        daily_prices_path=tmp_path / "prices" / "20260310.jsonl",
+        daily_index_path=tmp_path / "index" / "20260310.jsonl",
+    )
+    result = BackfillResult(
+        requested_from="20260310",
+        requested_to="20260309",
+        finalized_date="20260312",
+        processed_dates=["20260310"],
+        completed_dates=[],
+        partial_dates=["20260310"],
+        news_counts={},
+        classification_counts={},
+        price_counts={},
+        index_counts={},
+        skipped_dates=["20260309"],
+    )
+
+    report = build_collection_backfill_report(
+        cfg,
+        cursor="20260310",
+        result=result,
+        state=state,
+        summary=load_collection_log_summary(cfg.collector_log_path),
+    )
+
+    assert report["request"]["cursor"] == "20260310"
+    assert report["result"]["requested_from"] == "20260310"
+    assert report["result"]["partial_count"] == 1
+    assert report["collector_status"]["summary"]["health"] == "partial_backlog"
+    assert report["rows"][0]["date"] == "20260310"
+    assert report["rows"][0]["processed_by_run"] is True
+    assert report["rows"][0]["manifest_status_reason"] == "pagination_truncated,daily_index_missing"
+    assert report["rows"][1]["date"] == "20260309"
+    assert report["rows"][1]["skipped_by_run"] is True
+
+
+def test_print_collection_backfill_json_emits_report_and_writes_file(tmp_path, capsys):
+    cfg = Config(
+        collector_log_path=tmp_path / "data" / "collector" / "collection_log.jsonl",
+        collector_state_path=tmp_path / "data" / "collector_state.json",
+        collector_manifests_dir=tmp_path / "data" / "collector" / "manifests",
+    )
+    output_path = tmp_path / "data" / "collector" / "backfill.json"
+    state = CollectorState(
+        cursor_date="20260310",
+        last_completed_date="20260311",
+        finalized_date="20260312",
+        status="idle",
+    )
+    save_collector_state(cfg.collector_state_path, state)
+    append_collection_log(
+        cfg.collector_log_path,
+        CollectionLogRecord(
+            date="20260310",
+            status="partial",
+            news_count=3,
+            classification_count=3,
+            daily_price_count=1,
+            daily_index_count=0,
+            completed_at="2026-03-15T00:00:00+09:00",
+            skip_reason="daily_index_missing",
+        ),
+    )
+    write_collection_day_manifest(
+        cfg.collector_manifests_dir,
+        dt="20260310",
+        status="partial",
+        status_reason="daily_index_missing",
+        finalized_date="20260312",
+        items=[],
+        tickers=[],
+        news_count=3,
+        classification_count=3,
+        price_count=1,
+        index_count=0,
+        news_path=tmp_path / "news" / "20260310.jsonl",
+        classifications_path=tmp_path / "classifications" / "20260310.jsonl",
+        daily_prices_path=tmp_path / "prices" / "20260310.jsonl",
+        daily_index_path=tmp_path / "index" / "20260310.jsonl",
+    )
+    result = BackfillResult(
+        requested_from="20260310",
+        requested_to="20260310",
+        finalized_date="20260312",
+        processed_dates=["20260310"],
+        completed_dates=[],
+        partial_dates=["20260310"],
+        news_counts={},
+        classification_counts={},
+        price_counts={},
+        index_counts={},
+        skipped_dates=[],
+    )
+
+    report = print_collection_backfill_json(
+        cfg,
+        cursor="20260310",
+        result=result,
+        output_path=str(output_path),
+        state=state,
+        summary=load_collection_log_summary(cfg.collector_log_path),
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    file_payload = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert report == payload
+    assert payload == file_payload
+    assert payload["result"]["partial_dates"] == ["20260310"]
+    assert payload["collector_status"]["summary"]["health"] == "partial_backlog"
+    assert payload["rows"][0]["manifest_path"].endswith("20260310.json")
+
+
 def test_log_collection_status_logs_manifest_context(tmp_path, caplog):
     cfg = Config(
         collector_log_path=tmp_path / "data" / "collector" / "collection_log.jsonl",
@@ -1469,3 +1651,33 @@ async def test_collect_main_dispatches_status_json(tmp_path):
         await collect_main(["status", "--limit", "5", "--json", "--output", "status.json"], cfg)
 
     mock_status.assert_called_once_with(cfg, backlog_limit=5, output_path="status.json")
+
+
+async def test_collect_main_dispatches_backfill_json(tmp_path):
+    cfg = Config(
+        collector_log_path=tmp_path / "data" / "collector" / "collection_log.jsonl",
+        collector_state_path=tmp_path / "data" / "collector_state.json",
+    )
+    fake_result = BackfillResult(
+        requested_from="20260310",
+        requested_to="20260310",
+        finalized_date="20260310",
+        processed_dates=["20260310"],
+        completed_dates=["20260310"],
+        partial_dates=[],
+        news_counts={},
+        classification_counts={},
+        price_counts={},
+        index_counts={},
+        skipped_dates=[],
+    )
+
+    with patch("kindshot.collector.run_backfill", new=AsyncMock(return_value=fake_result)) as mock_run, \
+         patch("kindshot.collector.print_collection_backfill_json", return_value={"result": {}}) as mock_report:
+        await collect_main(["backfill", "--cursor", "20260310", "--json", "--output", "backfill.json"], cfg)
+
+    mock_run.assert_awaited_once()
+    mock_report.assert_called_once()
+    assert mock_report.call_args.kwargs["cursor"] == "20260310"
+    assert mock_report.call_args.kwargs["output_path"] == "backfill.json"
+    assert mock_report.call_args.kwargs["result"] is fake_result

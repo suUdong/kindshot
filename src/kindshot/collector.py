@@ -677,6 +677,127 @@ def print_collection_status_json(config: Config, *, backlog_limit: int = 10, out
     return report
 
 
+def build_collection_backfill_report(
+    config: Config,
+    *,
+    cursor: str = "",
+    from_date: str = "",
+    to_date: str = "",
+    result: Optional[BackfillResult] = None,
+    state: Optional[CollectorState] = None,
+    summary: Optional[CollectionLogSummary] = None,
+    error: Optional[Exception] = None,
+    backlog_limit: int = 10,
+) -> dict[str, Any]:
+    resolved_state = state or load_collector_state(config.collector_state_path)
+    resolved_summary = summary or load_collection_log_summary(config.collector_log_path)
+    collector_status = load_collection_status_report(
+        config,
+        backlog_limit=backlog_limit,
+        state=resolved_state,
+        summary=resolved_summary,
+    )
+    manifest_entries = _load_manifest_index_entries(config.collector_manifests_dir)
+    touched_dates: list[str] = []
+    if result is not None:
+        touched_dates.extend(result.processed_dates)
+        touched_dates.extend(result.skipped_dates)
+    if error is not None:
+        failed_date = resolved_state.cursor_date or (
+            result.requested_from
+            if result is not None
+            else max(filter(None, [cursor, from_date, to_date]), default="")
+        )
+        if failed_date:
+            touched_dates.append(failed_date)
+
+    unique_dates: list[str] = []
+    seen_dates: set[str] = set()
+    for dt in touched_dates:
+        if dt and dt not in seen_dates:
+            seen_dates.add(dt)
+            unique_dates.append(dt)
+
+    rows: list[dict[str, Any]] = []
+    for dt in unique_dates:
+        latest_record = resolved_summary.latest_records.get(dt)
+        if latest_record is None:
+            continue
+        detail = _build_status_detail(
+            latest_record,
+            collector_manifests_dir=config.collector_manifests_dir,
+            manifest_index_entry=manifest_entries.get(dt),
+        )
+        detail["touched_by_run"] = True
+        detail["processed_by_run"] = bool(result is not None and dt in result.processed_dates)
+        detail["skipped_by_run"] = bool(result is not None and dt in result.skipped_dates)
+        rows.append(detail)
+
+    report: dict[str, Any] = {
+        "source": "collect_backfill",
+        "generated_at": _kst_now().isoformat(),
+        "request": {
+            "cursor": cursor,
+            "from_date": from_date,
+            "to_date": to_date,
+        },
+        "result": {
+            "requested_from": result.requested_from if result is not None else "",
+            "requested_to": result.requested_to if result is not None else "",
+            "finalized_date": result.finalized_date if result is not None else resolved_state.finalized_date,
+            "processed_count": len(result.processed_dates) if result is not None else 0,
+            "complete_count": len(result.completed_dates) if result is not None else 0,
+            "partial_count": len(result.partial_dates) if result is not None else 0,
+            "skipped_count": len(result.skipped_dates) if result is not None else 0,
+            "processed_dates": list(result.processed_dates) if result is not None else [],
+            "completed_dates": list(result.completed_dates) if result is not None else [],
+            "partial_dates": list(result.partial_dates) if result is not None else [],
+            "skipped_dates": list(result.skipped_dates) if result is not None else [],
+        },
+        "rows": rows,
+        "collector_status": collector_status,
+    }
+    if error is not None:
+        report["error"] = {
+            "type": type(error).__name__,
+            "message": str(error),
+        }
+    return report
+
+
+def print_collection_backfill_json(
+    config: Config,
+    *,
+    cursor: str = "",
+    from_date: str = "",
+    to_date: str = "",
+    result: Optional[BackfillResult] = None,
+    output_path: str = "",
+    error: Optional[Exception] = None,
+    backlog_limit: int = 10,
+    state: Optional[CollectorState] = None,
+    summary: Optional[CollectionLogSummary] = None,
+) -> dict[str, Any]:
+    report = build_collection_backfill_report(
+        config,
+        cursor=cursor,
+        from_date=from_date,
+        to_date=to_date,
+        result=result,
+        state=state,
+        summary=summary,
+        error=error,
+        backlog_limit=backlog_limit,
+    )
+    payload = json.dumps(report, ensure_ascii=False)
+    print(payload)
+    if output_path:
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(payload + "\n", encoding="utf-8")
+    return report
+
+
 def _iter_backfill_dates(start: str, end: str) -> list[str]:
     current = _parse_yyyymmdd(start)
     stop = _parse_yyyymmdd(end)
@@ -1302,10 +1423,12 @@ async def run_backfill(
     )
 
 
-def _parse_collect_args(argv: list[str]) -> tuple[str, str, str]:
+def _parse_collect_args(argv: list[str]) -> tuple[str, str, str, bool, str]:
     cursor = ""
     from_date = ""
     to_date = ""
+    as_json = False
+    output_path = ""
     idx = 0
     while idx < len(argv):
         token = argv[idx]
@@ -1321,8 +1444,20 @@ def _parse_collect_args(argv: list[str]) -> tuple[str, str, str]:
             to_date = argv[idx + 1]
             idx += 2
             continue
-        raise SystemExit(f"Unknown collect backfill argument: {token}")
-    return cursor, from_date, to_date
+        if token == "--json":
+            as_json = True
+            idx += 1
+            continue
+        if token == "--output" and idx + 1 < len(argv):
+            output_path = argv[idx + 1]
+            idx += 2
+            continue
+        raise SystemExit(
+            "Usage: kindshot collect backfill [--cursor YYYYMMDD] [--from YYYYMMDD] [--to YYYYMMDD] [--json] [--output PATH]"
+        )
+    if output_path and not as_json:
+        raise SystemExit("--output requires --json")
+    return cursor, from_date, to_date, as_json, output_path
 
 
 async def collect_main(argv: list[str], config: Config) -> None:
@@ -1337,8 +1472,24 @@ async def collect_main(argv: list[str], config: Config) -> None:
             log_collection_status(config, backlog_limit=backlog_limit)
         return
     if task == "backfill":
-        cursor, from_date, to_date = _parse_collect_args(argv[1:])
-        result = await run_backfill(config, cursor=cursor, from_date=from_date, to_date=to_date)
+        cursor, from_date, to_date, as_json, output_path = _parse_collect_args(argv[1:])
+        try:
+            result = await run_backfill(config, cursor=cursor, from_date=from_date, to_date=to_date)
+        except Exception as exc:
+            if as_json:
+                state = load_collector_state(config.collector_state_path)
+                summary = load_collection_log_summary(config.collector_log_path)
+                print_collection_backfill_json(
+                    config,
+                    cursor=cursor,
+                    from_date=from_date,
+                    to_date=to_date,
+                    output_path=output_path,
+                    error=exc,
+                    state=state,
+                    summary=summary,
+                )
+            raise
         logger.info(
             "Collect backfill completed: from=%s to=%s finalized=%s processed=%d complete=%d partial=%d skipped=%d",
             result.requested_from,
@@ -1349,5 +1500,18 @@ async def collect_main(argv: list[str], config: Config) -> None:
             len(result.partial_dates),
             len(result.skipped_dates),
         )
+        if as_json:
+            state = load_collector_state(config.collector_state_path)
+            summary = load_collection_log_summary(config.collector_log_path)
+            print_collection_backfill_json(
+                config,
+                cursor=cursor,
+                from_date=from_date,
+                to_date=to_date,
+                result=result,
+                output_path=output_path,
+                state=state,
+                summary=summary,
+            )
         return
     raise SystemExit(f"Unknown collect task: {task}")
