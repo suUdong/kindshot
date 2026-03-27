@@ -15,10 +15,10 @@
 
 ## Current Focus
 
-- Track: User-Directed Runtime Observability
-- Phase: v69 Observability Alignment
+- Track: User-Directed Pattern Profitability Profiles
+- Phase: v70 Recent Pattern Profile Alignment
 - Status: Completed (user override)
-- Reason: The user explicitly redirected the loop to fix `/health` heartbeat accuracy and add live dashboard metrics after the v69 deploy. The slice was implemented, validated locally, pushed as `f0e1bc4`, and deployed to `kindshot-server` via clean export.
+- Reason: The user explicitly redirected the loop to extract recent profitable/losing trade patterns, wire them into runtime confidence/guardrails, and deploy the result. The runtime feature already existed on `main`, so this slice aligned the runtime profile builder with `backtest_analysis`, widened the default recent window to seven log days, pushed `c0c42e2`, and deployed it to `kindshot-server`.
 
 ## Phases
 
@@ -92,8 +92,8 @@
 
 ## Next Run Candidates
 
-1. Observe one or more live paper sessions to confirm the new `/health.trade_metrics` and dashboard live cards evolve correctly under actual trade closes.
-2. Decide whether unrealized/open-position MTM belongs in the health/dashboard surface or should remain separate from realized trade metrics.
+1. Observe one or more live paper sessions to confirm whether the deployed recent-pattern profile remains loss-only (`boost=0`, `loss=2`) or starts emitting a stable winner cohort.
+2. Decide whether `recent_pattern_profit_min_*` thresholds or `recent_pattern_lookback_days` should be widened if the runtime keeps missing conservative boost opportunities.
 3. Clean or re-clone the remote `/opt/kindshot/.git` metadata so future deployments can rely on git provenance instead of clean-export hash checks.
 
 ## Deferred

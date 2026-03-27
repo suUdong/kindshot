@@ -28,6 +28,41 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 01:08 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `c0c42e2`
+- Deployer: Codex manual SSH + clean `git archive` export + `rsync`
+- Summary:
+  1. **recent pattern profile alignment 배포** — runtime `RecentPatternProfile` 이 raw DB fallback 전에 `scripts/backtest_analysis.py` reconstruction path 를 사용하도록 정렬
+  2. **recent window 확대 + summary persistence** — recent-pattern lookback 기본값을 `6 → 7` log days 로 늘리고, profile summary 를 `recent_pattern_profile_path` 에 기록
+  3. **runtime verification** — `kindshot` / `kindshot-dashboard` 재시작 후 health payload 에 recent-pattern summary 가 나타나는지 확인
+- Validation:
+  - local `python3 -m compileall src scripts tests dashboard`
+  - local `.venv/bin/python -m pytest tests/test_strategy_observability.py tests/test_pattern_profile.py tests/test_backtest_analysis.py tests/test_pipeline.py tests/test_config.py -q` → `54 passed`
+  - local `.venv/bin/python -m pytest -x -q` → `963 passed, 1 skipped, 1 warning`
+  - local affected-file diagnostics → `0 errors`, `0 warnings`
+  - remote `python3 -m compileall src/kindshot scripts tests dashboard`
+  - remote `source .venv/bin/activate && python -m pip install . --quiet`
+  - remote `sudo systemctl restart kindshot kindshot-dashboard`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `curl -sf http://127.0.0.1:8080/health` returned:
+    - `recent_pattern_profile.enabled: true`
+    - `recent_pattern_profile.analysis_dates: ['20260319', '20260320', '20260327']`
+    - `recent_pattern_profile.loss_guardrail_patterns: 2`
+    - `recent_pattern_profile.top_profit_exact.key: "mna|005380|midday"`
+  - remote `curl -I http://127.0.0.1:8501` → `HTTP/1.1 200 OK`
+  - remote journal after restart showed:
+    - `Backfilled 20260318/19/20/23/26/27 BUY trades`
+    - `RecentPatternProfile loaded: dates=20260319,20260320,20260327 trades=12 boost=0 loss=2`
+    - `Health server started on 127.0.0.1:8080`
+- Rollback: re-sync the prior known-good tree to `/opt/kindshot`, reinstall with the remote venv, and restart `kindshot` + `kindshot-dashboard`
+- Result: 성공
+- Notes: first post-restart health/dashboard probe hit warm-up timing and saw connection refused, but follow-up checks passed once services finished binding
+
+---
+
 ### 2026-03-28 00:21 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)
