@@ -368,15 +368,20 @@ def build_recent_pattern_profile(config: Config) -> RecentPatternProfile:
 
 
 def _load_backtest_analysis_module() -> Any | None:
-    script_path = Path(__file__).resolve().parents[2] / "scripts" / "backtest_analysis.py"
-    if not script_path.exists():
-        return None
-    spec = importlib.util.spec_from_file_location("kindshot_backtest_analysis_runtime", script_path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    candidates = [
+        Path.cwd() / "scripts" / "backtest_analysis.py",
+        Path(__file__).resolve().parents[2] / "scripts" / "backtest_analysis.py",
+    ]
+    for script_path in candidates:
+        if not script_path.exists():
+            continue
+        spec = importlib.util.spec_from_file_location("kindshot_backtest_analysis_runtime", script_path)
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    return None
 
 
 def _build_recent_pattern_profile_from_backtest(config: Config) -> RecentPatternProfile:

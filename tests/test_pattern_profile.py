@@ -1,5 +1,12 @@
+from pathlib import Path
+
 from kindshot.config import Config
-from kindshot.pattern_profile import build_recent_pattern_profile_from_rows, match_loss_guardrail, match_profit_boost
+from kindshot.pattern_profile import (
+    _load_backtest_analysis_module,
+    build_recent_pattern_profile_from_rows,
+    match_loss_guardrail,
+    match_profit_boost,
+)
 
 
 def test_build_recent_pattern_profile_prefers_stable_fallback_cohorts():
@@ -52,3 +59,15 @@ def test_recent_pattern_profile_matchers():
     assert match_profit_boost(profile, news_type="clinical_regulatory", ticker="999999", hour_bucket="open") is None
     assert match_loss_guardrail(profile, news_type="contract", ticker="999999", hour_bucket="open") is not None
     assert match_loss_guardrail(profile, news_type="contract", ticker="999999", hour_bucket="midday") is None
+
+
+def test_load_backtest_analysis_module_prefers_cwd(monkeypatch, tmp_path: Path):
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "backtest_analysis.py").write_text("SENTINEL = 123\n", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    module = _load_backtest_analysis_module()
+
+    assert module is not None
+    assert module.SENTINEL == 123
