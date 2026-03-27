@@ -677,6 +677,17 @@ def print_collection_status_json(config: Config, *, backlog_limit: int = 10, out
     return report
 
 
+def _backfill_report_output_path(config: Config, explicit_path: str = "") -> Path:
+    if explicit_path:
+        return Path(explicit_path)
+    return config.collector_backfill_report_path
+
+
+def _write_json_report(path: Path, report: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def build_collection_backfill_report(
     config: Config,
     *,
@@ -765,6 +776,35 @@ def build_collection_backfill_report(
     return report
 
 
+def write_collection_backfill_report(
+    config: Config,
+    *,
+    cursor: str = "",
+    from_date: str = "",
+    to_date: str = "",
+    result: Optional[BackfillResult] = None,
+    output_path: str = "",
+    error: Optional[Exception] = None,
+    backlog_limit: int = 10,
+    state: Optional[CollectorState] = None,
+    summary: Optional[CollectionLogSummary] = None,
+) -> tuple[dict[str, Any], Path]:
+    report = build_collection_backfill_report(
+        config,
+        cursor=cursor,
+        from_date=from_date,
+        to_date=to_date,
+        result=result,
+        state=state,
+        summary=summary,
+        error=error,
+        backlog_limit=backlog_limit,
+    )
+    path = _backfill_report_output_path(config, output_path)
+    _write_json_report(path, report)
+    return report, path
+
+
 def print_collection_backfill_json(
     config: Config,
     *,
@@ -778,12 +818,13 @@ def print_collection_backfill_json(
     state: Optional[CollectorState] = None,
     summary: Optional[CollectionLogSummary] = None,
 ) -> dict[str, Any]:
-    report = build_collection_backfill_report(
+    report, _ = write_collection_backfill_report(
         config,
         cursor=cursor,
         from_date=from_date,
         to_date=to_date,
         result=result,
+        output_path=output_path,
         state=state,
         summary=summary,
         error=error,
@@ -791,10 +832,6 @@ def print_collection_backfill_json(
     )
     payload = json.dumps(report, ensure_ascii=False)
     print(payload)
-    if output_path:
-        path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(payload + "\n", encoding="utf-8")
     return report
 
 
