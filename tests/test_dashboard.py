@@ -21,6 +21,7 @@ from data_loader import (  # noqa: E402
     load_events,
     load_health,
     load_multi_day_events,
+    load_multi_day_pnl_detail,
     load_price_snapshots,
 )
 
@@ -208,6 +209,15 @@ def test_compute_multi_day_pnl(fake_logs):
     assert row["losses"] == 0
     assert row["win_rate"] == 100.0
     assert row["cum_ret_pct"] == 0.5  # 0.005 * 100
+
+
+def test_load_multi_day_pnl_detail(fake_logs):
+    df = load_multi_day_pnl_detail(7)
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["ticker"] == "005930"
+    assert "date" in df.columns
+    assert "keyword_hits" in df.columns
 
 
 def test_compute_multi_day_pnl_empty(fake_logs, monkeypatch):

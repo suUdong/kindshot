@@ -215,6 +215,30 @@ def load_multi_day_events(n_days: int = 7) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+def load_multi_day_pnl_detail(n_days: int = 7) -> pd.DataFrame:
+    """최근 n일의 개별 매매 PnL을 합쳐서 반환 (키워드/버킷/시간대 분석용)."""
+    dates = sorted(available_dates()[:n_days])
+    frames = []
+    for d in dates:
+        ev_df = load_events(d)
+        pnl = compute_trade_pnl(d)
+        if pnl.empty or ev_df.empty:
+            continue
+        # keyword_hits, detected_at 조인
+        join_cols = ["event_id"]
+        extra = []
+        for col in ["keyword_hits", "detected_at", "decision_source"]:
+            if col in ev_df.columns:
+                extra.append(col)
+        if extra:
+            merged = pnl.merge(ev_df[join_cols + extra], on="event_id", how="left")
+        else:
+            merged = pnl
+        merged["date"] = d
+        frames.append(merged)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
 def compute_multi_day_pnl(n_days: int = 7) -> pd.DataFrame:
     """최근 n일의 일별 PnL 요약 (누적 수익률 포함)."""
     dates = sorted(available_dates()[:n_days])

@@ -15,6 +15,7 @@ from data_loader import (
     load_events,
     load_health,
     load_multi_day_events,
+    load_multi_day_pnl_detail,
     load_price_snapshots,
 )
 
@@ -76,11 +77,12 @@ pnl_df = _load_pnl(selected_date)
 multi_df = _load_multi(multi_day_n)
 
 # ── 탭 구성 ──────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 시그널 현황",
     "💰 매매 성과",
     "📉 기술지표",
     "🖥️ 시스템 상태",
+    "🔬 전략 분석",
 ])
 
 
@@ -752,6 +754,176 @@ with tab4:
                     st.dataframe(gr_counts, use_container_width=True, hide_index=True)
         else:
             st.info("표시할 데이터가 없습니다.")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TAB 5: 전략 분석 (멀티데이 통합)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+with tab5:
+    st.header(f"전략 분석 — 최근 {multi_day_n}일 통합")
+
+    @st.cache_data(ttl=60)
+    def _load_detail(n: int) -> pd.DataFrame:
+        return load_multi_day_pnl_detail(n)
+
+    detail_df = _load_detail(multi_day_n)
+
+    if detail_df.empty:
+        st.info("매매 데이터가 없습니다.")
+    else:
+        valid_detail = detail_df.dropna(subset=["final_ret_pct"])
+        total_t = len(valid_detail)
+        total_wins = int((valid_detail["final_ret_pct"] > 0).sum())
+        total_wr = total_wins / total_t * 100 if total_t else 0
+        total_cum = valid_detail["final_ret_pct"].sum()
+        avg_ret = valid_detail["final_ret_pct"].mean()
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("총 매매", total_t)
+        c2.metric("통합 승률", f"{total_wr:.1f}%")
+        c3.metric("누적 수익률", f"{total_cum:.2f}%")
+        c4.metric("평균 수익률", f"{avg_ret:.2f}%")
+
+        st.divider()
+
+        # 버킷별 통합 성과
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("버킷별 통합 성과")
+            bucket_perf = valid_detail.groupby("bucket").agg(
+                trades=("final_ret_pct", "count"),
+                avg_ret=("final_ret_pct", "mean"),
+                total_ret=("final_ret_pct", "sum"),
+                win_rate=("final_ret_pct", lambda x: (x > 0).mean() * 100),
+            ).reset_index().sort_values("total_ret", ascending=False)
+            fig_bp = px.bar(bucket_perf, x="bucket", y="total_ret",
+                            color="win_rate", text=[f"{v:.1f}%" for v in bucket_perf["total_ret"]],
+                            color_continuous_scale=["#e74c3c", "#f39c12", "#2ecc71"],
+                            range_color=[0, 100],
+                            title="버킷별 총 수익률 (색상=승률)",
+                            labels={"total_ret": "총 수익률 (%)"})
+            fig_bp.update_layout(height=400)
+            st.plotly_chart(fig_bp, use_container_width=True)
+
+        # Confidence 구간별 성과
+        with col2:
+            st.subheader("Confidence 구간별 성과")
+            conf_numeric = pd.to_numeric(valid_detail["confidence"], errors="coerce")
+            valid_detail = valid_detail.copy()
+            valid_detail["conf_bin"] = pd.cut(conf_numeric, bins=[0, 70, 78, 85, 90, 100],
+                                              labels=["<70", "70-78", "78-85", "85-90", "90+"])
+            conf_perf = valid_detail.groupby("conf_bin", observed=True).agg(
+                trades=("final_ret_pct", "count"),
+                avg_ret=("final_ret_pct", "mean"),
+                win_rate=("final_ret_pct", lambda x: (x > 0).mean() * 100),
+            ).reset_index()
+            fig_cp = go.Figure()
+            fig_cp.add_trace(go.Bar(x=conf_perf["conf_bin"].astype(str), y=conf_perf["avg_ret"],
+                                     name="평균수익률(%)", marker_color="#3498db",
+                                     text=[f"{v:.2f}%" for v in conf_perf["avg_ret"]],
+                                     textposition="outside"))
+            fig_cp.add_trace(go.Scatter(x=conf_perf["conf_bin"].astype(str), y=conf_perf["win_rate"],
+                                         name="승률(%)", yaxis="y2", mode="lines+markers",
+                                         marker_color="#e74c3c"))
+            fig_cp.update_layout(
+                title="Confidence 구간별 수익률/승률",
+                yaxis=dict(title="평균 수익률 (%)"),
+                yaxis2=dict(title="승률 (%)", overlaying="y", side="right", range=[0, 100]),
+                height=400,
+            )
+            st.plotly_chart(fig_cp, use_container_width=True)
+
+        # 시간대별 통합 성과
+        if "detected_at" in valid_detail.columns:
+            valid_with_time = valid_detail[valid_detail["detected_at"].notna()].copy()
+            if not valid_with_time.empty:
+                valid_with_time["hour"] = valid_with_time["detected_at"].dt.hour
+                hourly_agg = valid_with_time.groupby("hour").agg(
+                    trades=("final_ret_pct", "count"),
+                    avg_ret=("final_ret_pct", "mean"),
+                    total_ret=("final_ret_pct", "sum"),
+                    win_rate=("final_ret_pct", lambda x: (x > 0).mean() * 100),
+                ).reset_index()
+
+                st.subheader("시간대별 통합 성과")
+                col_h1, col_h2 = st.columns(2)
+                with col_h1:
+                    fig_ht = px.bar(hourly_agg, x="hour", y="total_ret",
+                                    text=[f"{v:.1f}%" for v in hourly_agg["total_ret"]],
+                                    title="시간대별 총 수익률",
+                                    color="total_ret",
+                                    color_continuous_scale=["#e74c3c", "#f39c12", "#2ecc71"],
+                                    labels={"hour": "시간 (KST)", "total_ret": "총 수익률 (%)"})
+                    fig_ht.update_layout(height=350)
+                    st.plotly_chart(fig_ht, use_container_width=True)
+
+                with col_h2:
+                    fig_hw = px.scatter(hourly_agg, x="hour", y="win_rate", size="trades",
+                                        title="시간대별 승률 (크기=매매수)",
+                                        color="avg_ret",
+                                        color_continuous_scale=["#e74c3c", "#f39c12", "#2ecc71"],
+                                        labels={"hour": "시간 (KST)", "win_rate": "승률 (%)"})
+                    fig_hw.add_hline(y=50, line_dash="dash", line_color="gray")
+                    fig_hw.update_layout(height=350)
+                    st.plotly_chart(fig_hw, use_container_width=True)
+
+        # 키워드 통합 성과
+        if "keyword_hits" in valid_detail.columns:
+            kw_rows = []
+            for _, row in valid_detail.iterrows():
+                hits = row.get("keyword_hits")
+                if isinstance(hits, list):
+                    for kw in hits:
+                        kw_rows.append({"keyword": kw, "ret": row["final_ret_pct"]})
+            if kw_rows:
+                kw_agg = pd.DataFrame(kw_rows)
+                kw_stats = kw_agg.groupby("keyword").agg(
+                    trades=("ret", "count"),
+                    avg_ret=("ret", "mean"),
+                    total_ret=("ret", "sum"),
+                    win_rate=("ret", lambda x: (x > 0).mean() * 100),
+                ).reset_index().sort_values("total_ret", ascending=False)
+
+                st.subheader("키워드 통합 성과 (멀티데이)")
+                col_k1, col_k2 = st.columns(2)
+                with col_k1:
+                    top15 = kw_stats.head(15)
+                    fig_kw_m = px.bar(top15, x="keyword", y="total_ret",
+                                      color="win_rate", text=[f"{v:.1f}%" for v in top15["total_ret"]],
+                                      color_continuous_scale=["#e74c3c", "#f39c12", "#2ecc71"],
+                                      range_color=[0, 100],
+                                      title="키워드별 총 수익률 Top 15 (색상=승률)")
+                    fig_kw_m.update_layout(height=450)
+                    st.plotly_chart(fig_kw_m, use_container_width=True)
+
+                with col_k2:
+                    kw_display = kw_stats.copy()
+                    kw_display.columns = ["키워드", "매매수", "평균수익률(%)", "총수익률(%)", "승률(%)"]
+                    for c in ["평균수익률(%)", "총수익률(%)", "승률(%)"]:
+                        kw_display[c] = kw_display[c].round(2)
+                    st.dataframe(kw_display, use_container_width=True, hide_index=True, height=450)
+
+        # 이벤트 타임라인 (당일)
+        st.divider()
+        st.subheader("이벤트 타임라인 (당일)")
+        if not events_df.empty and "detected_at" in events_df.columns:
+            timeline = events_df[events_df["detected_at"].notna()].copy()
+            timeline["hour_min"] = timeline["detected_at"].dt.strftime("%H:%M")
+            timeline["action_label"] = timeline["decision_action"].fillna(
+                timeline.get("skip_stage", pd.Series(["FILTERED"] * len(timeline)))
+            )
+            fig_tl = px.scatter(
+                timeline, x="detected_at", y="bucket",
+                color="action_label",
+                hover_data=["ticker", "corp_name", "headline"],
+                title=f"이벤트 타임라인 — {selected_date[:4]}-{selected_date[4:6]}-{selected_date[6:]}",
+                color_discrete_map={"BUY": "#2ecc71", "SKIP": "#e74c3c",
+                                    "BUCKET": "#95a5a6", "DUPLICATE": "#bdc3c7",
+                                    "QUANT": "#f39c12"},
+                labels={"detected_at": "시각", "bucket": "버킷", "action_label": "결과"},
+            )
+            fig_tl.update_layout(height=400)
+            st.plotly_chart(fig_tl, use_container_width=True)
 
 
 # ── 푸터 ──────────────────────────────────────────────
