@@ -115,18 +115,6 @@ class AlphaSignalContext(BaseModel):
     age_hours: Optional[float] = None
 
 
-class AlphaSignalContext(BaseModel):
-    ticker: str
-    signal_type: str
-    score_current: Optional[float] = None
-    confidence: Optional[int] = None
-    size_hint: Optional[str] = None
-    score_delta: Optional[float] = None
-    regime: Optional[str] = None
-    created_at: Optional[str] = None
-    age_hours: Optional[float] = None
-
-
 class ContextCard(BaseModel):
     ret_today: Optional[float] = None
     ret_1d: Optional[float] = None
@@ -138,6 +126,7 @@ class ContextCard(BaseModel):
     vol_pct_20d: Optional[float] = None
     intraday_value_vs_adv20d: Optional[float] = None
     top_ask_notional: Optional[float] = None
+    orderbook_bid_ask_ratio: Optional[float] = None
     quote_temp_stop: Optional[bool] = None
     quote_liquidation_trade: Optional[bool] = None
     prior_volume_rate: Optional[float] = None  # 전일대비 거래량 비율 (e.g. 200.0 = 2배)
@@ -149,10 +138,20 @@ class ContextCard(BaseModel):
     support_price_20d: Optional[float] = None
     support_reference_px: Optional[float] = None
     alpha_signal: Optional[AlphaSignalContext] = None
-    alpha_signal: Optional[AlphaSignalContext] = None
 
 
 # ── Log Records ────────────────────────────────────────
+
+class PipelineLatencyProfile(BaseModel):
+    news_to_pipeline_ms: Optional[int] = None
+    context_card_ms: Optional[int] = None
+    decision_total_ms: Optional[int] = None
+    guardrail_ms: Optional[int] = None
+    order_attempt_ms: Optional[int] = None
+    pipeline_total_ms: Optional[int] = None
+    llm_latency_ms: Optional[int] = None
+    llm_cache_layer: Optional[str] = None
+    bottleneck_stage: Optional[str] = None
 
 class EventRecord(BaseModel):
     type: str = "event"
@@ -197,7 +196,11 @@ class EventRecord(BaseModel):
     decision_confidence: Optional[int] = None
     decision_size_hint: Optional[str] = None
     decision_reason: Optional[str] = None
+    decision_source: Optional[str] = None
+    decision_llm_latency_ms: Optional[int] = None
+    decision_cache_layer: Optional[str] = None
     guardrail_result: Optional[str] = None
+    pipeline_profile: Optional[PipelineLatencyProfile] = None
 
 
 class DecisionRecord(BaseModel):
@@ -214,6 +217,7 @@ class DecisionRecord(BaseModel):
     size_hint: SizeHint
     reason: str = Field(max_length=100)
     decision_source: str = "LLM"  # "LLM" | "CACHE" | "RULE_FALLBACK" | "LLM_FALLBACK_HYBRID" | "RULE_PREFLIGHT"
+    cache_layer: Optional[str] = None
 
 
 class PriceSnapshot(BaseModel):

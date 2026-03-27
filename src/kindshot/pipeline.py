@@ -37,10 +37,12 @@ from kindshot.models import (
     Action,
     Bucket,
     ContextCard,
+    DecisionRecord,
     EventIdMethod,
     EventKind,
     EventRecord,
     MarketContext,
+    PipelineLatencyProfile,
     PromotionStatus,
     SkipStage,
     T0Basis,
@@ -48,6 +50,7 @@ from kindshot.models import (
 from kindshot.price import PriceFetcher, SnapshotScheduler
 from kindshot.quant import quant_check
 from kindshot.poll_trace import get_tracer
+from kindshot.runtime_latency import identify_bottleneck_stage
 from kindshot.tz import KST as _KST
 from kindshot.unknown_review import (
     UnknownReviewEngine,
@@ -90,6 +93,8 @@ class ProcessOutcome:
     action: Optional[Action] = None
     skip_stage: Optional[SkipStage] = None
     skip_reason: Optional[str] = None
+    decision: Optional[DecisionRecord] = None
+    pipeline_profile: Optional[PipelineLatencyProfile] = None
 
 
 # ── Helpers ───────────────────────────────────────────
@@ -116,6 +121,48 @@ def counter_snapshot(counters: RuntimeCounters) -> dict[str, dict[str, int]]:
         "skip_reason": dict(counters.skip_reason),
         "errors": dict(counters.errors),
     }
+
+
+def _elapsed_since_detected_at_ms(detected_at: datetime) -> int:
+    now = datetime.now(detected_at.tzinfo or _KST)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=_KST)
+    return max(0, int((now - detected_at).total_seconds() * 1000))
+
+
+def _build_pipeline_profile(
+    *,
+    detected_at: datetime,
+    context_card_ms: int | None = None,
+    decision_total_ms: int | None = None,
+    guardrail_ms: int | None = None,
+    order_attempt_ms: int | None = None,
+    pipeline_total_ms: int | None = None,
+    llm_latency_ms: int | None = None,
+    llm_cache_layer: str | None = None,
+) -> PipelineLatencyProfile:
+    profile = PipelineLatencyProfile(
+        news_to_pipeline_ms=_elapsed_since_detected_at_ms(detected_at),
+        context_card_ms=context_card_ms,
+        decision_total_ms=decision_total_ms,
+        guardrail_ms=guardrail_ms,
+        order_attempt_ms=order_attempt_ms,
+        pipeline_total_ms=pipeline_total_ms,
+        llm_latency_ms=llm_latency_ms,
+        llm_cache_layer=llm_cache_layer,
+    )
+    profile.bottleneck_stage = identify_bottleneck_stage(profile)
+    return profile
+
+
+def _attach_decision_summary(event_rec: EventRecord, decision: DecisionRecord) -> None:
+    event_rec.decision_action = decision.action.value
+    event_rec.decision_confidence = decision.confidence
+    event_rec.decision_size_hint = decision.size_hint.value
+    event_rec.decision_reason = decision.reason
+    event_rec.decision_source = decision.decision_source
+    event_rec.decision_llm_latency_ms = decision.llm_latency_ms
+    event_rec.decision_cache_layer = decision.cache_layer
 
 
 def _hour_bucket_from_datetime(dt: datetime) -> str:
@@ -230,6 +277,10 @@ async def execute_bucket_path(
     quant_detail = None
     ctx: Optional[ContextCard] = None
     should_track_price = False
+    context_card_ms: int | None = None
+    decision_total_ms: int | None = None
+    guardrail_ms: int | None = None
+    order_attempt_ms: int | None = None
 
     if bucket == Bucket.NEG_STRONG:
         if config.news_exit_enabled and scheduler.has_open_position(raw.ticker):
@@ -253,11 +304,11 @@ async def execute_bucket_path(
         _ctx_t0 = time.monotonic()
         ctx_card, raw_data = await build_context_card(raw.ticker, kis, config=config)
         ctx = ctx_card
-        _ctx_ms = int((time.monotonic() - _ctx_t0) * 1000)
-        if _ctx_ms > 500:
-            logger.warning("Slow context_card build [%s]: %dms", raw.ticker, _ctx_ms)
+        context_card_ms = int((time.monotonic() - _ctx_t0) * 1000)
+        if context_card_ms > 500:
+            logger.warning("Slow context_card build [%s]: %dms", raw.ticker, context_card_ms)
         else:
-            logger.debug("context_card build [%s]: %dms", raw.ticker, _ctx_ms)
+            logger.debug("context_card build [%s]: %dms", raw.ticker, context_card_ms)
         effective_adv_threshold = config.adv_threshold_for_bucket(bucket.value)
 
         qr = quant_check(
@@ -319,6 +370,23 @@ async def execute_bucket_path(
         promotion_policy=promotion_policy,
     )
 
+    def _finalize_profile(decision: DecisionRecord | None = None) -> PipelineLatencyProfile:
+        pipeline_total_ms = int((time.monotonic() - _pipeline_t0) * 1000)
+        profile = _build_pipeline_profile(
+            detected_at=detected_at,
+            context_card_ms=context_card_ms,
+            decision_total_ms=decision_total_ms,
+            guardrail_ms=guardrail_ms,
+            order_attempt_ms=order_attempt_ms,
+            pipeline_total_ms=pipeline_total_ms,
+            llm_latency_ms=decision.llm_latency_ms if decision is not None else None,
+            llm_cache_layer=decision.cache_layer if decision is not None else None,
+        )
+        event_rec.pipeline_profile = profile
+        if decision is not None:
+            _attach_decision_summary(event_rec, decision)
+        return profile
+
     if ctx is not None:
         await append_runtime_context_card(
             config,
@@ -357,6 +425,7 @@ async def execute_bucket_path(
         )
 
     if bucket not in (Bucket.POS_STRONG, Bucket.POS_WEAK) or not quant_passed:
+        profile = _finalize_profile()
         await log.write(event_rec)
         _mark_skip(
             counters,
@@ -367,15 +436,22 @@ async def execute_bucket_path(
             event_id=processed.event_id,
             skip_stage=event_rec.skip_stage,
             skip_reason=event_rec.skip_reason,
+            pipeline_profile=profile,
         )
 
     if market.is_halted:
         halt_reason = "MARKET_NOT_INITIALIZED" if not market.is_initialized else "MARKET_HALTED"
         event_rec.skip_stage = SkipStage.GUARDRAIL
         event_rec.skip_reason = halt_reason
+        profile = _finalize_profile()
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason=halt_reason)
-        return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason=halt_reason)
+        return ProcessOutcome(
+            event_id=processed.event_id,
+            skip_stage=SkipStage.GUARDRAIL,
+            skip_reason=halt_reason,
+            pipeline_profile=profile,
+        )
 
     market_snapshot = market.snapshot
     if (
@@ -397,20 +473,28 @@ async def execute_bucket_path(
         else:
             event_rec.skip_stage = SkipStage.GUARDRAIL
             event_rec.skip_reason = "MARKET_BREADTH_RISK_OFF"
+            profile = _finalize_profile()
             await log.write(event_rec)
             _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MARKET_BREADTH_RISK_OFF")
             return ProcessOutcome(
                 event_id=processed.event_id,
                 skip_stage=SkipStage.GUARDRAIL,
                 skip_reason="MARKET_BREADTH_RISK_OFF",
+                pipeline_profile=profile,
             )
 
     if config.dry_run:
         event_rec.skip_stage = SkipStage.GUARDRAIL
         event_rec.skip_reason = "DRY_RUN"
+        profile = _finalize_profile()
         await log.write(event_rec)
         _mark_skip(counters, stage="DRY_RUN", reason="DRY_RUN")
-        return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason="DRY_RUN")
+        return ProcessOutcome(
+            event_id=processed.event_id,
+            skip_stage=SkipStage.GUARDRAIL,
+            skip_reason="DRY_RUN",
+            pipeline_profile=profile,
+        )
 
     decision_hold_minutes = get_max_hold_minutes(analysis_headline, keyword_hits, config)
     guardrail_profile = resolve_dynamic_guardrail_profile(
@@ -426,15 +510,27 @@ async def execute_bucket_path(
         if raw.ticker in guardrail_state.bought_tickers:
             event_rec.skip_stage = SkipStage.GUARDRAIL
             event_rec.skip_reason = "SAME_STOCK_REBUY"
+            profile = _finalize_profile()
             await log.write(event_rec)
             _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="SAME_STOCK_REBUY")
-            return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason="SAME_STOCK_REBUY")
+            return ProcessOutcome(
+                event_id=processed.event_id,
+                skip_stage=SkipStage.GUARDRAIL,
+                skip_reason="SAME_STOCK_REBUY",
+                pipeline_profile=profile,
+            )
         if guardrail_state.position_count >= config.max_positions:
             event_rec.skip_stage = SkipStage.GUARDRAIL
             event_rec.skip_reason = "MAX_POSITIONS"
+            profile = _finalize_profile()
             await log.write(event_rec)
             _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MAX_POSITIONS")
-            return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason="MAX_POSITIONS")
+            return ProcessOutcome(
+                event_id=processed.event_id,
+                skip_stage=SkipStage.GUARDRAIL,
+                skip_reason="MAX_POSITIONS",
+                pipeline_profile=profile,
+            )
     if _is_fast_profile_late_entry(
         config=config,
         hold_minutes=decision_hold_minutes,
@@ -443,14 +539,17 @@ async def execute_bucket_path(
     ):
         event_rec.skip_stage = SkipStage.GUARDRAIL
         event_rec.skip_reason = "FAST_PROFILE_LATE_ENTRY"
+        profile = _finalize_profile()
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="FAST_PROFILE_LATE_ENTRY")
         return ProcessOutcome(
             event_id=processed.event_id,
             skip_stage=SkipStage.GUARDRAIL,
             skip_reason="FAST_PROFILE_LATE_ENTRY",
+            pipeline_profile=profile,
         )
 
+    _decision_t0 = time.monotonic()
     try:
         risk_budget = resolve_daily_loss_budget(config, guardrail_state) if guardrail_state is not None else None
         decision = await decision_engine.decide(
@@ -484,6 +583,7 @@ async def execute_bucket_path(
             run_id=run_id,
             schema_version=config.schema_version,
         )
+    decision_total_ms = int((time.monotonic() - _decision_t0) * 1000)
     decision.event_id = processed.event_id
     decision.mode = mode
 
@@ -519,6 +619,8 @@ async def execute_bucket_path(
     # 총 감점 상한: LLM 원본에서 -10 이상 감점 방지 (과다 감점 = 진짜 촉매 놓침)
     # llm_original_conf를 모든 감점 전에 캡처해야 article(-10) + pipeline(-10) = -20 방지
     news_cat = classify_news_type(analysis_headline, keyword_hits)
+    effective_entry_delay_ms = None
+
     if decision.action == Action.BUY:
         llm_original_conf = decision.confidence
         # v66: graduated cap 보호 강화 — 유효 촉매 과다 차단 방지
@@ -771,11 +873,7 @@ async def execute_bucket_path(
             )
             decision.size_hint = SizeHint.M
 
-    # Inline decision into event_rec (유실 방지)
-    event_rec.decision_action = decision.action.value
-    event_rec.decision_confidence = decision.confidence
-    event_rec.decision_size_hint = decision.size_hint.value
-    event_rec.decision_reason = decision.reason
+    _attach_decision_summary(event_rec, decision)
 
     if decision.action == Action.BUY and guardrail_profile.supportive_market:
         logger.info(
@@ -788,6 +886,7 @@ async def execute_bucket_path(
             guardrail_profile.fast_profile_no_buy_after_kst_minute,
         )
 
+    _guardrail_t0 = time.monotonic()
     pattern_loss = match_loss_guardrail(
         recent_pattern_profile,
         news_type=news_cat,
@@ -798,6 +897,8 @@ async def execute_bucket_path(
         event_rec.skip_stage = SkipStage.GUARDRAIL
         event_rec.skip_reason = pattern_loss.guardrail_reason or "PATTERN_LOSS_GUARDRAIL"
         event_rec.guardrail_result = event_rec.skip_reason
+        guardrail_ms = int((time.monotonic() - _guardrail_t0) * 1000)
+        profile = _finalize_profile(decision)
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason=event_rec.skip_reason)
         logger.info(
@@ -809,7 +910,13 @@ async def execute_bucket_path(
             pattern_loss.count,
             pattern_loss.total_pnl_pct,
         )
-        return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason=event_rec.skip_reason)
+        return ProcessOutcome(
+            event_id=processed.event_id,
+            skip_stage=SkipStage.GUARDRAIL,
+            skip_reason=event_rec.skip_reason,
+            decision=decision,
+            pipeline_profile=profile,
+        )
 
     gr = check_guardrails(
         ticker=raw.ticker,
@@ -833,10 +940,12 @@ async def execute_bucket_path(
         decision_size_hint=decision.size_hint.value,
         dynamic_profile=guardrail_profile,
     )
+    guardrail_ms = int((time.monotonic() - _guardrail_t0) * 1000)
     if not gr.passed:
         event_rec.skip_stage = SkipStage.GUARDRAIL
         event_rec.skip_reason = gr.reason
         event_rec.guardrail_result = gr.reason
+        profile = _finalize_profile(decision)
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason=gr.reason)
         # BUY guardrail 차단은 텔레그램으로 운영자에게 즉시 알림
@@ -864,14 +973,13 @@ async def execute_bucket_path(
                 mode=mode,
                 is_buy_decision=False,  # snapshot만, 가상 매매 아님
             )
-        return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason=gr.reason)
-
-    await log.write(event_rec)
-    await log.write(decision)
-    if counters is not None:
-        counters.totals["decisions_emitted"] += 1
-        counters.totals[f"decision_action_{decision.action.value}"] += 1
-        counters.totals[f"decision_source_{decision.decision_source}"] += 1
+        return ProcessOutcome(
+            event_id=processed.event_id,
+            skip_stage=SkipStage.GUARDRAIL,
+            skip_reason=gr.reason,
+            decision=decision,
+            pipeline_profile=profile,
+        )
 
     if decision.action == Action.BUY and guardrail_state is not None:
         guardrail_state.record_buy(raw.ticker, sector=raw_data.sector if ctx else "")
@@ -879,6 +987,7 @@ async def execute_bucket_path(
     # Live mode: 실주문 매수
     if mode == "live" and order_executor is not None and decision.action == Action.BUY:
         try:
+            _order_t0 = time.monotonic()
             _macro_mult = market.snapshot.macro_position_multiplier or 1.0
             _base_order_won = config.order_size_for_hint(decision.size_hint.value)
             _buy_result = await order_executor.buy_market(
@@ -887,8 +996,10 @@ async def execute_bucket_path(
                 target_won=_base_order_won * _macro_mult,
                 current_price=raw_data.px if raw_data.px else 0,
             )
+            order_attempt_ms = int((time.monotonic() - _order_t0) * 1000)
         except Exception:
             logger.exception("LIVE BUY order error [%s]", raw.ticker)
+            order_attempt_ms = int((time.monotonic() - _order_t0) * 1000)
 
     # 보유시간 차등화: 키워드 기반 hold profile
     is_buy = decision.action == Action.BUY
@@ -964,12 +1075,25 @@ async def execute_bucket_path(
             sl_pct=buy_sl,
         )
 
-    _pipeline_ms = int((time.monotonic() - _pipeline_t0) * 1000)
+    profile = _finalize_profile(decision)
+    await log.write(event_rec)
+    await log.write(decision)
+    if counters is not None:
+        counters.totals["decisions_emitted"] += 1
+        counters.totals[f"decision_action_{decision.action.value}"] += 1
+        counters.totals[f"decision_source_{decision.decision_source}"] += 1
+
+    _pipeline_ms = profile.pipeline_total_ms or int((time.monotonic() - _pipeline_t0) * 1000)
     logger.info(
         "Pipeline total [%s] %s: %dms (llm=%dms)",
         raw.ticker, decision.action.value, _pipeline_ms, decision.llm_latency_ms,
     )
-    return ProcessOutcome(event_id=processed.event_id, action=decision.action)
+    return ProcessOutcome(
+        event_id=processed.event_id,
+        action=decision.action,
+        decision=decision,
+        pipeline_profile=profile,
+    )
 
 
 def _make_error_event_record(
@@ -1214,8 +1338,18 @@ async def process_registered_event(
         if outcome.skip_stage == SkipStage.GUARDRAIL and outcome.skip_reason:
             if hasattr(health_state, "record_guardrail_block"):
                 health_state.record_guardrail_block(outcome.skip_reason)
-        if outcome.action is not None and hasattr(health_state, "record_decision"):
-            health_state.record_decision(outcome.action.value)
+        if outcome.pipeline_profile is not None and hasattr(health_state, "record_pipeline_profile"):
+            health_state.record_pipeline_profile(
+                outcome.pipeline_profile,
+                decision_source=outcome.decision.decision_source if outcome.decision is not None else "",
+            )
+        if outcome.action is not None and outcome.decision is not None and hasattr(health_state, "record_decision"):
+            health_state.record_decision(
+                outcome.action.value,
+                latency_ms=outcome.decision.llm_latency_ms,
+                decision_source=outcome.decision.decision_source,
+                cache_layer=outcome.decision.cache_layer or "",
+            )
 
     # 장전 재평가: iv_ratio=0으로 INTRADAY_VALUE_TOO_THIN된 POS 이벤트를
     # registry에서 해제해 장 시작 후 재처리 가능하게 함

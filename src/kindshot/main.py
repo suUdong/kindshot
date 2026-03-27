@@ -448,9 +448,10 @@ async def run() -> None:
                 await _wait_or_stop(stop_event, 60)
 
         # Health check server
-        health_state = HealthState()
+        health_state = HealthState(latency_window_size=config.health_latency_window_size)
         health_state.set_guardrail_state(guardrail_state)
         health_state.set_llm_client(decision_engine._llm)
+        health_state.set_decision_engine(decision_engine)
         health_state.set_feed(feed)
         health_state.set_performance_tracker(performance_tracker)
         health_state.set_recent_pattern_profile(recent_pattern_profile)

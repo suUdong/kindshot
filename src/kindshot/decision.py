@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 import hashlib
 import json
 import logging
@@ -606,8 +607,10 @@ class DecisionEngine:
         self._cache: dict[str, _CacheEntry] = {}
         self._last_sweep: float = time.monotonic()
         self._llm = LlmClient(config)
-        # In-flight dedup: same key requests await a single upstream LLM call.
         self._inflight: dict[str, asyncio.Task[DecisionRecord]] = {}
+        self._stats: Counter[str] = Counter()
+        self._cache_dir = config.llm_cache_dir
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _cache_key(
         self,
@@ -616,42 +619,124 @@ class DecisionEngine:
         bucket: Bucket,
         ctx: ContextCard,
         *,
+        corp_name: str = "",
+        detected_at_str: str = "",
         dorg: str = "",
+        market_ctx: Optional[MarketContext] = None,
         risk_budget: DailyLossBudgetSnapshot | None = None,
         consecutive_stop_losses: int = 0,
+        strategy_override: str | None = None,
     ) -> str:
-        # Include context card data so market changes invalidate cache
+        detected_at_bucket = detected_at_str[:5] if detected_at_str else ""
         ctx_str = (
             f"{ctx.adv_value_20d}|{ctx.spread_bps}|{ctx.ret_today}|"
             f"{ctx.intraday_value_vs_adv20d}|{ctx.top_ask_notional}|"
             f"{ctx.quote_temp_stop}|{ctx.quote_liquidation_trade}"
         )
+        market_str = ""
+        if market_ctx is not None:
+            market_str = (
+                f"|{market_ctx.kospi_change_pct}|{market_ctx.kosdaq_change_pct}"
+                f"|{market_ctx.kospi_breadth_ratio}|{market_ctx.kosdaq_breadth_ratio}"
+                f"|{market_ctx.macro_overall_regime}|{market_ctx.macro_overall_confidence}"
+                f"|{market_ctx.macro_kr_regime}|{market_ctx.macro_crypto_regime}"
+                f"|{market_ctx.macro_position_multiplier}"
+            )
         risk_str = ""
         if risk_budget is not None:
             risk_str = (
                 f"|{risk_budget.effective_floor_won}|{risk_budget.remaining_budget_won}"
                 f"|{risk_budget.effective_floor_pct}|{consecutive_stop_losses}"
             )
-        h = hashlib.sha256(f"{headline}|{dorg}|{ctx_str}{risk_str}".encode()).hexdigest()[:16]
+        h = hashlib.sha256(
+            f"{ticker}|{corp_name}|{headline}|{bucket.value}|{detected_at_bucket}|{dorg}|{ctx_str}{market_str}{risk_str}|{strategy_override or ''}".encode()
+        ).hexdigest()[:32]
         return f"{ticker}:{h}:{bucket.value}"
 
     def _sweep_cache(self) -> None:
         now = time.monotonic()
-        # 크기 제한: 1024 엔트리 초과 시 강제 sweep
-        force = len(self._cache) > 1024
+        force = len(self._cache) > self._config.llm_cache_max_entries
         if not force and now - self._last_sweep < self._config.llm_cache_sweep_s:
             return
         expired = [k for k, v in self._cache.items() if v.expires_at < now]
         for k in expired:
             del self._cache[k]
-        # 여전히 초과 시 가장 오래된 절반 제거
-        if len(self._cache) > 1024:
+        if len(self._cache) > self._config.llm_cache_max_entries:
             sorted_keys = sorted(self._cache, key=lambda k: self._cache[k].expires_at)
-            for k in sorted_keys[: len(sorted_keys) // 2]:
+            overflow = len(self._cache) - self._config.llm_cache_max_entries
+            for k in sorted_keys[:overflow]:
                 del self._cache[k]
+        self._sweep_disk_cache(force=force)
         self._last_sweep = now
 
-    def _as_cache_result(self, source: DecisionRecord, run_id: str) -> DecisionRecord:
+    def _disk_cache_path(self, key: str) -> Path:
+        digest = hashlib.sha256(key.encode()).hexdigest()
+        return self._cache_dir / f"{digest}.json"
+
+    def _load_disk_cache(self, key: str, run_id: str) -> DecisionRecord | None:
+        path = self._disk_cache_path(key)
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            expires_at = float(payload.get("expires_at_unix", 0.0))
+            if expires_at <= time.time():
+                path.unlink(missing_ok=True)
+                return None
+            record_payload = payload.get("record")
+            if not isinstance(record_payload, dict):
+                return None
+            source = DecisionRecord.model_validate(record_payload)
+            self._stats["disk_hits"] += 1
+            return self._as_cache_result(source, run_id, cache_layer="disk")
+        except Exception:
+            self._stats["disk_errors"] += 1
+            logger.warning("Failed to read LLM disk cache for %s", key, exc_info=True)
+            return None
+
+    def _write_disk_cache(self, key: str, record: DecisionRecord) -> None:
+        payload = {
+            "expires_at_unix": time.time() + float(self._config.llm_cache_ttl_s),
+            "record": record.model_dump(mode="json"),
+        }
+        path = self._disk_cache_path(key)
+        tmp_path = path.with_suffix(".tmp")
+        try:
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            tmp_path.replace(path)
+            self._stats["writes"] += 1
+        except Exception:
+            self._stats["disk_errors"] += 1
+            logger.warning("Failed to write LLM disk cache for %s", key, exc_info=True)
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _sweep_disk_cache(self, *, force: bool = False) -> None:
+        if not force and time.monotonic() - self._last_sweep < self._config.llm_cache_sweep_s:
+            return
+        files = sorted(self._cache_dir.glob("*.json"))
+        now_unix = time.time()
+        active_files: list[Path] = []
+        for path in files:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if float(payload.get("expires_at_unix", 0.0)) <= now_unix:
+                    path.unlink(missing_ok=True)
+                    continue
+            except Exception:
+                path.unlink(missing_ok=True)
+                continue
+            active_files.append(path)
+        if len(active_files) > self._config.llm_cache_max_entries:
+            overflow = len(active_files) - self._config.llm_cache_max_entries
+            active_files.sort(key=lambda item: item.stat().st_mtime)
+            for path in active_files[:overflow]:
+                path.unlink(missing_ok=True)
+
+    def _as_cache_result(self, source: DecisionRecord, run_id: str, *, cache_layer: str) -> DecisionRecord:
         return DecisionRecord(
             schema_version=source.schema_version,
             run_id=run_id or source.run_id,
@@ -664,7 +749,19 @@ class DecisionEngine:
             size_hint=source.size_hint,
             reason=source.reason,
             decision_source="CACHE",
+            cache_layer=cache_layer,
         )
+
+    def cache_stats(self) -> dict[str, int]:
+        return {
+            "memory_entries": len(self._cache),
+            "memory_hits": self._stats["memory_hits"],
+            "disk_hits": self._stats["disk_hits"],
+            "inflight_hits": self._stats["inflight_hits"],
+            "misses": self._stats["misses"],
+            "writes": self._stats["writes"],
+            "disk_errors": self._stats["disk_errors"],
+        }
 
     def fallback_decide(
         self,
@@ -786,24 +883,33 @@ class DecisionEngine:
             analysis_text,
             bucket,
             ctx,
+            corp_name=corp_name,
+            detected_at_str=detected_at_str,
             dorg=dorg,
+            market_ctx=market_ctx,
             risk_budget=risk_budget,
             consecutive_stop_losses=consecutive_stop_losses,
+            strategy_override=strategy_override,
         )
 
-        # Cache hit
         if key in self._cache and self._cache[key].expires_at > time.monotonic():
-            return self._as_cache_result(self._cache[key].result, run_id)
+            self._stats["memory_hits"] += 1
+            return self._as_cache_result(self._cache[key].result, run_id, cache_layer="memory")
 
-        # In-flight dedup for same key to prevent duplicate API calls.
+        disk_hit = self._load_disk_cache(key, run_id)
+        if disk_hit is not None:
+            return disk_hit
+
         inflight = self._inflight.get(key)
         if inflight is not None:
             try:
                 shared = await inflight
             except (LlmTimeoutError, LlmCallError, LlmParseError) as e:
-                # Re-raise per-caller for clearer local traceback context.
                 raise type(e)(str(e)) from e
-            return self._as_cache_result(shared, run_id)
+            self._stats["inflight_hits"] += 1
+            return self._as_cache_result(shared, run_id, cache_layer="inflight")
+
+        self._stats["misses"] += 1
 
         async def _invoke_uncached() -> DecisionRecord:
             prompt = _build_prompt(
@@ -842,12 +948,14 @@ class DecisionEngine:
                 size_hint=SizeHint(parsed["size_hint"]),
                 reason=parsed.get("reason", ""),
                 decision_source="LLM",
+                cache_layer="miss",
             )
 
             self._cache[key] = _CacheEntry(
                 result=record,
                 expires_at=time.monotonic() + self._config.llm_cache_ttl_s,
             )
+            self._write_disk_cache(key, record)
             return record
 
         task = asyncio.create_task(_invoke_uncached())

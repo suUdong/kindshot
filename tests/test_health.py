@@ -8,6 +8,7 @@ from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from kindshot.health import HealthState, _health_handler, start_health_server
 from kindshot.guardrails import GuardrailState
+from kindshot.models import PipelineLatencyProfile
 from kindshot.performance import PerformanceTracker
 from kindshot.pattern_profile import RecentPatternProfile
 
@@ -119,6 +120,43 @@ def test_health_snapshot_exposes_extended_guardrail_state():
     assert snap["guardrail_state"]["recent_closed_trades"] == 3
     assert snap["guardrail_state"]["recent_win_rate"] == pytest.approx(1 / 3)
     assert snap["guardrail_state"]["consecutive_loss_halt_threshold"] == cfg.consecutive_loss_halt
+
+
+def test_health_snapshot_exposes_latency_profile_and_llm_cache():
+    class EngineStub:
+        def cache_stats(self):
+            return {
+                "memory_entries": 2,
+                "memory_hits": 3,
+                "disk_hits": 1,
+                "inflight_hits": 0,
+                "misses": 4,
+                "writes": 4,
+                "disk_errors": 0,
+            }
+
+    state = HealthState(latency_window_size=4)
+    state.set_decision_engine(EngineStub())
+    state.record_pipeline_profile(
+        PipelineLatencyProfile(
+            news_to_pipeline_ms=180,
+            context_card_ms=40,
+            decision_total_ms=90,
+            guardrail_ms=5,
+            pipeline_total_ms=120,
+            llm_latency_ms=70,
+            llm_cache_layer="disk",
+            bottleneck_stage="decision",
+        ),
+        decision_source="CACHE",
+    )
+
+    snap = state.snapshot()
+
+    assert snap["latency_profile"]["stages"]["pipeline_total_ms"]["avg_ms"] == 120
+    assert snap["latency_profile"]["bottlenecks"]["decision"] == 1
+    assert snap["latency_profile"]["cache_layers"]["disk"] == 1
+    assert snap["llm_cache"]["disk_hits"] == 1
 
 
 def test_health_server_default_bind_is_localhost():

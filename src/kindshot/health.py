@@ -11,6 +11,8 @@ from typing import Any, Optional
 
 from aiohttp import web
 
+from kindshot.models import PipelineLatencyProfile
+from kindshot.runtime_latency import RecentLatencyTracker
 from kindshot.tz import KST as _KST
 
 logger = logging.getLogger(__name__)
@@ -19,7 +21,7 @@ logger = logging.getLogger(__name__)
 class HealthState:
     """Shared mutable state exposed via /health endpoint."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, latency_window_size: int = 200) -> None:
         self.started_at: str = datetime.now(_KST).isoformat()
         self.last_poll_at: str = ""
         self.last_event_at: str = ""
@@ -36,9 +38,11 @@ class HealthState:
         # Guardrail state references (set by main.py after init)
         self._guardrail_state: Optional[Any] = None
         self._llm_client: Optional[Any] = None
+        self._decision_engine: Optional[Any] = None
         self._feed: Optional[Any] = None
         self._performance_tracker: Optional[Any] = None
         self._recent_pattern_profile: Optional[Any] = None
+        self._latency_tracker = RecentLatencyTracker(window_size=latency_window_size)
         # Guardrail block tracking
         self.guardrail_blocks: dict[str, int] = {}
 
@@ -47,6 +51,9 @@ class HealthState:
 
     def set_llm_client(self, client: Any) -> None:
         self._llm_client = client
+
+    def set_decision_engine(self, engine: Any) -> None:
+        self._decision_engine = engine
 
     def set_feed(self, feed: Any) -> None:
         self._feed = feed
@@ -74,7 +81,14 @@ class HealthState:
         self.events_seen += 1
         self.last_event_at = datetime.now(_KST).isoformat()
 
-    def record_decision(self, action: str, latency_ms: int = 0) -> None:
+    def record_decision(
+        self,
+        action: str,
+        latency_ms: int = 0,
+        *,
+        decision_source: str = "",
+        cache_layer: str = "",
+    ) -> None:
         self.events_processed += 1
         self.llm_calls += 1
         self.llm_total_ms += latency_ms
@@ -82,6 +96,14 @@ class HealthState:
             self.buy_count += 1
         else:
             self.skip_count += 1
+
+    def record_pipeline_profile(
+        self,
+        profile: PipelineLatencyProfile,
+        *,
+        decision_source: str = "",
+    ) -> None:
+        self._latency_tracker.record(profile, decision_source=decision_source)
 
     def record_llm_fallback(self) -> None:
         self.llm_fallback_count += 1
@@ -181,6 +203,11 @@ class HealthState:
 
         if self.guardrail_blocks:
             result["guardrail_blocks"] = dict(self.guardrail_blocks)
+
+        result["latency_profile"] = self._latency_tracker.snapshot()
+
+        if self._decision_engine is not None and hasattr(self._decision_engine, "cache_stats"):
+            result["llm_cache"] = self._decision_engine.cache_stats()
 
         if self._performance_tracker is not None and hasattr(self._performance_tracker, "live_metrics"):
             result["trade_metrics"] = self._performance_tracker.live_metrics()

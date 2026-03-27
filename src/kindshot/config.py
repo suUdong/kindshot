@@ -104,6 +104,7 @@ class Config:
     llm_cache_ttl_s: float = 60.0
     llm_cache_sweep_s: float = 300.0
     llm_max_concurrency: int = field(default_factory=lambda: _env_int("LLM_MAX_CONCURRENCY", 2))
+    llm_cache_max_entries: int = field(default_factory=lambda: _env_int("LLM_CACHE_MAX_ENTRIES", 1024))
 
     # --- KIS ---
     kis_app_key: str = field(default_factory=lambda: _env("KIS_APP_KEY"))
@@ -242,6 +243,7 @@ class Config:
     # --- Health ---
     health_host: str = field(default_factory=lambda: _env("HEALTH_HOST", "127.0.0.1"))
     health_port: int = field(default_factory=lambda: _env_int("HEALTH_PORT", 8080))
+    health_latency_window_size: int = field(default_factory=lambda: _env_int("HEALTH_LATENCY_WINDOW_SIZE", 200))
     macro_api_base_url: str = field(default_factory=lambda: _env("MACRO_API_BASE_URL", ""))
     macro_api_timeout_s: float = field(default_factory=lambda: _env_float("MACRO_API_TIMEOUT_S", 5.0))
     alpha_scanner_api_base_url: str = field(default_factory=lambda: _env("ALPHA_SCANNER_API_BASE_URL", ""))
@@ -266,6 +268,7 @@ class Config:
     runtime_market_context_dir: Path = field(default_factory=lambda: Path(_env("RUNTIME_MARKET_CONTEXT_DIR", "data/runtime/market_context")))
     runtime_context_cards_dir: Path = field(default_factory=lambda: Path(_env("RUNTIME_CONTEXT_CARDS_DIR", "data/runtime/context_cards")))
     runtime_index_path: Path = field(default_factory=lambda: Path(_env("RUNTIME_INDEX_PATH", "data/runtime/index.json")))
+    llm_cache_dir: Path = field(default_factory=lambda: Path(_env("LLM_CACHE_DIR", "data/runtime/llm_cache")))
     replay_day_reports_dir: Path = field(default_factory=lambda: Path(_env("REPLAY_DAY_REPORTS_DIR", "data/replay/day_reports")))
     replay_day_status_dir: Path = field(default_factory=lambda: Path(_env("REPLAY_DAY_STATUS_DIR", "data/replay/day_status")))
     replay_ops_summary_path: Path = field(default_factory=lambda: Path(_env("REPLAY_OPS_SUMMARY_PATH", "data/replay/ops/latest.json")))

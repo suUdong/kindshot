@@ -1,11 +1,7 @@
 """Tests for LLM decision engine."""
 
 import asyncio
-import hashlib
-import json
-import time
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -249,6 +245,7 @@ def test_build_prompt_includes_alpha_scanner_signal():
     assert "alpha_confidence=86" in prompt
     assert "alpha_size=full" in prompt
 
+
 def test_build_prompt_truncates_long_headline():
     """Headlines longer than 500 chars are truncated to prevent prompt injection."""
     ctx = ContextCard(
@@ -344,8 +341,8 @@ def test_fallback_decide_skips_brokerage_contract_commentary_from_raw_headline()
     assert record.reason == "rule_fallback:article_pattern"
 
 
-def test_cache_key_changes_with_microstructure_context():
-    cfg = Config(anthropic_api_key="test")
+def test_cache_key_changes_with_microstructure_context(tmp_path):
+    cfg = Config(anthropic_api_key="test", llm_cache_dir=tmp_path / "llm_cache")
     engine = DecisionEngine(cfg)
 
     ctx1 = ContextCard(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0, intraday_value_vs_adv20d=0.01)
@@ -357,8 +354,8 @@ def test_cache_key_changes_with_microstructure_context():
     assert key1 != key2
 
 
-async def test_cache_hit():
-    cfg = Config(anthropic_api_key="test")
+async def test_cache_hit(tmp_path):
+    cfg = Config(anthropic_api_key="test", llm_cache_dir=tmp_path / "llm_cache")
     engine = DecisionEngine(cfg)
 
     mock_client = AsyncMock()
@@ -380,8 +377,8 @@ async def test_cache_hit():
     assert mock_client.messages.create.call_count == 1
 
 
-async def test_inflight_dedup_single_upstream_call():
-    cfg = Config(anthropic_api_key="test")
+async def test_inflight_dedup_single_upstream_call(tmp_path):
+    cfg = Config(anthropic_api_key="test", llm_cache_dir=tmp_path / "llm_cache")
     engine = DecisionEngine(cfg)
 
     mock_client = AsyncMock()
@@ -410,8 +407,8 @@ async def test_inflight_dedup_single_upstream_call():
     assert {r1.decision_source, r2.decision_source} == {"LLM", "CACHE"}
 
 
-async def test_inflight_dedup_error_propagates_to_all_callers():
-    cfg = Config(anthropic_api_key="test")
+async def test_inflight_dedup_error_propagates_to_all_callers(tmp_path):
+    cfg = Config(anthropic_api_key="test", llm_cache_dir=tmp_path / "llm_cache")
     engine = DecisionEngine(cfg)
 
     mock_client = AsyncMock()
@@ -435,8 +432,8 @@ async def test_inflight_dedup_error_propagates_to_all_callers():
     assert call_count["n"] == 3  # 3 attempts with exponential backoff (all fail)
 
 
-async def test_llm_timeout_raises():
-    cfg = Config(anthropic_api_key="test", llm_wait_for_s=0.01)
+async def test_llm_timeout_raises(tmp_path):
+    cfg = Config(anthropic_api_key="test", llm_wait_for_s=0.01, llm_cache_dir=tmp_path / "llm_cache")
     engine = DecisionEngine(cfg)
 
     mock_client = AsyncMock()
@@ -448,8 +445,8 @@ async def test_llm_timeout_raises():
         await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
 
 
-async def test_llm_call_error_raises():
-    cfg = Config(anthropic_api_key="test")
+async def test_llm_call_error_raises(tmp_path):
+    cfg = Config(anthropic_api_key="test", llm_cache_dir=tmp_path / "llm_cache")
     engine = DecisionEngine(cfg)
 
     mock_client = AsyncMock()
@@ -461,8 +458,8 @@ async def test_llm_call_error_raises():
         await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
 
 
-async def test_llm_bad_response_structure_raises():
-    cfg = Config(anthropic_api_key="test")
+async def test_llm_bad_response_structure_raises(tmp_path):
+    cfg = Config(anthropic_api_key="test", llm_cache_dir=tmp_path / "llm_cache")
     engine = DecisionEngine(cfg)
 
     mock_client = AsyncMock()
@@ -476,8 +473,8 @@ async def test_llm_bad_response_structure_raises():
         await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
 
 
-async def test_llm_invalid_json_raises():
-    cfg = Config(anthropic_api_key="test")
+async def test_llm_invalid_json_raises(tmp_path):
+    cfg = Config(anthropic_api_key="test", llm_cache_dir=tmp_path / "llm_cache")
     engine = DecisionEngine(cfg)
 
     mock_client = AsyncMock()
@@ -635,6 +632,62 @@ async def test_normal_contract_still_calls_llm_when_preflight_clean():
     assert result.action == Action.BUY
     assert result.decision_source == "LLM"
     assert mock_client.messages.create.call_count == 1
+
+
+async def test_decision_engine_memory_cache_reuses_equivalent_prompt(tmp_path):
+    cfg = Config(
+        anthropic_api_key="test",
+        llm_provider="anthropic",
+        llm_cache_dir=tmp_path / "llm_cache",
+    )
+    engine = DecisionEngine(cfg)
+
+    mock_client = MagicMock()
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text='{"action":"BUY","confidence":80,"size_hint":"M","reason":"cached"}')]
+    mock_client.messages.create = AsyncMock(return_value=mock_msg)
+    engine._llm._anthropic_client = mock_client
+
+    ctx = ContextCard(ret_today=0.2, adv_value_20d=120_000_000_000)
+    first = await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
+    second = await engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
+
+    assert first.decision_source == "LLM"
+    assert second.decision_source == "CACHE"
+    assert second.cache_layer == "memory"
+    assert mock_client.messages.create.await_count == 1
+    assert engine.cache_stats()["memory_hits"] == 1
+
+
+async def test_decision_engine_disk_cache_survives_new_engine(tmp_path):
+    cfg = Config(
+        anthropic_api_key="test",
+        llm_provider="anthropic",
+        llm_cache_dir=tmp_path / "llm_cache",
+    )
+    first_engine = DecisionEngine(cfg)
+
+    first_client = MagicMock()
+    first_msg = MagicMock()
+    first_msg.content = [MagicMock(text='{"action":"BUY","confidence":81,"size_hint":"M","reason":"disk cache"}')]
+    first_client.messages.create = AsyncMock(return_value=first_msg)
+    first_engine._llm._anthropic_client = first_client
+
+    ctx = ContextCard(ret_today=0.2, adv_value_20d=120_000_000_000)
+    initial = await first_engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
+
+    second_engine = DecisionEngine(cfg)
+    second_client = MagicMock()
+    second_client.messages.create = AsyncMock(side_effect=AssertionError("disk cache should satisfy the request"))
+    second_engine._llm._anthropic_client = second_client
+
+    cached = await second_engine.decide("005930", "삼성전자", "공급계약 체결", Bucket.POS_STRONG, ctx, "09:00:00")
+
+    assert initial.decision_source == "LLM"
+    assert cached.decision_source == "CACHE"
+    assert cached.cache_layer == "disk"
+    assert second_engine.cache_stats()["disk_hits"] == 1
+    assert second_client.messages.create.await_count == 0
 
 
 # ── v3 프롬프트 & 파서 테스트 ──────────────────

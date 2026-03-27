@@ -189,7 +189,7 @@ async def test_guardrail_block_logged(tmp_path):
         schema_version="0.1.2",
         run_id="test_run",
         event_id="",
-        decided_at=datetime.now(timezone.utc),
+        decided_at=datetime(2026, 3, 5, 0, 12, 30, tzinfo=timezone.utc),
         llm_model="test",
         llm_latency_ms=10,
         action=Action.BUY,
@@ -221,7 +221,7 @@ async def test_pipeline_passes_delay_ms_to_guardrails(tmp_path):
         schema_version="0.1.2",
         run_id="test_run",
         event_id="",
-        decided_at=datetime.now(timezone.utc),
+        decided_at=datetime(2026, 3, 5, 0, 12, 30, tzinfo=timezone.utc),
         llm_model="test",
         llm_latency_ms=10,
         action=Action.BUY,
@@ -619,6 +619,40 @@ async def test_paper_mode_logs_decision_with_paper_mode(tmp_path):
     assert event_records[0]["mode"] == "paper"
     assert len(decision_records) == 1
     assert decision_records[0]["mode"] == "paper"
+
+
+async def test_pipeline_logs_latency_profile_and_cache_layer(tmp_path):
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=0,
+        action=Action.BUY,
+        confidence=80,
+        size_hint=SizeHint.M,
+        reason="cached decision",
+        decision_source="CACHE",
+        cache_layer="disk",
+    )
+    raw = _make_raw()
+    records = await _run_pipeline_once(
+        tmp_path,
+        [raw],
+        decision_side_effect=[mock_decision],
+        paper=True,
+    )
+
+    event_records = [r for r in records if r.get("type") == "event" and r.get("skip_stage") is None]
+
+    assert len(event_records) == 1
+    assert event_records[0]["decision_source"] == "CACHE"
+    assert event_records[0]["decision_cache_layer"] == "disk"
+    assert event_records[0]["pipeline_profile"]["llm_cache_layer"] == "disk"
+    assert event_records[0]["pipeline_profile"]["pipeline_total_ms"] >= 0
 
 
 async def test_recent_pattern_profile_boosts_matching_buy_confidence(tmp_path):
@@ -1211,8 +1245,6 @@ async def test_pipeline_passes_effective_delay_and_prior_volume_to_guardrails(tm
         ticker=raw.ticker,
         corp_name=raw.corp_name,
         detected_at=datetime(2026, 3, 27, 10, 5, 30, tzinfo=timezone(timedelta(hours=9))),
-        source=raw.source,
-        metadata=raw.metadata,
         dorg=raw.dorg,
     )
 

@@ -15,8 +15,6 @@ from typing import Optional
 
 import aiohttp
 
-import aiohttp
-
 from kindshot.config import Config
 from kindshot.kis_client import KisClient
 from kindshot.models import AlphaSignalContext, ContextCard
@@ -42,6 +40,7 @@ class ContextCardData:
     volume_turnover_rate: Optional[float] = None
     prior_volume_rate: Optional[float] = None
     intraday_value_vs_adv20d: Optional[float] = None
+    orderbook_bid_ask_ratio: Optional[float] = None
     quote_risk_state: object = None
     orderbook_snapshot: object = None
     sector: str = ""
@@ -49,7 +48,6 @@ class ContextCardData:
     support_price_20d: Optional[float] = None
     support_reference_px: Optional[float] = None
     alpha_signal: dict | None = None
-
 
 def configure_cache(ttl_s: int, max_size: int) -> None:
     """Set cache policy from Config at runtime."""
@@ -268,38 +266,6 @@ async def _fetch_alpha_scanner_signal(
     )
 
 
-async def _fetch_alpha_scanner_signal(
-    base_url: str,
-    timeout_s: float,
-    ticker: str,
-) -> AlphaSignalContext | None:
-    """Fetch a fresh STRONG_BUY signal from alpha-scanner."""
-    if not base_url:
-        return None
-
-    url = f"{base_url.rstrip('/')}/kindshot/signals/current"
-    timeout = aiohttp.ClientTimeout(total=timeout_s)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url, params={"ticker": ticker}) as response:
-            response.raise_for_status()
-            payload = await response.json()
-
-    if payload.get("status") != "ok" or not payload.get("has_signal"):
-        return None
-
-    return AlphaSignalContext(
-        ticker=payload.get("ticker") or ticker,
-        signal_type=payload.get("signal_type") or "",
-        score_current=payload.get("score_current"),
-        confidence=payload.get("confidence"),
-        size_hint=payload.get("size_hint"),
-        score_delta=payload.get("score_delta"),
-        regime=payload.get("regime"),
-        created_at=payload.get("created_at"),
-        age_hours=payload.get("age_hours"),
-    )
-
-
 async def build_context_card(
     ticker: str,
     kis: Optional[KisClient] = None,
@@ -312,7 +278,28 @@ async def build_context_card(
     """
     if config is not None:
         configure_cache(config.pykrx_cache_ttl_s, config.pykrx_cache_max_size)
-    hist = await _pykrx_features(ticker)
+    hist_task = asyncio.create_task(_pykrx_features(ticker))
+    price_task = asyncio.create_task(kis.get_price(ticker)) if kis is not None else None
+    alpha_task = None
+    if config is not None and config.alpha_scanner_api_base_url:
+        alpha_task = asyncio.create_task(
+            _fetch_alpha_scanner_signal(
+                config.alpha_scanner_api_base_url,
+                config.alpha_scanner_api_timeout_s,
+                ticker,
+            )
+        )
+
+    pending_tasks = [hist_task]
+    if price_task is not None:
+        pending_tasks.append(price_task)
+    if alpha_task is not None:
+        pending_tasks.append(alpha_task)
+    results = await asyncio.gather(*pending_tasks, return_exceptions=True)
+    hist_result = results[0]
+    if isinstance(hist_result, Exception):
+        raise hist_result
+    hist = hist_result
 
     # KIS realtime features (optional)
     spread_bps: Optional[float] = None
@@ -320,13 +307,20 @@ async def build_context_card(
     gap: Optional[float] = None
     intraday_value_vs_adv20d: Optional[float] = None
     top_ask_notional: Optional[float] = None
+    orderbook_bid_ask_ratio: Optional[float] = None
     quote_temp_stop: Optional[bool] = None
     quote_liquidation_trade: Optional[bool] = None
     alpha_signal: AlphaSignalContext | None = None
-    alpha_signal: AlphaSignalContext | None = None
+    result_idx = 1
+    price_info = None
+    if price_task is not None:
+        price_result = results[result_idx]
+        result_idx += 1
+        if isinstance(price_result, Exception):
+            raise price_result
+        price_info = price_result
 
     if kis:
-        price_info = await kis.get_price(ticker)
         if price_info:
             spread_bps = price_info.spread_bps
             prev_close = hist.get("prev_close")
@@ -339,18 +333,20 @@ async def build_context_card(
                 intraday_value_vs_adv20d = round(price_info.cum_value / adv_value_20d, 4)
             if price_info.orderbook is not None:
                 top_ask_notional = round(price_info.orderbook.ask_price1 * price_info.orderbook.ask_size1, 2)
+                if price_info.orderbook.total_ask_size > 0:
+                    orderbook_bid_ask_ratio = round(
+                        price_info.orderbook.total_bid_size / price_info.orderbook.total_ask_size,
+                        4,
+                    )
             quote_temp_stop = price_info.risk_state.temp_stop_yn == "Y"
             quote_liquidation_trade = price_info.risk_state.sltr_yn == "Y"
 
-    if config is not None and config.alpha_scanner_api_base_url:
-        try:
-            alpha_signal = await _fetch_alpha_scanner_signal(
-                config.alpha_scanner_api_base_url,
-                config.alpha_scanner_api_timeout_s,
-                ticker,
-            )
-        except Exception:
-            logger.warning("Alpha-scanner signal fetch failed for %s", ticker, exc_info=True)
+    if alpha_task is not None:
+        alpha_result = results[result_idx]
+        if isinstance(alpha_result, Exception):
+            logger.warning("Alpha-scanner signal fetch failed for %s: %s", ticker, alpha_result)
+        else:
+            alpha_signal = alpha_result
 
     card = ContextCard(
         ret_today=ret_today,
@@ -363,6 +359,7 @@ async def build_context_card(
         vol_pct_20d=hist.get("vol_pct_20d"),
         intraday_value_vs_adv20d=intraday_value_vs_adv20d,
         top_ask_notional=top_ask_notional,
+        orderbook_bid_ask_ratio=orderbook_bid_ask_ratio,
         quote_temp_stop=quote_temp_stop,
         quote_liquidation_trade=quote_liquidation_trade,
         prior_volume_rate=price_info.prior_volume_rate if kis and price_info else None,
@@ -387,6 +384,7 @@ async def build_context_card(
         volume_turnover_rate=price_info.volume_turnover_rate if kis and price_info else None,
         prior_volume_rate=price_info.prior_volume_rate if kis and price_info else None,
         intraday_value_vs_adv20d=intraday_value_vs_adv20d,
+        orderbook_bid_ask_ratio=orderbook_bid_ask_ratio,
         quote_risk_state=price_info.risk_state if kis and price_info else None,
         orderbook_snapshot=price_info.orderbook if kis and price_info else None,
         sector=price_info.sector if kis and price_info else "",
@@ -481,6 +479,7 @@ async def append_runtime_context_card(
             "volume_turnover_rate": raw.volume_turnover_rate,
             "prior_volume_rate": raw.prior_volume_rate,
             "intraday_value_vs_adv20d": raw.intraday_value_vs_adv20d,
+            "orderbook_bid_ask_ratio": raw.orderbook_bid_ask_ratio,
             "quote_risk_state": _json_safe_value(raw.quote_risk_state),
             "orderbook_snapshot": _json_safe_value(raw.orderbook_snapshot),
             "sector": raw.sector,
