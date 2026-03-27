@@ -238,7 +238,7 @@ with tab1:
                 text="count",
             )
             fig_bucket.update_layout(showlegend=False, height=350)
-            st.plotly_chart(fig_bucket, use_container_width=True)
+            st.plotly_chart(fig_bucket, width="stretch")
 
         # BUY/SKIP 파이 차트
         with col_right:
@@ -254,7 +254,7 @@ with tab1:
                     hole=0.4,
                 )
                 fig_action.update_layout(height=350)
-                st.plotly_chart(fig_action, use_container_width=True)
+                st.plotly_chart(fig_action, width="stretch")
             else:
                 st.info("LLM 판단 데이터 없음")
 
@@ -275,7 +275,7 @@ with tab1:
             fig_conf.add_vline(x=78, line_dash="dash", line_color="orange",
                                annotation_text="min_buy=78")
             fig_conf.update_layout(height=300)
-            st.plotly_chart(fig_conf, use_container_width=True)
+            st.plotly_chart(fig_conf, width="stretch")
         else:
             st.info("Confidence 데이터 없음")
 
@@ -302,7 +302,7 @@ with tab1:
             marker=dict(color=["#3498db", "#2980b9", "#1abc9c", "#16a085", "#f39c12", "#27ae60", "#2ecc71"]),
         ))
         fig_funnel.update_layout(height=350)
-        st.plotly_chart(fig_funnel, use_container_width=True)
+        st.plotly_chart(fig_funnel, width="stretch")
 
         # Skip 사유 분석
         st.subheader("Skip 사유 분석")
@@ -313,7 +313,7 @@ with tab1:
             fig_skip = px.bar(skip_counts, x="stage", y="count", text="count",
                               color="stage")
             fig_skip.update_layout(showlegend=False, height=300)
-            st.plotly_chart(fig_skip, use_container_width=True)
+            st.plotly_chart(fig_skip, width="stretch")
 
         # Decision Source 분석
         if "decision_source" in events_df.columns:
@@ -328,7 +328,7 @@ with tab1:
                                     title="판단 경로 비율", hole=0.4,
                                     color_discrete_sequence=px.colors.qualitative.Set2)
                     fig_src.update_layout(height=300)
-                    st.plotly_chart(fig_src, use_container_width=True)
+                    st.plotly_chart(fig_src, width="stretch")
                 with col_src2:
                     src_action = src_data.groupby(["decision_source", "decision_action"]).size().reset_index(name="count")
                     fig_src_act = px.bar(src_action, x="decision_source", y="count",
@@ -336,7 +336,7 @@ with tab1:
                                          color_discrete_map={"BUY": "#2ecc71", "SKIP": "#e74c3c"},
                                          title="Source별 BUY/SKIP")
                     fig_src_act.update_layout(height=300)
-                    st.plotly_chart(fig_src_act, use_container_width=True)
+                    st.plotly_chart(fig_src_act, width="stretch")
 
                 # LLM 레이턴시 분포
                 if "llm_latency_ms" in events_df.columns:
@@ -347,7 +347,7 @@ with tab1:
                                                title="LLM 응답 시간 (ms)",
                                                color_discrete_sequence=["#3498db"])
                         fig_lat.update_layout(height=250)
-                        st.plotly_chart(fig_lat, use_container_width=True)
+                        st.plotly_chart(fig_lat, width="stretch")
 
         # 최근 BUY 시그널 테이블
         st.subheader("BUY 시그널 상세")
@@ -364,7 +364,7 @@ with tab1:
             if "decision_source" in buy_events.columns:
                 col_names.append("Source")
             buy_events.columns = col_names[:len(buy_events.columns)]
-            st.dataframe(buy_events, use_container_width=True, hide_index=True)
+            st.dataframe(buy_events, width="stretch", hide_index=True)
         else:
             st.info("BUY 시그널 없음")
 
@@ -400,7 +400,7 @@ with tab1:
             "guardrail_result": "차단사유",
         }
         feed_display = feed_display.rename(columns=rename_map)
-        st.dataframe(feed_display, use_container_width=True, hide_index=True, height=420)
+        st.dataframe(feed_display, width="stretch", hide_index=True, height=420)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -470,7 +470,7 @@ with tab2:
                     xaxis_title="시각",
                     margin=dict(l=10, r=10, t=48, b=10),
                 )
-                st.plotly_chart(fig_intraday, use_container_width=True)
+                st.plotly_chart(fig_intraday, width="stretch")
             with eq_col2:
                 fig_daily_dd = go.Figure()
                 fig_daily_dd.add_trace(go.Scatter(
@@ -491,7 +491,7 @@ with tab2:
                     xaxis_title="시각",
                     margin=dict(l=10, r=10, t=48, b=10),
                 )
-                st.plotly_chart(fig_daily_dd, use_container_width=True)
+                st.plotly_chart(fig_daily_dd, width="stretch")
 
         # 종목별 수익률 바 차트
         fig_pnl = px.bar(
@@ -504,12 +504,12 @@ with tab2:
             labels={"final_ret_pct": "수익률 (%)", "ticker": "종목코드"},
         )
         fig_pnl.update_layout(height=400)
-        st.plotly_chart(fig_pnl, use_container_width=True)
+        st.plotly_chart(fig_pnl, width="stretch")
 
         # 상세 테이블
         pnl_display = pnl_df[["ticker", "corp_name", "headline", "confidence", "size_hint",
                                "bucket", "entry_px", "best_ret_pct", "final_ret_pct", "final_horizon"]]
-        st.dataframe(pnl_display, use_container_width=True, hide_index=True)
+        st.dataframe(pnl_display, width="stretch", hide_index=True)
         st.download_button(
             "CSV 다운로드 (당일 매매)",
             pnl_display.to_csv(index=False).encode("utf-8-sig"),
@@ -538,7 +538,7 @@ with tab2:
                 )
                 fig_cal.add_hline(y=0, line_dash="dash", line_color="gray")
                 fig_cal.update_layout(height=400)
-                st.plotly_chart(fig_cal, use_container_width=True)
+                st.plotly_chart(fig_cal, width="stretch")
 
             # 버킷별 성과 박스플롯
             with col_b:
@@ -551,7 +551,7 @@ with tab2:
                 )
                 fig_bucket_perf.add_hline(y=0, line_dash="dash", line_color="gray")
                 fig_bucket_perf.update_layout(height=400, showlegend=False)
-                st.plotly_chart(fig_bucket_perf, use_container_width=True)
+                st.plotly_chart(fig_bucket_perf, width="stretch")
 
             # 시간대별 분석 (detected_at 기반)
             if "detected_at" in events_df.columns:
@@ -578,7 +578,7 @@ with tab2:
                             color_continuous_scale=["#e74c3c", "#f39c12", "#2ecc71"],
                         )
                         fig_hour_ret.update_layout(height=350)
-                        st.plotly_chart(fig_hour_ret, use_container_width=True)
+                        st.plotly_chart(fig_hour_ret, width="stretch")
 
                     with col_t2:
                         fig_hour_wr = px.bar(
@@ -592,7 +592,7 @@ with tab2:
                         )
                         fig_hour_wr.add_hline(y=50, line_dash="dash", line_color="orange")
                         fig_hour_wr.update_layout(height=350)
-                        st.plotly_chart(fig_hour_wr, use_container_width=True)
+                        st.plotly_chart(fig_hour_wr, width="stretch")
 
             # Size Hint 효과 분석
             if "size_hint" in valid_pnl.columns:
@@ -606,7 +606,7 @@ with tab2:
                     size_stats.columns = ["Size", "매매수", "평균수익률(%)", "승률(%)"]
                     size_stats["평균수익률(%)"] = size_stats["평균수익률(%)"].round(2)
                     size_stats["승률(%)"] = size_stats["승률(%)"].round(1)
-                    st.dataframe(size_stats, use_container_width=True, hide_index=True)
+                    st.dataframe(size_stats, width="stretch", hide_index=True)
 
             # 키워드별 성과 분석
             if "keyword_hits" in events_df.columns:
@@ -642,14 +642,14 @@ with tab2:
                             labels={"total_ret": "총 수익률 (%)", "keyword": "키워드"},
                         )
                         fig_kw.update_layout(height=400)
-                        st.plotly_chart(fig_kw, use_container_width=True)
+                        st.plotly_chart(fig_kw, width="stretch")
 
                     with col_kw2:
                         kw_display = kw_stats.copy()
                         kw_display.columns = ["키워드", "매매수", "평균수익률(%)", "승률(%)", "총수익률(%)"]
                         for c in ["평균수익률(%)", "승률(%)", "총수익률(%)"]:
                             kw_display[c] = kw_display[c].round(2)
-                        st.dataframe(kw_display, use_container_width=True, hide_index=True)
+                        st.dataframe(kw_display, width="stretch", hide_index=True)
 
         st.divider()
         st.subheader("Shadow Snapshot 기회비용")
@@ -680,7 +680,7 @@ with tab2:
                 )
                 fig_shadow.add_hline(y=0, line_dash="dash", line_color="gray")
                 fig_shadow.update_layout(height=360, margin=dict(l=10, r=10, t=48, b=10))
-                st.plotly_chart(fig_shadow, use_container_width=True)
+                st.plotly_chart(fig_shadow, width="stretch")
             with shadow_table_col:
                 shadow_display = shadow_df[[
                     "ticker", "corp_name", "headline", "confidence",
@@ -695,7 +695,7 @@ with tab2:
                     "final_ret_pct": "가상수익(%)",
                     "final_horizon": "종결시점",
                 })
-                st.dataframe(shadow_display, use_container_width=True, hide_index=True, height=360)
+                st.dataframe(shadow_display, width="stretch", hide_index=True, height=360)
 
         st.divider()
         st.subheader("버전 성과 추이 (v64 → v65 → v66)")
@@ -726,7 +726,7 @@ with tab2:
                 yaxis2=dict(title="총수익률 (%)", overlaying="y", side="right"),
                 margin=dict(l=10, r=10, t=48, b=10),
             )
-            st.plotly_chart(fig_version, use_container_width=True)
+            st.plotly_chart(fig_version, width="stretch")
         with vt_col2:
             version_display = version_trend_df.copy()
             version_display["win_rate"] = version_display["win_rate"].map(lambda v: f"{v:.1f}%" if pd.notna(v) else "N/A")
@@ -741,7 +741,7 @@ with tab2:
                 "source": "근거",
                 "notes": "메모",
             })
-            st.dataframe(version_display, use_container_width=True, hide_index=True, height=360)
+            st.dataframe(version_display, width="stretch", hide_index=True, height=360)
 
     # 멀티데이 성과 추이
     st.divider()
@@ -784,7 +784,7 @@ with tab2:
                                        name="SKIP", marker_color="#e74c3c"))
             fig_daily.update_layout(barmode="stack", title="일별 BUY 실행/차단/SKIP",
                                     height=350, xaxis_title="날짜", yaxis_title="건수")
-            st.plotly_chart(fig_daily, use_container_width=True)
+            st.plotly_chart(fig_daily, width="stretch")
 
         with col2:
             fig_conf_trend = px.line(
@@ -792,7 +792,7 @@ with tab2:
                 markers=True, title="일별 평균 Confidence",
             )
             fig_conf_trend.update_layout(height=350)
-            st.plotly_chart(fig_conf_trend, use_container_width=True)
+            st.plotly_chart(fig_conf_trend, width="stretch")
 
         # 주간/멀티데이 곡선
         if not multi_pnl_df.empty and multi_pnl_df["trades"].sum() > 0:
@@ -813,7 +813,7 @@ with tab2:
                     title="누적 수익률 (%)",
                     height=400, yaxis_title="수익률 (%)", xaxis_title="날짜",
                 )
-                st.plotly_chart(fig_cum, use_container_width=True)
+                st.plotly_chart(fig_cum, width="stretch")
 
             with col_pnl2:
                 fig_weekly_dd = go.Figure()
@@ -829,7 +829,7 @@ with tab2:
                     title="주간 드로다운 (%)",
                     height=400, yaxis_title="드로다운 (%)", xaxis_title="날짜",
                 )
-                st.plotly_chart(fig_weekly_dd, use_container_width=True)
+                st.plotly_chart(fig_weekly_dd, width="stretch")
 
             fig_daily_pnl = go.Figure()
             colors = ["#2ecc71" if v >= 0 else "#e74c3c"
@@ -845,7 +845,7 @@ with tab2:
                 title="일별 수익률 (%)",
                 height=360, yaxis_title="수익률 (%)", xaxis_title="날짜",
             )
-            st.plotly_chart(fig_daily_pnl, use_container_width=True)
+            st.plotly_chart(fig_daily_pnl, width="stretch")
 
             # 승률 추이
             wr_data = multi_pnl_df[multi_pnl_df["trades"] > 0]
@@ -861,7 +861,7 @@ with tab2:
                 fig_wr.add_hline(y=50, line_dash="dash", line_color="orange",
                                  annotation_text="50%")
                 fig_wr.update_layout(height=350)
-                st.plotly_chart(fig_wr, use_container_width=True)
+                st.plotly_chart(fig_wr, width="stretch")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -905,7 +905,7 @@ with tab3:
                 fig_rsi.add_vline(x=75, line_dash="dash", line_color="red",
                                   annotation_text="과매수 75")
                 fig_rsi.update_layout(height=350)
-                st.plotly_chart(fig_rsi, use_container_width=True)
+                st.plotly_chart(fig_rsi, width="stretch")
             else:
                 st.info("RSI 데이터 없음")
 
@@ -919,7 +919,7 @@ with tab3:
                 fig_macd.add_vline(x=0, line_dash="dash", line_color="gray",
                                    annotation_text="0 기준선")
                 fig_macd.update_layout(height=350)
-                st.plotly_chart(fig_macd, use_container_width=True)
+                st.plotly_chart(fig_macd, width="stretch")
             else:
                 st.info("MACD 데이터 없음")
 
@@ -937,7 +937,7 @@ with tab3:
                 fig_bb.add_vline(x=5, line_dash="dash", line_color="green",
                                  annotation_text="하단 5%")
                 fig_bb.update_layout(height=350)
-                st.plotly_chart(fig_bb, use_container_width=True)
+                st.plotly_chart(fig_bb, width="stretch")
             else:
                 st.info("BB 데이터 없음")
 
@@ -951,7 +951,7 @@ with tab3:
                 fig_atr.add_vline(x=5, line_dash="dash", line_color="red",
                                   annotation_text="고변동 5%")
                 fig_atr.update_layout(height=350)
-                st.plotly_chart(fig_atr, use_container_width=True)
+                st.plotly_chart(fig_atr, width="stretch")
             else:
                 st.info("ATR 데이터 없음")
 
@@ -967,14 +967,14 @@ with tab3:
                 title="RSI vs Confidence (크기=ATR)",
             )
             fig_scatter.update_layout(height=400)
-            st.plotly_chart(fig_scatter, use_container_width=True)
+            st.plotly_chart(fig_scatter, width="stretch")
 
         # 종목별 지표 테이블
         st.subheader("종목별 기술지표")
         display_cols = ["ticker", "corp_name", "bucket", "rsi_14", "macd_hist",
                         "bb_position", "atr_14", "spread_bps", "adv_value_20d"]
         available_cols = [c for c in display_cols if c in ctx_df.columns]
-        st.dataframe(ctx_df[available_cols], use_container_width=True, hide_index=True)
+        st.dataframe(ctx_df[available_cols], width="stretch", hide_index=True)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1059,7 +1059,7 @@ with tab4:
                 blocks_df = pd.DataFrame([
                     {"사유": k, "건수": v} for k, v in blocks.items()
                 ])
-                st.dataframe(blocks_df, use_container_width=True, hide_index=True)
+                st.dataframe(blocks_df, width="stretch", hide_index=True)
 
         # KIS API 상태
         st.divider()
@@ -1089,7 +1089,7 @@ with tab4:
                 skip_data = events_df["skip_stage"].dropna().value_counts().reset_index()
                 skip_data.columns = ["단계", "건수"]
                 st.subheader("필터링 단계별 건수")
-                st.dataframe(skip_data, use_container_width=True, hide_index=True)
+                st.dataframe(skip_data, width="stretch", hide_index=True)
 
             # Guardrail result 분포
             if "guardrail_result" in events_df.columns:
@@ -1098,7 +1098,7 @@ with tab4:
                     st.subheader("Guardrail 결과")
                     gr_counts = gr_data.value_counts().reset_index()
                     gr_counts.columns = ["결과", "건수"]
-                    st.dataframe(gr_counts, use_container_width=True, hide_index=True)
+                    st.dataframe(gr_counts, width="stretch", hide_index=True)
         else:
             st.info("표시할 데이터가 없습니다.")
 
@@ -1150,7 +1150,7 @@ with tab5:
                             title="버킷별 총 수익률 (색상=승률)",
                             labels={"total_ret": "총 수익률 (%)"})
             fig_bp.update_layout(height=400)
-            st.plotly_chart(fig_bp, use_container_width=True)
+            st.plotly_chart(fig_bp, width="stretch")
 
         # Confidence 구간별 성과
         with col2:
@@ -1178,7 +1178,7 @@ with tab5:
                 yaxis2=dict(title="승률 (%)", overlaying="y", side="right", range=[0, 100]),
                 height=400,
             )
-            st.plotly_chart(fig_cp, use_container_width=True)
+            st.plotly_chart(fig_cp, width="stretch")
 
         # 시간대별 통합 성과
         if "detected_at" in valid_detail.columns:
@@ -1202,7 +1202,7 @@ with tab5:
                                     color_continuous_scale=["#e74c3c", "#f39c12", "#2ecc71"],
                                     labels={"hour": "시간 (KST)", "total_ret": "총 수익률 (%)"})
                     fig_ht.update_layout(height=350)
-                    st.plotly_chart(fig_ht, use_container_width=True)
+                    st.plotly_chart(fig_ht, width="stretch")
 
                 with col_h2:
                     fig_hw = px.scatter(hourly_agg, x="hour", y="win_rate", size="trades",
@@ -1212,7 +1212,7 @@ with tab5:
                                         labels={"hour": "시간 (KST)", "win_rate": "승률 (%)"})
                     fig_hw.add_hline(y=50, line_dash="dash", line_color="gray")
                     fig_hw.update_layout(height=350)
-                    st.plotly_chart(fig_hw, use_container_width=True)
+                    st.plotly_chart(fig_hw, width="stretch")
 
         # 키워드 통합 성과
         if "keyword_hits" in valid_detail.columns:
@@ -1241,14 +1241,14 @@ with tab5:
                                       range_color=[0, 100],
                                       title="키워드별 총 수익률 Top 15 (색상=승률)")
                     fig_kw_m.update_layout(height=450)
-                    st.plotly_chart(fig_kw_m, use_container_width=True)
+                    st.plotly_chart(fig_kw_m, width="stretch")
 
                 with col_k2:
                     kw_display = kw_stats.copy()
                     kw_display.columns = ["키워드", "매매수", "평균수익률(%)", "총수익률(%)", "승률(%)"]
                     for c in ["평균수익률(%)", "총수익률(%)", "승률(%)"]:
                         kw_display[c] = kw_display[c].round(2)
-                    st.dataframe(kw_display, use_container_width=True, hide_index=True, height=450)
+                    st.dataframe(kw_display, width="stretch", hide_index=True, height=450)
 
         # 이벤트 타임라인 (당일)
         st.divider()
@@ -1270,7 +1270,7 @@ with tab5:
                 labels={"detected_at": "시각", "bucket": "버킷", "action_label": "결과"},
             )
             fig_tl.update_layout(height=400)
-            st.plotly_chart(fig_tl, use_container_width=True)
+            st.plotly_chart(fig_tl, width="stretch")
 
         # ── 전략 최적화 제안 ──
         if not valid_detail.empty and total_t >= 3:
@@ -1362,7 +1362,7 @@ with tab5:
 
             if suggestions:
                 sug_df = pd.DataFrame(suggestions)
-                st.dataframe(sug_df, use_container_width=True, hide_index=True)
+                st.dataframe(sug_df, width="stretch", hide_index=True)
             else:
                 st.success("현재 설정에서 특별한 최적화 제안 없음. 전략이 안정적입니다.")
 
@@ -1403,7 +1403,7 @@ with tab6:
                               "total_ret_pct", "profit_factor", "mdd_pct", "description"]].copy()
         ver_display.columns = ["버전", "거래수", "승률(%)", "평균수익(%)",
                                "총수익(%)", "PF", "MDD(%)", "설명"]
-        st.dataframe(ver_display, use_container_width=True, hide_index=True)
+        st.dataframe(ver_display, width="stretch", hide_index=True)
 
         # 버전별 승률+수익 차트
         col_v1, col_v2 = st.columns(2)
@@ -1415,7 +1415,7 @@ with tab6:
                              title="버전별 승률 (%)")
             fig_vwr.update_traces(texttemplate="%{text:.1f}%")
             fig_vwr.update_layout(height=350, showlegend=False)
-            st.plotly_chart(fig_vwr, use_container_width=True)
+            st.plotly_chart(fig_vwr, width="stretch")
 
         with col_v2:
             fig_vpnl = px.bar(ver_df, x="version", y="total_ret_pct",
@@ -1425,7 +1425,7 @@ with tab6:
                               title="버전별 총수익률 (%)")
             fig_vpnl.update_traces(texttemplate="%{text:+.2f}%")
             fig_vpnl.update_layout(height=350, showlegend=False)
-            st.plotly_chart(fig_vpnl, use_container_width=True)
+            st.plotly_chart(fig_vpnl, width="stretch")
 
     st.divider()
 
@@ -1452,7 +1452,7 @@ with tab6:
                              title="시간대별 승률")
             fig_hwr.update_traces(texttemplate="n=%{text}")
             fig_hwr.update_layout(height=350, showlegend=False)
-            st.plotly_chart(fig_hwr, use_container_width=True)
+            st.plotly_chart(fig_hwr, width="stretch")
 
         with col_h2:
             fig_hpnl = px.bar(hour_df, x="hour_label", y="avg_ret_pct",
@@ -1462,7 +1462,7 @@ with tab6:
                               title="시간대별 평균수익률")
             fig_hpnl.update_traces(texttemplate="%{text:+.2f}%")
             fig_hpnl.update_layout(height=350, showlegend=False)
-            st.plotly_chart(fig_hpnl, use_container_width=True)
+            st.plotly_chart(fig_hpnl, width="stretch")
     else:
         st.info("시간대별 데이터 없음")
 
@@ -1492,13 +1492,13 @@ with tab6:
                         title="종목별 총수익률 (거래 건수 표시)")
         fig_tk.update_traces(texttemplate="n=%{text}")
         fig_tk.update_layout(height=400, showlegend=False, xaxis_tickangle=-45)
-        st.plotly_chart(fig_tk, use_container_width=True)
+        st.plotly_chart(fig_tk, width="stretch")
 
         ticker_display = top20[["ticker", "corp_name", "trades", "wins", "win_rate",
                                 "avg_ret_pct", "total_ret_pct"]].copy()
         ticker_display.columns = ["종목코드", "종목명", "거래수", "승", "승률(%)",
                                   "평균수익(%)", "총수익(%)"]
-        st.dataframe(ticker_display, use_container_width=True, hide_index=True)
+        st.dataframe(ticker_display, width="stretch", hide_index=True)
     else:
         st.info("종목별 데이터 없음")
 
@@ -1526,7 +1526,7 @@ with tab6:
                              title="카테고리별 총수익률")
             fig_cat.update_traces(texttemplate="n=%{text}")
             fig_cat.update_layout(height=350, showlegend=False)
-            st.plotly_chart(fig_cat, use_container_width=True)
+            st.plotly_chart(fig_cat, width="stretch")
         else:
             st.info("카테고리 데이터 없음")
 
@@ -1546,7 +1546,7 @@ with tab6:
                               title="청산 유형별 평균수익률")
             fig_exit.update_traces(texttemplate="n=%{text}")
             fig_exit.update_layout(height=350, showlegend=False)
-            st.plotly_chart(fig_exit, use_container_width=True)
+            st.plotly_chart(fig_exit, width="stretch")
         else:
             st.info("청산 유형 데이터 없음")
 
@@ -1588,7 +1588,7 @@ with tab6:
             yaxis_title="수익률 (%)",
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
         )
-        st.plotly_chart(fig_cum, use_container_width=True)
+        st.plotly_chart(fig_cum, width="stretch")
 
         # 일별 테이블
         daily_display = daily_df[["date", "version_tag", "trades", "wins",
@@ -1596,7 +1596,7 @@ with tab6:
         daily_display.columns = ["날짜", "버전", "거래수", "승", "평균(%)",
                                  "일별(%)", "누적(%)"]
         daily_display["누적(%)"] = daily_display["누적(%)"].round(2)
-        st.dataframe(daily_display, use_container_width=True, hide_index=True)
+        st.dataframe(daily_display, width="stretch", hide_index=True)
     else:
         st.info("일별 데이터 없음")
 

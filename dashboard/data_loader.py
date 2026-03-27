@@ -265,7 +265,8 @@ def load_multi_day_events(n_days: int = 7) -> pd.DataFrame:
         if not df.empty:
             df["date"] = d
             frames.append(df)
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    normalized = [df.dropna(axis=1, how="all") for df in frames if not df.empty]
+    return pd.concat(normalized, ignore_index=True, sort=False) if normalized else pd.DataFrame()
 
 
 def load_multi_day_pnl_detail(n_days: int = 7) -> pd.DataFrame:
@@ -289,7 +290,8 @@ def load_multi_day_pnl_detail(n_days: int = 7) -> pd.DataFrame:
             merged = pnl
         merged["date"] = d
         frames.append(merged)
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    normalized = [df.dropna(axis=1, how="all") for df in frames if not df.empty]
+    return pd.concat(normalized, ignore_index=True, sort=False) if normalized else pd.DataFrame()
 
 
 def compute_multi_day_pnl(n_days: int = 7) -> pd.DataFrame:
