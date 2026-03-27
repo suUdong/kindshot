@@ -28,6 +28,46 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 03:05 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `425c07d`
+- Deployer: Codex manual SSH + `rsync -R` (`src/kindshot/decision.py`, `src/kindshot/pipeline.py`, `src/kindshot/prompts/decision_strategy.txt`, `scripts/llm_prompt_eval.py`) + `kindshot` restart
+- Summary:
+  1. **offline prompt-eval surface** — added `scripts/llm_prompt_eval.py` so local history can report current LLM decision accuracy, confidence calibration, and fast-profile late-entry call-avoidance candidates from the same recorded evidence window
+  2. **confidence/prompt tightening** — updated `decision_strategy.txt` to treat confidence as the correctness probability of the chosen action over the actual hold profile and to suppress routine `hold_profile=20m` contract overconfidence around the open/late tape
+  3. **LLM cost reduction without new trading risk** — moved `FAST_PROFILE_LATE_ENTRY` blocking ahead of the LLM call so non-executable 20-minute late entries stop consuming provider calls while preserving the same operator-facing guardrail outcome
+- Validation:
+  - local `python3 -m compileall src scripts tests dashboard`
+  - local `.venv/bin/python -m pytest tests/test_llm_prompt_eval.py tests/test_pipeline.py tests/test_decision.py -q` → `87 passed`
+  - local `.venv/bin/python -m pytest -q` → `977 passed, 1 skipped, 1 warning`
+  - local changed-file diagnostics on `src/kindshot/decision.py`, `src/kindshot/pipeline.py`, `scripts/llm_prompt_eval.py`, `tests/test_pipeline.py`, `tests/test_llm_prompt_eval.py` → `0 errors`
+  - local prompt-eval artifact `logs/daily_analysis/llm_prompt_eval_20260328.{txt,json}` recorded:
+    - balanced sample: `16` cases (`8 BUY target`, `8 SKIP target`)
+    - historical actual: `accuracy=0.625`
+    - `buy_precision=1.0`
+    - `skip_precision=0.5714`
+    - `buy_recall=0.25`
+    - `false_negative_rate=0.75`
+    - fast-profile late cost candidates: `8 / 10`
+    - live prompt replay blocked by Anthropic provider credit error (`invalid_request_error: credit balance is too low`)
+  - remote `python3 -m compileall src/kindshot scripts`
+  - remote `systemctl is-active kindshot` → `active`
+  - remote `curl -sf http://127.0.0.1:8080/health` returned:
+    - `status: "healthy"`
+    - `last_poll_source: "feed"`
+    - `last_poll_age_seconds: 11`
+    - `guardrail_state.configured_max_positions: 4`
+    - `recent_pattern_profile.total_trades: 14`
+  - remote journal after restart showed:
+    - `kindshot 0.1.3 starting`
+    - `Health server started on 127.0.0.1:8080`
+    - `RecentPatternProfile loaded: dates=20260319,20260320,20260327 trades=14 boost=1 loss=2`
+- Rollback: re-sync the prior runtime files from `6d1a3f4` (or revert `425c07d`), then restart `kindshot`
+- Result: 성공
+- Notes: prompt A/B replay tooling is now in place, but the actual live-model variant replay is currently blocked by the Anthropic account credit error on this host; the baseline historical measurement still completed and the runtime cost reduction shipped independently of that blocker
+
 ### 2026-03-28 02:28 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)

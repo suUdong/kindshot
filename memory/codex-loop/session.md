@@ -3,41 +3,39 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `Final Integration Check Complete`
-- Focus: validate the deployed v70 + risk v2 + max_positions + observability stack end-to-end, then remove any residual dashboard/runtime issues surfaced by that final check.
-- Active hypothesis: replacing deprecated dashboard width arguments and warning-prone multi-day concat inputs is the smallest reversible fix that keeps the deployed final-check path clean without changing trading behavior.
-- Blocker: none.
+- Phase: `User-Directed LLM Prompt Optimization`
+- Focus: measure the current post-v70 LLM decision-path quality, tighten prompt confidence semantics, and cut avoidable late-entry LLM calls without touching deploy/live-order surfaces.
+- Active hypothesis: if short-hold fast-profile late entries are blocked before the LLM and the prompt is stricter about confidence over the actual hold profile, then the runtime path will waste fewer calls while keeping prompt behavior reviewable through the new offline evaluator.
+- Blocker: live Anthropic prompt replay is blocked on this host by `invalid_request_error: credit balance is too low`; historical baseline measurement and runtime rollout are complete.
 
 ## Environment
 
 - Host: local workspace
 - Runtime target: AWS Lightsail `kindshot-server` (`/opt/kindshot`, paper mode)
-- Local note: code fix was committed as `6d1a3f4`, pushed to `origin/main`, then only `dashboard/app.py` and `dashboard/data_loader.py` were rsynced to `/opt/kindshot/dashboard/` before restarting `kindshot-dashboard`
+- Local note: runtime fix was committed as `425c07d`, pushed to `origin/main`, then `src/kindshot/decision.py`, `src/kindshot/pipeline.py`, `src/kindshot/prompts/decision_strategy.txt`, and `scripts/llm_prompt_eval.py` were rsynced to `/opt/kindshot/` before restarting `kindshot`
 - Validation status:
-  - local `python3 -m compileall src scripts tests dashboard` passed after the warning cleanup
-  - local `pytest tests/test_dashboard.py -q` passed (`22 passed`)
-  - local full `pytest -q` passed (`974 passed, 1 skipped, 1 warning`)
-  - local diagnostics on `dashboard/app.py` and `dashboard/data_loader.py` returned `0 errors`
-  - remote `python3 -m compileall dashboard` passed
-  - remote `systemctl is-active kindshot-dashboard` returned `active`
-  - remote `curl -I http://127.0.0.1:8501` returned `HTTP/1.1 200 OK`
-  - remote dashboard AppTest under `-W error::FutureWarning` rendered all 6 tabs with `exception_count=0`
-  - remote `/health` remained `healthy` with `last_poll_source=feed`, `last_poll_age_seconds=8`, and `guardrail_state.configured_max_positions=4`
-  - remote `logs/kindshot_20260327.jsonl` still showed the prior trading-day chain with `789` events, `37` decisions, `1242` price snapshots, `5` executed BUY records, and `19` guardrail-blocked BUY records
-  - remote `logs/polling_trace_20260328.jsonl` continued to append `poll_start` / `poll_end` entries on `2026-03-28`
+  - local `python3 -m compileall src scripts tests dashboard` passed
+  - local targeted pytest (`tests/test_llm_prompt_eval.py tests/test_pipeline.py tests/test_decision.py`) passed (`87 passed`)
+  - local full `pytest -q` passed (`977 passed, 1 skipped, 1 warning`)
+  - local diagnostics on changed files returned `0 errors`
+  - local prompt-eval artifact recorded `accuracy=0.625` on a balanced `16`-case historical sample, with `8 / 10` fast-profile cases happening after the late-entry cutoff
+  - remote `python3 -m compileall src/kindshot scripts` passed
+  - remote `systemctl is-active kindshot` returned `active`
+  - remote `/health` returned `healthy` with `last_poll_source=feed`, `last_poll_age_seconds=11`, and `guardrail_state.configured_max_positions=4`
+  - remote journal after restart showed `Health server started` and `RecentPatternProfile loaded: dates=20260319,20260320,20260327 trades=14 boost=1 loss=2`
 
 ## Last Completed Step
 
-- Ran the requested final integration pass, found dashboard-only warning noise (`use_container_width` deprecation and pandas concat `FutureWarning`), fixed it without touching trading logic, pushed `6d1a3f4`, deployed the dashboard patch, and re-verified health, remote AppTest, and prior-session pipeline evidence.
+- Added the offline prompt-eval script, updated prompt confidence guidance, moved `FAST_PROFILE_LATE_ENTRY` ahead of the LLM call, pushed `425c07d`, deployed the runtime patch, and re-verified remote `kindshot` health.
 
 ## Next Intended Step
 
-- Observe the next live paper session on the next Korean market day to confirm fresh same-day news ingestion still progresses through classification, analysis, guardrail, and execution paths after this dashboard-only patch.
-- Continue monitoring live paper BUY attempts for `MAX_POSITIONS`, recent win-rate multiplier, and sector concentration behavior under actual intraday flow.
-- If desired, clean up the separate pre-existing aiohttp `NotAppKeyWarning` in `tests/test_health.py` as a follow-up hygiene slice.
+- Restore provider credits (or switch to an available prompt-replay provider) and rerun `scripts/llm_prompt_eval.py --prompt ...` to get an actual baseline-vs-variant replay comparison instead of the current blocked status.
+- Observe the next Korean market session to confirm `FAST_PROFILE_LATE_ENTRY` now suppresses avoidable LLM calls before runtime decision records would otherwise be generated.
+- If replay evidence supports it, choose one narrower prompt variant for the current false-negative cluster rather than broadening BUY behavior globally.
 
 ## Notes
 
-- `2026-03-28` is a Saturday in KST, so the final end-to-end sign-off used live poll/health evidence plus the latest active trading-day logs from `2026-03-27` rather than fresh same-day executions.
-- This run changed dashboard/runtime warning paths only; it did not alter `deploy/`, secrets, `.env`, order execution mode, or backend trading logic.
+- `2026-03-28` is a Saturday in KST, so same-day prompt-path execution could not be observed on fresh market events.
+- This run changed prompt/runtime decision-path code only; it did not alter `deploy/`, secrets, `.env`, or live-order enablement.
 - Fresh evidence is recorded in `DEPLOYMENT_LOG.md` and `memory/codex-loop/latest.md`.

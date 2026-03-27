@@ -15,10 +15,10 @@
 
 ## Current Focus
 
-- Track: User-Directed Risk Management
-- Phase: Risk Management v2
-- Status: Completed (user override)
-- Reason: The user explicitly redirected the loop to strengthen runtime drawdown control after the v70 deploy. The latest slice restored the simultaneous-position cap by moving `max_positions` to checked-in risk config governance, making legacy `.env` value `MAX_POSITIONS=9999` fall back to the safe paper cap `4`, pushed `5ea0269`, and deployed it to `kindshot-server`.
+- Track: User-Directed LLM Prompt Optimization
+- Phase: Decision Prompt Calibration
+- Status: In Progress (user override)
+- Reason: The user explicitly redirected the loop after the v70 deploy to measure current LLM decision accuracy, improve prompt confidence semantics, and cut unnecessary LLM calls. The latest slice added offline prompt-eval tooling, tightened short-hold contract confidence guidance, and moved `FAST_PROFILE_LATE_ENTRY` ahead of the LLM call, pushed `425c07d`, and deployed it to `kindshot-server`.
 
 ## Phases
 
@@ -92,9 +92,9 @@
 
 ## Next Run Candidates
 
-1. Observe the next paper session to confirm `MAX_POSITIONS` blocks trigger correctly once four simultaneous positions are already open.
-2. Observe same-day closed trades to confirm the recent win-rate multiplier activates after enough samples and does not mis-tighten on partial/noise cases.
-3. Verify on real paper BUY attempts that KIS `bstp_kor_isnm` is stable enough for sector concentration; add a fallback only if field quality is insufficient.
+1. Restore prompt-replay provider credits and rerun `scripts/llm_prompt_eval.py --prompt ...` to get a true baseline-vs-variant replay comparison on the balanced historical sample.
+2. Observe the next live paper session to confirm `FAST_PROFILE_LATE_ENTRY` blocks now happen before the LLM path and reduce runtime `llm_calls` without changing healthy startup behavior.
+3. Use the next replay artifact to choose one narrow false-negative hypothesis for prompt tuning instead of broad BUY threshold relaxation.
 
 ## Deferred
 
