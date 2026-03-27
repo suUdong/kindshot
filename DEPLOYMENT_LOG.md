@@ -28,6 +28,36 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-27 23:46 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: clean export from local `846cfd5` (`main` already ahead of the original v69 slice)
+- Deployer: Codex manual SSH + `rsync`
+- Summary:
+  1. **clean export overwrite** — remote `/opt/kindshot` worktree was dirty and stale, so deployment used a tracked-files-only export instead of `git pull`
+  2. **v69 runtime path 반영 확인** — `decision.py`, `price.py`, `guardrails.py`, `main.py`, `decision_strategy.txt` hash가 로컬과 원격에서 일치함을 확인
+  3. **서비스 재기동 및 운영 검증** — `kindshot`, `kindshot-dashboard` 재시작 후 `/health`와 dashboard HTTP `200` 확인
+- Validation:
+  - local `python3 -m compileall src/kindshot tests scripts`
+  - local `.venv/bin/python -m pytest tests/test_decision.py tests/test_guardrails.py tests/test_price.py tests/test_performance.py tests/test_pipeline.py tests/test_telegram_ops.py -q` → `285 passed, 1 skipped`
+  - local `.venv/bin/python -m pytest -q` → `934 passed, 1 skipped, 1 warning`
+  - local affected-file diagnostics → `0 errors`, `0 warnings`
+  - remote `python3 -m compileall src/kindshot scripts tests`
+  - remote `pip install -e . --quiet`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `curl http://127.0.0.1:8080/health` → `healthy`
+  - remote `curl http://127.0.0.1:8501` → `200`
+  - remote sha256 matched local for:
+    - `src/kindshot/decision.py`
+    - `src/kindshot/price.py`
+    - `src/kindshot/guardrails.py`
+    - `src/kindshot/main.py`
+    - `src/kindshot/prompts/decision_strategy.txt`
+- Rollback: re-sync the prior known-good tree to `/opt/kindshot`, then restart `kindshot` and `kindshot-dashboard`
+- Result: 성공
+- Notes: remote `git rev-parse HEAD` still reports the older commit because this deployment intentionally avoided mutating remote git metadata; file hashes and running-service checks are the deployment source of truth
+
 ### 2026-03-27 17:44 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)

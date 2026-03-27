@@ -1,37 +1,37 @@
-Hypothesis: If runtime alerts are promoted from partial BUY-only messaging to full trade-close, guardrail-block, and end-of-day summary notifications, operators can monitor Kindshot paper trading from Telegram without reopening logs or the dashboard during routine operation.
+Hypothesis: If the current runtime prompt/risk baseline is verified and deployed as-is, Kindshot can ship the requested v69 behavior set without reopening the implementation surface.
 
 Changed files:
-- `docs/plans/2026-03-27-alerting-system-hardening.md`
-- `src/kindshot/main.py`
-- `src/kindshot/performance.py`
-- `src/kindshot/price.py`
-- `src/kindshot/telegram_ops.py`
-- `tests/test_performance.py`
-- `tests/test_price.py`
-- `tests/test_telegram_ops.py`
+- `DEPLOYMENT_LOG.md`
 - `memory/codex-loop/latest.md`
+- `memory/codex-loop/session.md`
 
 Implementation summary:
-- Added Telegram `SELL`/trade-close notifications with exit type, horizon, return, P&L, and remaining position count.
-- Expanded guardrail block alerts to show all blocked BUYs and whether `shadow` tracking was scheduled.
-- Connected `PerformanceTracker` to actual trade-close callbacks so paper-mode virtual exits now update daily performance and position state at exit time instead of waiting for close.
-- Added a once-per-day Telegram summary notifier that sends win rate, realized P&L, guardrail P&L, and open-position state after the close snapshot window.
-- Hardened `PerformanceTracker` day rollover so long-running runtimes can advance dates cleanly even before the next trade arrives.
+- Confirmed the current `main` / `origin/main` head (`846cfd5`) already contains the requested runtime features:
+  - structured `ctx_signal` / `ctx_risk` prompt inputs and updated decision prompt guidance
+  - partial take-profit bookkeeping with post-partial trailing behavior
+  - dynamic daily loss floor calculation surfaced in guardrails and health
+- Ran local compile + targeted pytest + full pytest against the existing implementation.
+- Deployed the current head to `kindshot-server` via clean export `rsync`, reinstalled the package, restarted `kindshot` and `kindshot-dashboard`, and verified the runtime health/dashboard endpoints.
 
 Validation:
 - `python3 -m compileall src/kindshot tests scripts`
-- `.venv/bin/python -m pytest tests/test_telegram_ops.py tests/test_price.py tests/test_performance.py -q`
+- `.venv/bin/python -m pytest tests/test_config.py tests/test_decision.py tests/test_guardrails.py tests/test_price.py tests/test_telegram_ops.py -q`
+- `.venv/bin/python -m pytest tests/test_pipeline.py tests/test_performance.py tests/test_main_cli.py tests/test_health.py -q`
 - `.venv/bin/python -m pytest -q`
-- Result: `877 passed, 1 skipped, 1 warning`
+- remote `python3 -m compileall src/kindshot scripts tests`
+- remote `source .venv/bin/activate && pip install -e . --quiet`
+- remote `systemctl is-active kindshot kindshot-dashboard` → `active`, `active`
+- remote `curl http://127.0.0.1:8080/health` → `healthy`
+- remote `curl -I http://127.0.0.1:8501` → `HTTP/1.1 200 OK`
+- Result: local `934 passed, 1 skipped, 1 warning`
 
 Simplifications made:
-- Reused the existing stdlib Telegram client instead of introducing a new notifier dependency.
-- Kept daily-summary dedupe state in the existing runtime state directory as a single JSON file.
-- Reused `PerformanceTracker` rather than adding a second closeout aggregation path.
+- Treated the already-committed runtime implementation as the release candidate instead of forcing an extra code diff.
+- Reused the existing clean-export deployment path rather than touching remote git state or `deploy/`.
 
 Remaining risks:
-- Daily summary delivery still depends on the runtime staying alive past the close snapshot delay window and on Telegram credentials being configured.
-- Paper-mode position accounting now closes at virtual exit time, which is more faithful to strategy behavior, but any downstream consumer that assumed close-only realization should be rechecked in production logs after deploy.
+- The remote service is still in VTS mode for price snapshots until real quote keys are present, so post-deploy live observation should focus on prompt/guardrail behavior more than snapshot realism.
+- The new partial-exit and dynamic-loss behavior was validated locally and by remote startup/health checks, but its production-day calibration still depends on the next live/paper session.
 
 Rollback note:
-- Revert the alerting changes in `main.py`, `performance.py`, `price.py`, `telegram_ops.py`, and related tests to restore the previous BUY-only notification behavior.
+- Re-sync the prior known-good tree to `/opt/kindshot`, reinstall with the remote venv, and restart `kindshot` + `kindshot-dashboard`.
