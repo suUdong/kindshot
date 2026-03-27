@@ -28,6 +28,43 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 06:30 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `709cfd7`
+- Deployer: Codex manual `rsync` + direct `ssh kindshot-server`
+- Summary:
+  1. **entry-quality runtime sync** — deployed the avg20d volume-ratio entry-quality slice so runtime context, guardrails, replay, and local analysis all share the same liquidity signal path
+  2. **deterministic regression guard** — included the fixed-time pipeline test helper so shadow-snapshot assertions no longer drift with wall-clock time during validation
+  3. **service restart + health sign-off** — recompiled the remote tree, reinstalled it with `./.venv/bin/python -m pip install -e . --quiet`, restarted `kindshot` and `kindshot-dashboard`, then confirmed `/health` and the dashboard were both healthy
+- Validation:
+  - local `python3 -m compileall src scripts tests dashboard`
+  - local `.venv/bin/python scripts/entry_filter_analysis.py` → `logs/daily_analysis/entry_filter_analysis_20260328.txt`
+  - local `.venv/bin/python -m pytest tests/test_guardrails.py tests/test_context_card.py tests/test_pipeline.py tests/test_entry_filter_analysis.py -q` → `232 passed`
+  - local `.venv/bin/python -m pytest -q` → `1013 passed, 1 skipped, 1 warning`
+  - local `python3 -m compileall tests/test_pipeline.py`
+  - diagnostics `lsp_diagnostics_directory` → `0 errors`, `0 warnings`
+  - `git push origin main` → `709cfd7` pushed to `origin/main`
+  - remote `./.venv/bin/python -m compileall src/kindshot scripts tests dashboard`
+  - remote `./.venv/bin/python -m pip install -e . --quiet`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `systemctl status kindshot kindshot-dashboard --no-pager -l` → both active since `2026-03-28 06:29:58 KST`
+  - remote `/health` returned:
+    - `status=healthy`
+    - `started_at=2026-03-28T06:30:00.854671+09:00`
+    - `last_poll_source=feed`
+    - `last_poll_age_seconds=12`
+    - `guardrail_state.configured_max_positions=4`
+    - `trade_metrics.total_trades=0`
+    - `recent_pattern_profile.total_trades=14`
+  - remote dashboard probe `HEAD http://127.0.0.1:8501/` → `HTTP/1.1 200 OK`, `Content-Type: text/html`
+- Rollback: re-sync the prior known-good runtime tree to `/opt/kindshot`, rerun `./.venv/bin/python -m pip install -e . --quiet`, and restart `kindshot` plus `kindshot-dashboard`
+- Result: 성공
+- Notes: the local shell still used direct `ssh`/`rsync` instead of the missing `ks` alias; this run kept `deploy/`, secrets, `.env`, and live-order behavior unchanged
+
+---
+
 ### 2026-03-28 04:27 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)

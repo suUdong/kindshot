@@ -3,33 +3,35 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: Remote Deployment Verification
-- Focus: deploy the latest validated Kindshot runtime/reporting tree to `kindshot-server`, restart both services, and confirm post-restart health.
-- Active hypothesis: if the latest validated local runtime tree is pushed to the paper server with the existing rsync lane and both services are restarted cleanly, then the server will expose the current backtest/entry/exit/performance surfaces without changing deploy/secrets behavior.
-- Blocker: none for deployment completion; the remaining evidence gap is only the next live market session for fresh runtime latency and intraday trading samples.
+- Phase: Post-Deployment Observation
+- Focus: the avg20d volume-ratio entry-quality slice is now pushed and deployed; the immediate follow-up is observing the next live paper session for real runtime evidence.
+- Active hypothesis: if the deployed avg20d volume-ratio guardrail and confidence path behaves as intended during the next market session, then weak-liquidity BUYs should be filtered earlier without disturbing the existing paper-mode runtime surfaces.
+- Blocker: no deployment blocker remains; the only open evidence gap is fresh live-session behavior under market hours.
 
 ## Environment
 
 - Host: local workspace + `kindshot-server`
 - Runtime target: `/opt/kindshot`
 - Validation status:
-  - local targeted pytest passed (`140 passed, 1 warning`)
-  - local full pytest passed (`1001 passed, 1 skipped, 1 warning`)
-  - local compile/report scripts passed
+  - local compile passed (`python3 -m compileall src scripts tests dashboard`)
+  - local entry-filter report wrote `logs/daily_analysis/entry_filter_analysis_20260328.txt`
+  - local targeted pytest passed (`232 passed`)
+  - local full pytest passed (`1013 passed, 1 skipped, 1 warning`)
   - diagnostics returned `0 errors`, `0 warnings`
+  - pushed runtime commit: `709cfd7`
   - remote compile/install/restart completed
   - remote `kindshot` + `kindshot-dashboard` are both `active`
-  - remote `/health` returned `healthy`
-  - remote dashboard HTTP probe returned `200`
+  - remote `/health` returned `healthy` with `started_at=2026-03-28T06:30:00.854671+09:00`
+  - remote dashboard HTTP probe returned `HTTP/1.1 200 OK`
 
 ## Last Completed Step
 
-- Synced the latest local runtime/reporting tree to `kindshot-server:/opt/kindshot`, reinstalled it into the remote venv, restarted both services, and verified runtime health plus dashboard reachability.
+- Committed the avg20d volume-ratio entry-quality slice as `709cfd7`, pushed `main`, re-synced `/opt/kindshot`, reinstalled it into the remote venv, restarted both services, and verified runtime health plus dashboard reachability.
 
 ## Next Intended Step
 
-- On the next Korean market session, inspect post-deploy runtime logs to confirm new latency/caching samples accumulate in `/health.latency_profile`.
-- If strategy iteration resumes, choose one bounded hypothesis from the current monthly backtest evidence and re-run the same validation/deploy lane after that slice is complete.
+- On the next Korean market session, inspect runtime logs and `/health` to confirm the deployed volume-ratio path is producing the expected guardrail / confidence evidence.
+- If the new signal coverage stays sparse, collect another bounded history window before tightening `min_volume_ratio_vs_avg20d` or `volume_ratio_surge_threshold`.
 
 ## Notes
 

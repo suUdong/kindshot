@@ -1,77 +1,77 @@
-Hypothesis: If the latest validated Kindshot runtime and reporting tree is re-synced to the paper server, reinstalled in the remote venv, and both services are restarted cleanly, then the server will reflect the current backtest, entry, exit, and performance surfaces without changing secrets or deploy definitions.
+Hypothesis: If Kindshot carries the avg20d volume-ratio entry-quality slice through local validation, pushes it as a reproducible commit, and redeploys the clean runtime tree to the paper server, then weak-liquidity BUYs will be constrained by the new shared signal path without changing deploy, secret, or live-order behavior.
 
 Changed files:
 - `DEPLOYMENT_LOG.md`
 - `memory/codex-loop/latest.md`
 - `memory/codex-loop/session.md`
+- `scripts/entry_filter_analysis.py`
+- `src/kindshot/config.py`
+- `src/kindshot/context_card.py`
+- `src/kindshot/guardrails.py`
+- `src/kindshot/models.py`
+- `src/kindshot/pipeline.py`
+- `src/kindshot/replay.py`
+- `tests/test_context_card.py`
+- `tests/test_guardrails.py`
+- `tests/test_pipeline.py`
 
 Implementation summary:
-- Re-validated the current local workspace before deployment:
-  - runtime/reporting compile pass
-  - targeted regression suite for decision, health, pipeline, context card, trade DB, and monthly backtest
-  - full `pytest` regression
-  - fresh local report generation for:
-    - `scripts/runtime_latency_report.py`
-    - `scripts/entry_filter_analysis.py`
-    - `scripts/monthly_full_strategy_backtest.py`
-- Synced the latest runtime-relevant tree to `kindshot-server:/opt/kindshot` via `rsync`:
-  - `src/`
-  - `dashboard/`
-  - `scripts/`
-  - `tests/`
-  - `config/`
-  - `pyproject.toml`
-  - `README.md`
-  - `requirements.lock`
-- Recompiled the remote tree and reinstalled the package in the existing venv.
-- Worked around a broken remote `./.venv/bin/pip` shebang by switching to `./.venv/bin/python -m pip install -e . --quiet`.
-- Restarted both `kindshot` and `kindshot-dashboard`, then verified runtime health and dashboard HTTP reachability.
+- Added `min_volume_ratio_vs_avg20d` / `volume_ratio_surge_threshold` config hooks and threaded avg20d volume data through:
+  - `ContextCardData`
+  - `ContextCard`
+  - replay guardrail inputs
+  - the final guardrail check
+- Added a regular-session hard stop `VOLUME_RATIO_TOO_THIN` plus `apply_volume_ratio_confidence_adjustment()` so BUY confidence and block decisions use the same avg20d liquidity signal.
+- Reduced `scripts/entry_filter_analysis.py` to a thin wrapper over the shared `kindshot.entry_filter_analysis` helpers, keeping report generation consistent with runtime/replay logic.
+- Fixed the pipeline test helper to use a deterministic timestamp so shadow-snapshot expectations no longer depend on the wall clock.
+- Committed the slice as `709cfd7` and pushed it to `origin/main`.
+- Re-synced the clean runtime tree to `kindshot-server:/opt/kindshot` via `rsync`, recompiled/reinstalled the remote venv, and restarted both services.
 
 Deployment evidence summary:
 - Remote host: `kindshot-server` (`/opt/kindshot`)
+- Deployed runtime commit: `709cfd7`
 - Services:
   - `systemctl is-active kindshot` → `active`
   - `systemctl is-active kindshot-dashboard` → `active`
 - `systemctl status` showed:
-  - `kindshot` active since `2026-03-28 04:27:18 KST`
-  - `kindshot-dashboard` active since `2026-03-28 04:27:18 KST`
-- `journalctl -u kindshot -n 20` after restart showed:
-  - `kindshot 0.1.3 starting`
-  - `RecentPatternProfile loaded: dates=20260319,20260320,20260327 trades=14 boost=1 loss=2`
-  - `Health server started on 127.0.0.1:8080`
+  - `kindshot` active since `2026-03-28 06:29:58 KST`
+  - `kindshot-dashboard` active since `2026-03-28 06:29:58 KST`
 - Remote `/health` summary returned:
   - `status=healthy`
-  - `started_at=2026-03-28T04:27:20.859306+09:00`
+  - `started_at=2026-03-28T06:30:00.854671+09:00`
+  - `last_poll_source=feed`
+  - `last_poll_age_seconds=12`
   - `guardrail_state.configured_max_positions=4`
   - `trade_metrics.total_trades=0`
   - `trade_metrics.total_pnl_pct=0.0`
-  - `latency_profile.cache_layers={}`
+  - `recent_pattern_profile.total_trades=14`
 - Remote dashboard HTTP probe returned:
-  - `GET http://127.0.0.1:8501/` → `200 text/html`
+  - `HEAD http://127.0.0.1:8501/` → `HTTP/1.1 200 OK`
+  - `Content-Type: text/html`
 
 Validation:
-- local `python3 -m compileall src scripts tests`
-- local `.venv/bin/python -m pytest tests/test_decision.py tests/test_health.py tests/test_pipeline.py tests/test_context_card.py tests/test_trade_db.py tests/test_monthly_full_strategy_backtest.py -q` → `140 passed, 1 warning`
-- local `.venv/bin/python scripts/runtime_latency_report.py`
+- local `python3 -m compileall src scripts tests dashboard`
 - local `.venv/bin/python scripts/entry_filter_analysis.py`
-- local `.venv/bin/python scripts/monthly_full_strategy_backtest.py`
-- local `.venv/bin/python -m pytest -q` → `1001 passed, 1 skipped, 1 warning`
+- local `.venv/bin/python -m pytest tests/test_guardrails.py tests/test_context_card.py tests/test_pipeline.py tests/test_entry_filter_analysis.py -q` → `232 passed`
+- local `.venv/bin/python -m pytest -q` → `1013 passed, 1 skipped, 1 warning`
+- local `python3 -m compileall tests/test_pipeline.py`
 - diagnostics `lsp_diagnostics_directory` → `0 errors`, `0 warnings`
+- `git push origin main` → `709cfd7` pushed
 - remote `./.venv/bin/python -m compileall src/kindshot scripts tests dashboard`
 - remote `./.venv/bin/python -m pip install -e . --quiet`
 - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
-- remote `curl` equivalent via Python against `http://127.0.0.1:8080/health` → healthy JSON
-- remote dashboard HTTP probe via Python against `http://127.0.0.1:8501/` → `200`
+- remote `curl -fsS http://127.0.0.1:8080/health` → healthy JSON
+- remote `curl -sSI http://127.0.0.1:8501/` → `HTTP/1.1 200 OK`
 
 Simplifications made:
-- Reused the established `rsync` deployment lane instead of introducing a new git- or deploy-script-based path.
-- Synced only runtime-relevant directories/files rather than mirroring the whole repository, keeping secrets and non-runtime state untouched.
-- Reused the existing remote venv and only changed the install invocation from broken `pip` wrapper to `python -m pip`.
+- Reused the shared `kindshot.entry_filter_analysis` helpers instead of maintaining a second copy of the evidence logic under `scripts/`.
+- Kept the new avg20d liquidity check as a narrow guardrail/confidence extension rather than adding another standalone filter subsystem.
+- Reused the established `rsync` + remote venv reinstall lane instead of introducing a new deployment path.
 
 Remaining risks:
 - The server is still running in paper mode with VTS quote limitations, so fresh live-session evidence is still needed for intraday entry/exit behavior under actual market hours.
-- `/health.latency_profile` currently has no samples immediately after restart because no new post-deploy events have flowed through the instrumented pipeline yet.
-- This deployment reflects local worktree state; the server runtime now includes the current local `scripts/entry_filter_analysis.py` and `tests/test_context_card.py` changes even though they are not part of `HEAD`.
+- The avg20d volume-ratio thresholds are still calibrated from limited local history and should be revisited only after fresh runtime coverage accumulates.
+- `/health.latency_profile` remains empty immediately after restart because no new post-deploy events have flowed through the pipeline yet.
 
 Rollback note:
 - Re-sync the prior known-good runtime tree to `/opt/kindshot`, rerun `./.venv/bin/python -m pip install -e . --quiet`, and restart `kindshot` plus `kindshot-dashboard`.
