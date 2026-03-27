@@ -217,7 +217,7 @@ class Config:
     # --- Recent pattern profile ---
     recent_pattern_enabled: bool = field(default_factory=lambda: _env_bool("RECENT_PATTERN_ENABLED", True))
     recent_pattern_profile_path: Path = field(default_factory=lambda: Path(_env("RECENT_PATTERN_PROFILE_PATH", "data/runtime/recent_pattern_profile.json")))
-    recent_pattern_lookback_days: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_LOOKBACK_DAYS", 6))
+    recent_pattern_lookback_days: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_LOOKBACK_DAYS", 7))
     recent_pattern_min_trades: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MIN_TRADES", 2))
     recent_pattern_profit_boost: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_PROFIT_BOOST", 3))
     recent_pattern_profit_min_win_rate: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_PROFIT_MIN_WIN_RATE", 0.5))

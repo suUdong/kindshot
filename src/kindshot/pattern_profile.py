@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 from dataclasses import asdict, dataclass
@@ -305,6 +306,18 @@ def build_recent_pattern_profile(config: Config) -> RecentPatternProfile:
     if not config.recent_pattern_enabled:
         return RecentPatternProfile.empty()
 
+    profile = _build_recent_pattern_profile_from_backtest(config)
+    if profile.enabled:
+        _persist_profile_summary(config.recent_pattern_profile_path, profile)
+        logger.info(
+            "RecentPatternProfile loaded: dates=%s trades=%d boost=%d loss=%d",
+            ",".join(profile.analysis_dates),
+            profile.total_trades,
+            len(profile.boost_patterns),
+            len(profile.loss_guardrail_patterns),
+        )
+        return profile
+
     db = TradeDB(config.data_dir / "trade_history.db")
     try:
         backfill_from_logs(
@@ -340,6 +353,7 @@ def build_recent_pattern_profile(config: Config) -> RecentPatternProfile:
         db.close()
 
     profile = build_recent_pattern_profile_from_rows(rows, config)
+    _persist_profile_summary(config.recent_pattern_profile_path, profile)
     if profile.enabled:
         logger.info(
             "RecentPatternProfile loaded: dates=%s trades=%d boost=%d loss=%d",
@@ -351,6 +365,61 @@ def build_recent_pattern_profile(config: Config) -> RecentPatternProfile:
     else:
         logger.info("RecentPatternProfile inactive: no eligible recent cohorts")
     return profile
+
+
+def _load_backtest_analysis_module() -> Any | None:
+    script_path = Path(__file__).resolve().parents[2] / "scripts" / "backtest_analysis.py"
+    if not script_path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("kindshot_backtest_analysis_runtime", script_path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _build_recent_pattern_profile_from_backtest(config: Config) -> RecentPatternProfile:
+    module = _load_backtest_analysis_module()
+    if module is None:
+        return RecentPatternProfile.empty()
+
+    log_paths = sorted(config.log_dir.glob("kindshot_*.jsonl"))
+    if not log_paths:
+        return RecentPatternProfile.empty()
+    recent_paths = log_paths[-max(1, config.recent_pattern_lookback_days):]
+    try:
+        runtime_defaults = module.ExitSimulationConfig.from_runtime_defaults()
+        _stats, trades, _shadow = module.analyze_paths(
+            recent_paths,
+            snapshot_dir=config.runtime_price_snapshots_dir,
+            runtime_defaults=runtime_defaults,
+        )
+    except Exception:
+        logger.warning("RecentPatternProfile backtest-analysis fallback failed", exc_info=True)
+        return RecentPatternProfile.empty()
+
+    rows = [
+        {
+            "date": trade.date,
+            "ticker": trade.ticker,
+            "headline": trade.headline,
+            "keyword_hits": list(trade.keyword_hits),
+            "news_category": trade.news_type,
+            "hour_slot": trade.hour,
+            "exit_ret_pct": trade.exit_pnl_pct,
+        }
+        for trade in trades
+    ]
+    return build_recent_pattern_profile_from_rows(rows, config)
+
+
+def _persist_profile_summary(path: Path, profile: RecentPatternProfile) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(profile.summary(), ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        logger.warning("Failed to persist recent pattern profile to %s", path, exc_info=True)
 
 
 def match_profit_boost(
