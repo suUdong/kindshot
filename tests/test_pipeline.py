@@ -289,6 +289,39 @@ async def test_pipeline_records_buy_with_sector_metadata(tmp_path):
     guardrail_state.record_buy.assert_called_once_with("005930", sector="반도체")
 
 
+async def test_pipeline_logs_news_signal_enrichment(tmp_path):
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=84,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+    raw = _make_raw(title="삼성전자(005930) - 8237억 규모 공급계약 체결")
+    records = await _run_pipeline_once(
+        tmp_path,
+        [raw],
+        decision_side_effect=[mock_decision],
+        paper=True,
+    )
+
+    event_records = [r for r in records if r.get("type") == "event"]
+    assert len(event_records) == 1
+    event = event_records[0]
+    assert event["news_category"] == "contract"
+    assert event["analysis_headline"].endswith("8237억 규모 공급계약 체결")
+    assert event["news_signal"]["contract_amount_eok"] == 8237
+    assert event["news_signal"]["impact_score"] >= 70
+
+
 async def test_pipeline_loop_prioritizes_rising_sector_ticker(tmp_path):
     from kindshot.event_registry import EventRegistry
     from kindshot.feed import KindFeed
@@ -803,7 +836,7 @@ async def test_recent_pattern_profile_boosts_matching_buy_confidence(tmp_path):
 
     decision_records = [r for r in records if r.get("type") == "decision"]
     assert len(decision_records) == 1
-    assert decision_records[0]["confidence"] == 91
+    assert decision_records[0]["confidence"] == 92
 
 
 async def test_recent_pattern_profile_blocks_matching_loss_cohort(tmp_path):

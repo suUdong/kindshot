@@ -1,6 +1,7 @@
 """Tests for LLM decision engine."""
 
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,6 +18,7 @@ from kindshot.decision import (
     LlmCallError,
 )
 from kindshot.models import AlphaSignalContext, Bucket, ContextCard, Action, MarketContext
+from kindshot.news_semantics import build_news_signal
 
 
 def test_parse_valid_json():
@@ -138,6 +140,13 @@ def test_build_prompt():
         corp_name="삼성전자",
         detected_at="09:12:04",
         ctx=ctx,
+        news_signal=build_news_signal(
+            headline="반도체 사업 미국 대형 공급계약 체결",
+            ticker="005930",
+            corp_name="삼성전자",
+            detected_at=datetime.now(timezone.utc),
+            keyword_hits=["공급계약"],
+        ),
     )
     assert "POS_STRONG" in prompt
     assert "005930" in prompt
@@ -148,6 +157,8 @@ def test_build_prompt():
     assert "news_category=contract" in prompt
     assert "hold_profile=20m" in prompt
     assert "direct_disclosure=true" in prompt
+    assert "impact_score=" in prompt
+    assert "cluster_size=1" in prompt
 
 
 def test_build_prompt_includes_structured_risk_context():
@@ -607,8 +618,8 @@ async def test_contract_large_cap_small_amount_preflight_skips():
     assert "contract_large_cap" in result["reason"]
 
 
-async def test_normal_contract_still_calls_llm_when_preflight_clean():
-    cfg = Config(anthropic_api_key="test")
+async def test_normal_contract_still_calls_llm_when_preflight_clean(tmp_path):
+    cfg = Config(anthropic_api_key="test", llm_cache_dir=tmp_path / "llm_cache")
     engine = DecisionEngine(cfg)
 
     mock_client = AsyncMock()
@@ -839,9 +850,9 @@ async def test_small_contract_preflight_skip():
 
 
 @pytest.mark.asyncio
-async def test_large_contract_passes_preflight():
+async def test_large_contract_passes_preflight(tmp_path):
     """대형 계약(500억+) → preflight 통과 → LLM 호출."""
-    cfg = Config(anthropic_api_key="test")
+    cfg = Config(anthropic_api_key="test", llm_cache_dir=tmp_path / "llm_cache")
     engine = DecisionEngine(cfg)
 
     mock_client = AsyncMock()

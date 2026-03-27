@@ -30,8 +30,10 @@ from kindshot.models import (
     ContextCard,
     DecisionRecord,
     MarketContext,
+    NewsSignalContext,
     SizeHint,
 )
+from kindshot.news_semantics import build_news_signal, extract_contract_amount_eok
 from kindshot.news_category import classify_news_type
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,7 @@ def _build_prompt(
     hold_minutes: int | None = None,
     risk_budget: DailyLossBudgetSnapshot | None = None,
     consecutive_stop_losses: int = 0,
+    news_signal: NewsSignalContext | None = None,
     strategy_override: str | None = None,
 ) -> str:
     # Truncate headline to prevent prompt injection via excessively long input
@@ -140,12 +143,32 @@ def _build_prompt(
         holder = type("_HoldConfig", (), {"max_hold_minutes": 15})()
         derived_hold_minutes, hold_match = resolve_hold_profile(headline, list(keyword_hits or []), holder)
     hold_label = "EOD" if derived_hold_minutes == 0 else f"{derived_hold_minutes}m"
-    news_category = classify_news_type(headline, keyword_hits or [])
-    commentary = is_commentary_headline(raw_headline, dorg=dorg)
-    broker_note = is_broker_note_headline(raw_headline, dorg=dorg)
+    derived_signal = news_signal or build_news_signal(
+        headline=raw_headline,
+        ticker=ticker,
+        corp_name=corp_name,
+        detected_at=datetime.now(timezone.utc),
+        dorg=dorg,
+        keyword_hits=list(keyword_hits or []),
+    )
+    news_category = derived_signal.news_category or classify_news_type(headline, keyword_hits or [])
+    commentary = (
+        derived_signal.commentary
+        if derived_signal.commentary is not None
+        else is_commentary_headline(raw_headline, dorg=dorg)
+    )
+    broker_note = (
+        derived_signal.broker_note
+        if derived_signal.broker_note is not None
+        else is_broker_note_headline(raw_headline, dorg=dorg)
+    )
     contract_commentary = is_contract_commentary_headline(raw_headline, dorg=dorg)
-    direct_disclosure = is_direct_disclosure_headline(raw_headline, dorg=dorg)
-    amount_eok = _parse_contract_amount_eok(headline)
+    direct_disclosure = (
+        derived_signal.direct_disclosure
+        if derived_signal.direct_disclosure is not None
+        else is_direct_disclosure_headline(raw_headline, dorg=dorg)
+    )
+    amount_eok = derived_signal.contract_amount_eok
     signal_parts = [
         f"news_category={news_category}",
         f"direct_disclosure={str(direct_disclosure).lower()}",
@@ -161,6 +184,29 @@ def _build_prompt(
     signal_parts.append(
         f"contract_amount_eok={amount_eok:.0f}" if amount_eok is not None else "contract_amount_eok=N/A"
     )
+    signal_parts.append(
+        f"revenue_eok={derived_signal.revenue_eok:.0f}"
+        if derived_signal.revenue_eok is not None
+        else "revenue_eok=N/A"
+    )
+    signal_parts.append(
+        f"operating_profit_eok={derived_signal.operating_profit_eok:.0f}"
+        if derived_signal.operating_profit_eok is not None
+        else "operating_profit_eok=N/A"
+    )
+    signal_parts.append(
+        f"sales_ratio_pct={derived_signal.sales_ratio_pct:.1f}"
+        if derived_signal.sales_ratio_pct is not None
+        else "sales_ratio_pct=N/A"
+    )
+    signal_parts.append(
+        f"impact_score={derived_signal.impact_score}"
+        if derived_signal.impact_score is not None
+        else "impact_score=N/A"
+    )
+    if derived_signal.cluster is not None:
+        signal_parts.append(f"cluster_size={derived_signal.cluster.cluster_size}")
+        signal_parts.append(f"cluster_corroborated={str(derived_signal.cluster.corroborated).lower()}")
     if ctx.alpha_signal is not None and ctx.alpha_signal.signal_type == "STRONG_BUY":
         signal_parts.append("alpha_signal=STRONG_BUY")
         if ctx.alpha_signal.score_current is not None:
@@ -312,16 +358,7 @@ def _looks_like_incremental_order(headline: str) -> bool:
 
 def _parse_contract_amount_eok(headline: str) -> float | None:
     """헤드라인에서 계약/수주 금액(억원)을 파싱. 없으면 None."""
-    import re
-    # 조 단위
-    cho_match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*조", headline)
-    if cho_match:
-        return float(cho_match.group(1).replace(",", "")) * 10000
-    # 억 단위
-    eok_match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*억", headline)
-    if eok_match:
-        return float(eok_match.group(1).replace(",", ""))
-    return None
+    return extract_contract_amount_eok(headline)
 
 
 def _contract_preflight_skip(
@@ -331,6 +368,7 @@ def _contract_preflight_skip(
     *,
     raw_headline: str | None = None,
     dorg: str = "",
+    contract_amount_eok: float | None = None,
 ) -> dict[str, object] | None:
     if not _is_contract_family(headline, keyword_hits):
         return None
@@ -342,7 +380,7 @@ def _contract_preflight_skip(
         return {"confidence": 45, "reason": "rule_preflight:contract_incremental"}
 
     # 소규모 계약 (<200억): SKIP — 주가 영향 미미 (v65: 100→200억 상향, 공급계약 -2.30%/건 손실 데이터)
-    amt_eok = _parse_contract_amount_eok(headline)
+    amt_eok = contract_amount_eok if contract_amount_eok is not None else _parse_contract_amount_eok(headline)
     if amt_eok is not None and amt_eok < 200:
         return {"confidence": 45, "reason": f"rule_preflight:small_contract {amt_eok:.0f}억"}
 
@@ -809,6 +847,7 @@ class DecisionEngine:
         *,
         raw_headline: Optional[str] = None,
         dorg: str = "",
+        contract_amount_eok: float | None = None,
         run_id: str = "",
         schema_version: str = "0.1.2",
     ) -> DecisionRecord | None:
@@ -818,6 +857,7 @@ class DecisionEngine:
             ctx,
             raw_headline=raw_headline,
             dorg=dorg,
+            contract_amount_eok=contract_amount_eok,
         )
         if parsed is None:
             return None
@@ -853,6 +893,7 @@ class DecisionEngine:
         market_ctx: Optional[MarketContext] = None,
         risk_budget: Optional[DailyLossBudgetSnapshot] = None,
         consecutive_stop_losses: int = 0,
+        news_signal: Optional[NewsSignalContext] = None,
         strategy_override: str | None = None,
     ) -> DecisionRecord:
         """Call LLM for BUY/SKIP decision.
@@ -871,6 +912,7 @@ class DecisionEngine:
             list(keyword_hits or []),
             raw_headline=headline,
             dorg=dorg,
+            contract_amount_eok=news_signal.contract_amount_eok if news_signal is not None else None,
             run_id=run_id,
             schema_version=schema_version,
         )
@@ -926,6 +968,7 @@ class DecisionEngine:
                 hold_minutes=hold_minutes,
                 risk_budget=risk_budget,
                 consecutive_stop_losses=consecutive_stop_losses,
+                news_signal=news_signal,
                 strategy_override=strategy_override,
             )
 

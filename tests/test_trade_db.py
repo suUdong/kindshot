@@ -37,6 +37,11 @@ def sample_logs(tmp_path: Path) -> tuple[Path, Path]:
         "bucket": "POS_STRONG",
         "keyword_hits": ["수주"],
         "news_category": "수주공시",
+        "news_signal": {
+            "contract_amount_eok": 8237,
+            "impact_score": 86,
+            "cluster": {"cluster_id": "cluster001", "cluster_size": 2},
+        },
         "decision_action": "BUY",
         "decision_confidence": 85,
         "decision_size_hint": "M",
@@ -210,6 +215,9 @@ class TestBackfill:
             assert row["ticker"] == "005930"
             assert row["confidence"] == 85
             assert row["hour_slot"] == 10
+            assert row["contract_amount_eok"] == 8237
+            assert row["impact_score"] == 86
+            assert row["news_cluster_id"] == "cluster001"
             assert row["ret_t5m"] is not None
             assert row["entry_px"] == 75000
 

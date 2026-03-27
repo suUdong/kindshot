@@ -506,6 +506,7 @@ async def append_runtime_context_card(
     promotion_original_bucket: Optional[str],
     promotion_confidence: Optional[int],
     promotion_policy: Optional[str],
+    news_signal: object = None,
     ctx: ContextCard,
     raw: ContextCardData,
     market_ctx: object,
@@ -532,6 +533,7 @@ async def append_runtime_context_card(
         "promotion_original_bucket": promotion_original_bucket,
         "promotion_confidence": promotion_confidence,
         "promotion_policy": promotion_policy,
+        "news_signal": _json_safe_value(news_signal),
         "ctx": _json_safe_value(ctx),
         "raw": {
             "adv_value_20d": raw.adv_value_20d,

@@ -47,10 +47,16 @@ from kindshot.models import (
     EventKind,
     EventRecord,
     MarketContext,
+    NewsSignalContext,
     PipelineLatencyProfile,
     PromotionStatus,
     SkipStage,
     T0Basis,
+)
+from kindshot.news_semantics import (
+    TickerNewsClusterTracker,
+    apply_impact_score_confidence_adjustment,
+    build_news_signal,
 )
 from kindshot.price import PriceFetcher, SnapshotScheduler
 from kindshot.quant import quant_check
@@ -272,9 +278,11 @@ async def execute_bucket_path(
     promotion_original_bucket: Optional[Bucket] = None,
     promotion_confidence: Optional[int] = None,
     promotion_policy: Optional[str] = None,
+    news_signal: Optional[NewsSignalContext] = None,
 ) -> ProcessOutcome:
     detected_at = raw.detected_at
-    analysis_headline = normalize_analysis_headline(raw.title)
+    analysis_headline = news_signal.analysis_headline if news_signal is not None else normalize_analysis_headline(raw.title)
+    news_cat = news_signal.news_category if news_signal is not None else classify_news_type(analysis_headline, keyword_hits)
     disclosed_at, disclosed_at_missing, delay_ms = _parse_disclosure_meta(raw, detected_at)
     _pipeline_t0 = time.monotonic()
 
@@ -364,8 +372,11 @@ async def execute_bucket_path(
         ticker=raw.ticker,
         corp_name=raw.corp_name,
         headline=raw.title,
+        analysis_headline=analysis_headline,
         bucket=bucket,
         keyword_hits=keyword_hits,
+        news_category=news_cat,
+        news_signal=news_signal,
         analysis_tag=analysis_tag,
         skip_stage=skip_stage,
         skip_reason=skip_reason,
@@ -417,6 +428,7 @@ async def execute_bucket_path(
             promotion_original_bucket=promotion_original_bucket.value if promotion_original_bucket else None,
             promotion_confidence=promotion_confidence,
             promotion_policy=promotion_policy,
+            news_signal=news_signal,
             ctx=ctx,
             raw=raw_data,
             market_ctx=event_rec.market_ctx,
@@ -576,6 +588,7 @@ async def execute_bucket_path(
             market_ctx=market.snapshot,
             risk_budget=risk_budget,
             consecutive_stop_losses=guardrail_state.consecutive_stop_losses if guardrail_state is not None else 0,
+            news_signal=news_signal,
         )
     except (LlmCallError, LlmTimeoutError, LlmParseError) as exc:
         logger.warning("LLM failed for [%s], using rule fallback: %s", raw.ticker, exc)
@@ -627,7 +640,6 @@ async def execute_bucket_path(
     # ── Confidence 조정 파이프라인 ──
     # 총 감점 상한: LLM 원본에서 -10 이상 감점 방지 (과다 감점 = 진짜 촉매 놓침)
     # llm_original_conf를 모든 감점 전에 캡처해야 article(-10) + pipeline(-10) = -20 방지
-    news_cat = classify_news_type(analysis_headline, keyword_hits)
     effective_entry_delay_ms = None
 
     if decision.action == Action.BUY:
@@ -812,6 +824,21 @@ async def execute_bucket_path(
         if decision.confidence != before:
             logger.info("News category adj [%s]: %d → %d (category=%s)",
                         raw.ticker, before, decision.confidence, news_cat)
+
+        if news_signal is not None and news_signal.impact_score is not None:
+            before = decision.confidence
+            decision.confidence = apply_impact_score_confidence_adjustment(
+                decision.confidence,
+                news_signal.impact_score,
+            )
+            if decision.confidence != before:
+                logger.info(
+                    "Impact score adj [%s]: %d → %d (impact=%d)",
+                    raw.ticker,
+                    before,
+                    decision.confidence,
+                    news_signal.impact_score,
+                )
 
         # 8. v68: 종목별 학습 기반 confidence 조정
         learner = _get_ticker_learner(config)
@@ -1189,6 +1216,7 @@ async def process_registered_event(
     recent_pattern_profile: Optional[object] = None,
     registry: Optional[EventRegistry] = None,
     premarket_pending: Optional[list] = None,
+    news_cluster_tracker: Optional[TickerNewsClusterTracker] = None,
 ) -> None:
     """Process an event that already passed dedup/registry."""
     _tracer = get_tracer()
@@ -1242,6 +1270,15 @@ async def process_registered_event(
 
     # 2. Bucket classification
     bucket_result = classify(raw.title)
+    news_signal = build_news_signal(
+        headline=raw.title,
+        ticker=raw.ticker,
+        corp_name=raw.corp_name,
+        detected_at=detected_at,
+        dorg=raw.dorg,
+        keyword_hits=bucket_result.keyword_hits,
+        cluster_tracker=news_cluster_tracker,
+    )
     if bucket_result.bucket == Bucket.UNKNOWN:
         _append_unknown_headline(config.log_dir, raw.title, raw.ticker)
         review_request = UnknownReviewRequest(
@@ -1288,6 +1325,7 @@ async def process_registered_event(
             health_state=health_state,
             order_executor=order_executor,
             recent_pattern_profile=recent_pattern_profile,
+            news_signal=news_signal,
         )
     except (LlmTimeoutError, LlmCallError, LlmParseError) as llm_exc:
         err_type = type(llm_exc).__name__
@@ -1324,6 +1362,7 @@ async def process_registered_event(
                     health_state=health_state,
                     order_executor=order_executor,
                     recent_pattern_profile=recent_pattern_profile,
+                    news_signal=news_signal,
                 )
             except Exception:
                 logger.warning("Rule fallback retry also failed for [%s]", raw.ticker, exc_info=True)
@@ -1424,6 +1463,7 @@ async def process_unknown_promotion(
     kis: Optional[KisClient],
     counters: Optional[RuntimeCounters],
     guardrail_state: Optional[GuardrailState],
+    news_cluster_tracker: Optional[TickerNewsClusterTracker] = None,
 ) -> None:
     promotion = evaluate_unknown_promotion(config, request, review)
     if promotion.promotion_status != PromotionStatus.PROMOTED:
@@ -1475,6 +1515,14 @@ async def process_unknown_promotion(
             promotion_original_bucket=Bucket.UNKNOWN,
             promotion_confidence=review.confidence,
             promotion_policy=promotion.promotion_policy,
+            news_signal=build_news_signal(
+                headline=request.headline,
+                ticker=request.ticker,
+                corp_name=request.corp_name,
+                detected_at=request.detected_at,
+                keyword_hits=[],
+                cluster_tracker=news_cluster_tracker,
+            ),
         )
     except LlmTimeoutError:
         if counters is not None:
@@ -1546,6 +1594,7 @@ async def pipeline_loop(
     queue_maxsize = max(1, config.pipeline_queue_maxsize)
     queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=queue_maxsize)
     enqueue_sequence = 0
+    news_cluster_tracker = TickerNewsClusterTracker()
 
     # 장전 재평가: iv_ratio=0으로 SKIP된 POS 이벤트를 09:01 이후 재처리
     premarket_pending: list[tuple] = []
@@ -1581,6 +1630,7 @@ async def pipeline_loop(
                     recent_pattern_profile=recent_pattern_profile,
                     registry=registry,
                     premarket_pending=premarket_pending,
+                    news_cluster_tracker=news_cluster_tracker,
                 )
             except LogWriteError:
                 logger.critical("Log write failed in worker %d — initiating shutdown", worker_idx)

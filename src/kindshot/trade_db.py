@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 CREATE_TRADES_SQL = """
 CREATE TABLE IF NOT EXISTS trades (
@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS trades (
     bucket          TEXT DEFAULT '',
     keyword_hits    TEXT DEFAULT '[]',       -- JSON array
     news_category   TEXT DEFAULT '',
+    news_cluster_id TEXT DEFAULT '',
+    news_cluster_size INTEGER DEFAULT 0,
+    contract_amount_eok REAL,
+    impact_score    INTEGER DEFAULT 0,
     decision_action TEXT DEFAULT 'BUY',
     confidence      INTEGER DEFAULT 0,
     size_hint       TEXT DEFAULT 'M',
@@ -90,6 +94,13 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT
 );
 """
+
+ADDITIVE_TRADE_COLUMNS: list[tuple[str, str]] = [
+    ("news_cluster_id", "TEXT DEFAULT ''"),
+    ("news_cluster_size", "INTEGER DEFAULT 0"),
+    ("contract_amount_eok", "REAL"),
+    ("impact_score", "INTEGER DEFAULT 0"),
+]
 
 # 버전-날짜 매핑: 실제 서버 배포 기준
 # pre-v59: 20260310-20260326 (초기 전략)
@@ -241,10 +252,17 @@ class TradeDB:
         cur = self._conn.cursor()
         cur.execute(CREATE_META_SQL)
         cur.execute(CREATE_TRADES_SQL)
+        existing_columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(trades)").fetchall()
+        }
+        for name, column_sql in ADDITIVE_TRADE_COLUMNS:
+            if name not in existing_columns:
+                cur.execute(f"ALTER TABLE trades ADD COLUMN {name} {column_sql}")
         for idx_sql in CREATE_INDEXES_SQL:
             cur.execute(idx_sql)
         cur.execute("INSERT OR IGNORE INTO meta(key, value) VALUES(?, ?)",
                      ("schema_version", str(SCHEMA_VERSION)))
+        cur.execute("UPDATE meta SET value = ? WHERE key = ?", (str(SCHEMA_VERSION), "schema_version"))
         self._conn.commit()
 
     def close(self) -> None:
@@ -264,7 +282,8 @@ class TradeDB:
         """Insert or replace a trade record."""
         cols = [
             "event_id", "date", "detected_at", "ticker", "corp_name", "headline",
-            "bucket", "keyword_hits", "news_category", "decision_action",
+            "bucket", "keyword_hits", "news_category", "news_cluster_id", "news_cluster_size",
+            "contract_amount_eok", "impact_score", "decision_action",
             "confidence", "size_hint", "decision_reason", "decision_source",
             "guardrail_result", "skip_stage",
             "adv_value_20d", "spread_bps", "ret_today", "rsi_14", "vol_pct_20d",
@@ -558,6 +577,8 @@ def backfill_from_logs(
             kw_hits = ev.get("keyword_hits") or []
             detected_at = ev.get("detected_at", "")
             hour_slot = _parse_hour(detected_at)
+            news_signal = ev.get("news_signal") or {}
+            cluster = news_signal.get("cluster") or {}
 
             data = {
                 "event_id": eid,
@@ -569,6 +590,10 @@ def backfill_from_logs(
                 "bucket": ev.get("bucket", ""),
                 "keyword_hits": json.dumps(kw_hits, ensure_ascii=False),
                 "news_category": ev.get("news_category", ""),
+                "news_cluster_id": cluster.get("cluster_id", ""),
+                "news_cluster_size": cluster.get("cluster_size", 0),
+                "contract_amount_eok": news_signal.get("contract_amount_eok"),
+                "impact_score": news_signal.get("impact_score", 0),
                 "decision_action": "BUY",
                 "confidence": ev.get("decision_confidence", 0),
                 "size_hint": ev.get("decision_size_hint", "M"),

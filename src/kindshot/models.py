@@ -127,6 +127,30 @@ class SectorMomentumContext(BaseModel):
     is_rising: Optional[bool] = None
 
 
+class NewsClusterContext(BaseModel):
+    cluster_id: str
+    cluster_key: Optional[str] = None
+    cluster_category: Optional[str] = None
+    cluster_size: int = Field(default=1, ge=1)
+    minutes_since_first: int = Field(default=0, ge=0)
+    corroborated: bool = False
+
+
+class NewsSignalContext(BaseModel):
+    analysis_headline: Optional[str] = None
+    news_category: Optional[str] = None
+    direct_disclosure: Optional[bool] = None
+    commentary: Optional[bool] = None
+    broker_note: Optional[bool] = None
+    contract_amount_eok: Optional[float] = None
+    revenue_eok: Optional[float] = None
+    operating_profit_eok: Optional[float] = None
+    sales_ratio_pct: Optional[float] = None
+    impact_score: Optional[int] = Field(default=None, ge=0, le=100)
+    impact_factors: list[str] = Field(default_factory=list)
+    cluster: Optional[NewsClusterContext] = None
+
+
 class ContextCard(BaseModel):
     ret_today: Optional[float] = None
     ret_1d: Optional[float] = None
@@ -192,8 +216,11 @@ class EventRecord(BaseModel):
     ticker: str
     corp_name: str
     headline: str
+    analysis_headline: Optional[str] = None
     bucket: Bucket
     keyword_hits: list[str] = Field(default_factory=list)
+    news_category: Optional[str] = None
+    news_signal: Optional[NewsSignalContext] = None
     analysis_tag: Optional[str] = None
     skip_stage: Optional[SkipStage] = None
     skip_reason: Optional[str] = None
