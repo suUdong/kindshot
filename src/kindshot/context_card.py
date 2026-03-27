@@ -15,9 +15,13 @@ from typing import Optional
 
 import aiohttp
 
+from kindshot.alpha_scanner import (
+    fetch_alpha_scanner_sector_snapshot,
+    lookup_sector_snapshot_ticker,
+)
 from kindshot.config import Config
 from kindshot.kis_client import KisClient
-from kindshot.models import AlphaSignalContext, ContextCard
+from kindshot.models import AlphaSignalContext, ContextCard, SectorMomentumContext
 from kindshot.runtime_artifacts import update_runtime_artifact_index
 from kindshot.tz import KST as _KST
 
@@ -50,6 +54,7 @@ class ContextCardData:
     avg_volume_20d: Optional[float] = None
     volume_ratio_vs_avg20d: Optional[float] = None
     alpha_signal: dict | None = None
+    sector_momentum: dict | None = None
 
 def configure_cache(ttl_s: int, max_size: int) -> None:
     """Set cache policy from Config at runtime."""
@@ -292,6 +297,7 @@ async def build_context_card(
     hist_task = asyncio.create_task(_pykrx_features(ticker))
     price_task = asyncio.create_task(kis.get_price(ticker)) if kis is not None else None
     alpha_task = None
+    sector_task = None
     if config is not None and config.alpha_scanner_api_base_url:
         alpha_task = asyncio.create_task(
             _fetch_alpha_scanner_signal(
@@ -300,12 +306,20 @@ async def build_context_card(
                 ticker,
             )
         )
+        sector_task = asyncio.create_task(
+            fetch_alpha_scanner_sector_snapshot(
+                config.alpha_scanner_api_base_url,
+                config.alpha_scanner_api_timeout_s,
+            )
+        )
 
     pending_tasks = [hist_task]
     if price_task is not None:
         pending_tasks.append(price_task)
     if alpha_task is not None:
         pending_tasks.append(alpha_task)
+    if sector_task is not None:
+        pending_tasks.append(sector_task)
     results = await asyncio.gather(*pending_tasks, return_exceptions=True)
     hist_result = results[0]
     if isinstance(hist_result, Exception):
@@ -322,6 +336,7 @@ async def build_context_card(
     quote_temp_stop: Optional[bool] = None
     quote_liquidation_trade: Optional[bool] = None
     alpha_signal: AlphaSignalContext | None = None
+    sector_momentum: SectorMomentumContext | None = None
     result_idx = 1
     price_info = None
     if price_task is not None:
@@ -358,6 +373,27 @@ async def build_context_card(
             logger.warning("Alpha-scanner signal fetch failed for %s: %s", ticker, alpha_result)
         else:
             alpha_signal = alpha_result
+        result_idx += 1
+
+    if sector_task is not None:
+        sector_result = results[result_idx]
+        if isinstance(sector_result, Exception):
+            logger.warning("Alpha-scanner sector snapshot fetch failed for %s: %s", ticker, sector_result)
+        else:
+            sector_row = lookup_sector_snapshot_ticker(sector_result, ticker)
+            if sector_row is not None:
+                rotation_signal = sector_row.get("sector_rotation_signal")
+                sector_momentum = SectorMomentumContext(
+                    ticker=ticker,
+                    sector=sector_row.get("sector"),
+                    sector_rotation_signal=rotation_signal,
+                    sector_momentum_score=sector_row.get("sector_momentum_score"),
+                    sector_rank=sector_row.get("sector_rank"),
+                    sector_score_adjustment=sector_row.get("sector_score_adjustment"),
+                    priority_score=sector_row.get("priority_score"),
+                    generated_at=sector_result.get("generated_at"),
+                    is_rising=rotation_signal in {"LEADING", "IMPROVING"},
+                )
 
     # 당일 누적거래량 / 20일 평균거래량 비율
     volume_ratio_vs_avg20d: Optional[float] = None
@@ -396,6 +432,7 @@ async def build_context_card(
         support_price_20d=hist.get("support_price_20d"),
         support_reference_px=hist.get("support_reference_px"),
         alpha_signal=alpha_signal,
+        sector_momentum=sector_momentum,
     )
 
     raw = ContextCardData(
@@ -412,13 +449,14 @@ async def build_context_card(
         orderbook_bid_ask_ratio=orderbook_bid_ask_ratio,
         quote_risk_state=price_info.risk_state if kis and price_info else None,
         orderbook_snapshot=price_info.orderbook if kis and price_info else None,
-        sector=price_info.sector if kis and price_info else "",
+        sector=price_info.sector if kis and price_info else (sector_momentum.sector if sector_momentum else ""),
         avg_volume_20d=avg_volume_20d,
         volume_ratio_vs_avg20d=volume_ratio_vs_avg20d,
         support_price_5d=hist.get("support_price_5d"),
         support_price_20d=hist.get("support_price_20d"),
         support_reference_px=hist.get("support_reference_px"),
         alpha_signal=alpha_signal.model_dump(mode="json") if alpha_signal is not None else None,
+        sector_momentum=sector_momentum.model_dump(mode="json") if sector_momentum is not None else None,
     )
     return card, raw
 
@@ -516,6 +554,7 @@ async def append_runtime_context_card(
             "support_price_20d": raw.support_price_20d,
             "support_reference_px": raw.support_reference_px,
             "alpha_signal": raw.alpha_signal,
+            "sector_momentum": raw.sector_momentum,
         },
         "market_ctx": _json_safe_value(market_ctx),
     }

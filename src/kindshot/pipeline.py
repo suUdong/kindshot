@@ -13,6 +13,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from kindshot.alpha_scanner import (
+    classify_sector_priority,
+    fetch_alpha_scanner_sector_snapshot,
+    lookup_sector_snapshot_ticker,
+)
 from kindshot.bucket import classify
 from kindshot.config import Config
 from kindshot.context_card import (
@@ -25,7 +30,7 @@ from kindshot.entry_filter_analysis import compute_effective_entry_delay_ms
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
 from kindshot.headline_parser import normalize_analysis_headline
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_volume_ratio_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile, detect_volatility_regime, apply_volatility_confidence_adjustment, apply_news_category_confidence_adjustment, apply_mtf_confidence_adjustment, resolve_daily_loss_budget
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_volume_ratio_confidence_adjustment, apply_sector_momentum_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile, detect_volatility_regime, apply_volatility_confidence_adjustment, apply_news_category_confidence_adjustment, apply_mtf_confidence_adjustment, resolve_daily_loss_budget
 from kindshot.news_category import classify_news_type
 from kindshot.pattern_profile import match_loss_guardrail, match_profit_boost
 from kindshot.ticker_learning import TickerLearner
@@ -74,6 +79,10 @@ def _get_ticker_learner(config: Config) -> Optional[TickerLearner]:
         _ticker_learner = TickerLearner(min_trades=config.ticker_learning_min_trades)
         _ticker_learner.load_history(config.data_dir)
     return _ticker_learner
+
+
+def _queue_priority_key(sector_row: dict | None, sequence: int) -> tuple[tuple[int, float, float], int]:
+    return classify_sector_priority(sector_row), sequence
 
 
 
@@ -734,6 +743,25 @@ async def execute_bucket_path(
             if decision.confidence != before:
                 logger.info("Volume ratio adj [%s]: %d → %d (ratio=%.2fx avg20d)",
                             raw.ticker, before, decision.confidence, raw_data.volume_ratio_vs_avg20d)
+
+        # 3c. 섹터 모멘텀 보정 (alpha-scanner sector rotation)
+        if ctx and ctx.sector_momentum is not None:
+            before = decision.confidence
+            decision.confidence = apply_sector_momentum_confidence_adjustment(
+                decision.confidence,
+                ctx.sector_momentum.sector_rotation_signal,
+                ctx.sector_momentum.sector_momentum_score,
+            )
+            if decision.confidence != before:
+                logger.info(
+                    "Sector momentum adj [%s]: %d → %d (sector=%s signal=%s score=%s)",
+                    raw.ticker,
+                    before,
+                    decision.confidence,
+                    ctx.sector_momentum.sector or "N/A",
+                    ctx.sector_momentum.sector_rotation_signal or "N/A",
+                    f"{ctx.sector_momentum.sector_momentum_score:.1f}" if ctx.sector_momentum.sector_momentum_score is not None else "N/A",
+                )
 
         # 4. Detection delay
         effective_entry_delay_ms = compute_effective_entry_delay_ms(disclosed_at, decision.decided_at)
@@ -1516,7 +1544,8 @@ async def pipeline_loop(
     """Main pipeline: feed/registry + queue/worker event processing."""
     worker_count = max(1, config.pipeline_workers)
     queue_maxsize = max(1, config.pipeline_queue_maxsize)
-    queue: asyncio.Queue = asyncio.Queue(maxsize=queue_maxsize)
+    queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=queue_maxsize)
+    enqueue_sequence = 0
 
     # 장전 재평가: iv_ratio=0으로 SKIP된 POS 이벤트를 09:01 이후 재처리
     premarket_pending: list[tuple] = []
@@ -1528,7 +1557,10 @@ async def pipeline_loop(
             try:
                 if item is None:
                     return
-                raw, processed = item
+                _priority, _sequence, payload = item
+                if payload is None:
+                    return
+                raw, processed = payload
                 await process_registered_event(
                     raw=raw,
                     processed=processed,
@@ -1619,7 +1651,17 @@ async def pipeline_loop(
 
                 _tracer = get_tracer()
                 _t_q = _tracer.queue_put(queue.qsize(), queue.maxsize) if _tracer else None
-                await queue.put((raw, processed))
+                sector_snapshot = None
+                sector_row = None
+                if config.alpha_scanner_api_base_url:
+                    sector_snapshot = await fetch_alpha_scanner_sector_snapshot(
+                        config.alpha_scanner_api_base_url,
+                        config.alpha_scanner_api_timeout_s,
+                    )
+                    sector_row = lookup_sector_snapshot_ticker(sector_snapshot, raw.ticker)
+                priority_item = (*_queue_priority_key(sector_row, enqueue_sequence), (raw, processed))
+                enqueue_sequence += 1
+                await queue.put(priority_item)
                 if _tracer and _t_q is not None:
                     _tracer.queue_put_done(_t_q)
                 if counters is not None:
@@ -1633,7 +1675,17 @@ async def pipeline_loop(
                     n = len(premarket_pending)
                     logger.info("PREMARKET_REEVAL: %d건 장전 이벤트 재처리 시작", n)
                     for p_raw, p_processed in premarket_pending:
-                        await queue.put((p_raw, p_processed))
+                        sector_snapshot = None
+                        sector_row = None
+                        if config.alpha_scanner_api_base_url:
+                            sector_snapshot = await fetch_alpha_scanner_sector_snapshot(
+                                config.alpha_scanner_api_base_url,
+                                config.alpha_scanner_api_timeout_s,
+                            )
+                            sector_row = lookup_sector_snapshot_ticker(sector_snapshot, p_raw.ticker)
+                        priority_item = (*_queue_priority_key(sector_row, enqueue_sequence), (p_raw, p_processed))
+                        enqueue_sequence += 1
+                        await queue.put(priority_item)
                     premarket_pending.clear()
                     if counters is not None:
                         counters.totals["premarket_reeval_injected"] = n
@@ -1641,7 +1693,8 @@ async def pipeline_loop(
         # Feed stopped naturally. Drain queue before shutdown.
         await queue.join()
         for _ in workers:
-            await queue.put(None)
+            await queue.put(((99, 0.0, 0.0), enqueue_sequence, None))
+            enqueue_sequence += 1
         await asyncio.gather(*workers, return_exceptions=True)
     except asyncio.CancelledError:
         for w in workers:

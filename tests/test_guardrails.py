@@ -10,6 +10,7 @@ from kindshot.guardrails import (
     apply_adv_confidence_adjustment, apply_market_confidence_adjustment,
     apply_delay_confidence_adjustment, apply_price_reaction_adjustment,
     apply_volume_confidence_adjustment, apply_volume_ratio_confidence_adjustment,
+    apply_sector_momentum_confidence_adjustment,
     apply_dorg_confidence_adjustment,
     apply_time_session_confidence_adjustment,
     apply_trend_confidence_adjustment,
@@ -1601,6 +1602,26 @@ def test_volume_ratio_guardrail_pass_above_threshold():
         **_base_args(),
     )
     assert r.passed
+
+
+# ── Sector momentum confidence adjustment ──
+
+
+def test_sector_momentum_leading_boost():
+    assert apply_sector_momentum_confidence_adjustment(80, "LEADING", 82.0) == 83
+
+
+def test_sector_momentum_improving_small_boost():
+    assert apply_sector_momentum_confidence_adjustment(80, "IMPROVING", 58.0) == 81
+
+
+def test_sector_momentum_lagging_penalty():
+    assert apply_sector_momentum_confidence_adjustment(80, "LAGGING", 22.0) == 77
+
+
+def test_sector_momentum_neutral_extreme_scores():
+    assert apply_sector_momentum_confidence_adjustment(80, "NEUTRAL", 72.0) == 81
+    assert apply_sector_momentum_confidence_adjustment(80, "NEUTRAL", 25.0) == 79
 
 
 # ── Technical confidence adjustment (RSI/MACD/BB/ATR) ──

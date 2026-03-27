@@ -115,6 +115,18 @@ class AlphaSignalContext(BaseModel):
     age_hours: Optional[float] = None
 
 
+class SectorMomentumContext(BaseModel):
+    ticker: str
+    sector: Optional[str] = None
+    sector_rotation_signal: Optional[str] = None
+    sector_momentum_score: Optional[float] = None
+    sector_rank: Optional[int] = None
+    sector_score_adjustment: Optional[float] = None
+    priority_score: Optional[float] = None
+    generated_at: Optional[str] = None
+    is_rising: Optional[bool] = None
+
+
 class ContextCard(BaseModel):
     ret_today: Optional[float] = None
     ret_1d: Optional[float] = None
@@ -139,6 +151,7 @@ class ContextCard(BaseModel):
     support_price_20d: Optional[float] = None
     support_reference_px: Optional[float] = None
     alpha_signal: Optional[AlphaSignalContext] = None
+    sector_momentum: Optional[SectorMomentumContext] = None
 
 
 # ── Log Records ────────────────────────────────────────

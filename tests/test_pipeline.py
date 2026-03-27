@@ -30,6 +30,7 @@ async def _run_pipeline_once(
     capture_guardrail_calls=False,
     recent_pattern_profile=None,
     guardrail_state=None,
+    ctx_card=None,
 ):
     """Helper: run one iteration of the pipeline and return logged records."""
     from kindshot.event_registry import EventRegistry
@@ -82,7 +83,7 @@ async def _run_pipeline_once(
         from kindshot.models import ContextCard
         from kindshot.guardrails import GuardrailResult
         mock_ctx.return_value = (
-            ContextCard(adv_value_20d=10e9, spread_bps=10.0),
+            ctx_card or ContextCard(adv_value_20d=10e9, spread_bps=10.0),
             ctx_raw or ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=5.0),
         )
         mock_gr.return_value = GuardrailResult(passed=guardrail_passed, reason="BLOCKED" if not guardrail_passed else None)
@@ -286,6 +287,89 @@ async def test_pipeline_records_buy_with_sector_metadata(tmp_path):
     )
 
     guardrail_state.record_buy.assert_called_once_with("005930", sector="반도체")
+
+
+async def test_pipeline_loop_prioritizes_rising_sector_ticker(tmp_path):
+    from kindshot.event_registry import EventRegistry
+    from kindshot.feed import KindFeed
+    from kindshot.logger import JsonlLogger
+    from kindshot.market import MarketMonitor
+    from kindshot.pipeline import pipeline_loop
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+
+    cfg = Config(
+        log_dir=tmp_path / "logs",
+        dry_run=True,
+        alpha_scanner_api_base_url="http://alpha.local",
+        pipeline_workers=1,
+    )
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+    mock_feed = AsyncMock(spec=KindFeed)
+
+    raw_lagging = _make_raw(
+        title="종목A(000660) - 공급계약 체결",
+        link="https://kind.krx.co.kr/?rcpNo=20260305000002",
+    )
+    raw_lagging.ticker = "000660"
+    raw_lagging.corp_name = "종목A"
+    raw_rising = _make_raw(
+        title="종목B(005930) - 공급계약 체결",
+        link="https://kind.krx.co.kr/?rcpNo=20260305000003",
+    )
+    raw_rising.ticker = "005930"
+    raw_rising.corp_name = "종목B"
+
+    async def _one_batch():
+        yield [raw_lagging, raw_rising]
+
+    mock_feed.stream = _one_batch
+    processed_order: list[str] = []
+
+    async def _capture_order(*, raw, **kwargs):
+        processed_order.append(raw.ticker)
+
+    snapshot = {
+        "status": "ok",
+        "prioritized_stocks": [
+            {
+                "ticker": "005930",
+                "sector_rotation_signal": "LEADING",
+                "sector_momentum_score": 82.0,
+                "priority_score": 81.7,
+            },
+            {
+                "ticker": "000660",
+                "sector_rotation_signal": "LAGGING",
+                "sector_momentum_score": 22.0,
+                "priority_score": 39.0,
+            },
+        ],
+    }
+
+    with patch("kindshot.pipeline.fetch_alpha_scanner_sector_snapshot", new=AsyncMock(return_value=snapshot)), \
+         patch("kindshot.pipeline.process_registered_event", new=AsyncMock(side_effect=_capture_order)):
+        await asyncio.wait_for(
+            pipeline_loop(
+                mock_feed,
+                registry,
+                MagicMock(),
+                market,
+                scheduler,
+                log,
+                cfg,
+                "test_run",
+                None,
+                mode="paper",
+            ),
+            timeout=1.0,
+        )
+
+    assert processed_order == ["005930", "000660"]
 
 
 async def test_neg_strong_requests_news_exit_for_open_ticker(tmp_path):

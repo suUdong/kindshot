@@ -843,6 +843,32 @@ def apply_volume_ratio_confidence_adjustment(confidence: int, volume_ratio: floa
     return confidence
 
 
+def apply_sector_momentum_confidence_adjustment(
+    confidence: int,
+    rotation_signal: str | None,
+    momentum_score: float | None,
+) -> int:
+    """Bounded confidence shaping from sector rotation data."""
+    signal = str(rotation_signal or "").upper()
+    delta = 0
+
+    if signal == "LEADING":
+        delta += 3 if momentum_score is not None and momentum_score >= 75 else 2
+    elif signal == "IMPROVING":
+        delta += 2 if momentum_score is not None and momentum_score >= 60 else 1
+    elif signal == "LAGGING":
+        delta -= 3 if momentum_score is not None and momentum_score <= 25 else 2
+    elif signal == "WEAKENING":
+        delta -= 2 if momentum_score is not None and momentum_score < 45 else 1
+    elif momentum_score is not None:
+        if momentum_score >= 70:
+            delta += 1
+        elif momentum_score <= 30:
+            delta -= 1
+
+    return max(0, min(100, confidence + delta))
+
+
 def apply_time_session_confidence_adjustment(confidence: int, decision_time_kst: datetime | None) -> int:
     """시간대별 confidence 조정 (프롬프트 time_session_rules 구현).
 
