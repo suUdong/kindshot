@@ -28,6 +28,111 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 07:52 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `42c2333`
+- Deployer: Codex manual `rsync` + direct `ssh kindshot-server`
+- Summary:
+  1. **headline semantic enrichment deploy** — shipped shared numeric fact extraction, per-ticker related-news clustering, and bounded impact scoring into the runtime `decision`/`pipeline`/`trade_db` path without touching `deploy/`, secrets, or live-order wiring
+  2. **additive observability extension** — event logs and runtime context cards now persist `news_signal` metadata so downstream analysis can inspect contract amount, revenue, operating profit, cluster corroboration, and impact score directly
+  3. **remote reinstall + health sign-off** — recompiled the remote tree, reinstalled with `./.venv/bin/python -m pip install -e . --quiet`, restarted `kindshot` plus `kindshot-dashboard`, and confirmed fresh runtime/dashboard health
+- Validation:
+  - local `python3 -m compileall src tests scripts dashboard`
+  - local `.venv/bin/python -m pytest tests/test_news_semantics.py tests/test_decision.py tests/test_pipeline.py tests/test_trade_db.py tests/test_context_card.py -x -vv` → `140 passed`
+  - local `.venv/bin/python -m pytest -q` → `1028 passed, 1 skipped, 1 warning`
+  - diagnostics `lsp_diagnostics_directory` → `0 errors`, `0 warnings`
+  - `git push origin main` → `42c2333` pushed to `origin/main`
+  - remote `rsync --delete src/` → `/opt/kindshot/src/`
+  - remote `rsync --delete tests/` → `/opt/kindshot/tests/`
+  - remote `rsync pyproject.toml README.md requirements.lock` → `/opt/kindshot/`
+  - remote `./.venv/bin/python -m compileall src/kindshot tests dashboard`
+  - remote `./.venv/bin/python -m pip install -e . --quiet`
+  - remote `sudo systemctl restart kindshot kindshot-dashboard`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `systemctl status` showed:
+    - `kindshot` active since `2026-03-28 07:51:57 KST`
+    - `kindshot-dashboard` active since `2026-03-28 07:51:57 KST`
+  - remote `/health` returned:
+    - `status=healthy`
+    - `started_at=2026-03-28T07:51:59.106745+09:00`
+    - `last_poll_source=feed`
+    - `last_poll_age_seconds=6`
+    - `guardrail_state.configured_max_positions=4`
+    - `guardrail_state.position_count=0`
+    - `trade_metrics.total_trades=0`
+    - `recent_pattern_profile.total_trades=14`
+  - remote dashboard probe `HEAD http://127.0.0.1:8501/` → `200 text/html`
+- Rollback: re-sync the prior known-good runtime tree to `/opt/kindshot`, rerun `./.venv/bin/python -m pip install -e . --quiet`, and restart `kindshot` plus `kindshot-dashboard`
+- Result: 성공
+- Notes: plain `systemctl restart` hit polkit and required `sudo -n systemctl restart ...`; runtime semantics changed additively only, and paper-mode execution, `deploy/`, secrets, and live-order behavior remained unchanged
+
+### 2026-03-28 06:59 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `21af9e6`
+- Deployer: Codex manual `rsync` + direct `ssh kindshot-server`
+- Summary:
+  1. **sector-priority runtime re-sync** — re-synced the validated sector-priority runtime slice (`src/`, `tests/`) to `/opt/kindshot` so the server matches local `21af9e6`
+  2. **remote reinstall + restart** — reran remote `compileall`, reinstalled with `./.venv/bin/python -m pip install -e . --quiet`, and restarted `kindshot` plus `kindshot-dashboard`
+  3. **fresh health sign-off** — confirmed both services restarted at `06:59 KST`, `/health` returned `healthy`, and the dashboard served `200 text/html`
+- Validation:
+  - local baseline reused: `.venv/bin/python -m pytest -q` → `1019 passed, 1 skipped, 1 warning`
+  - remote `rsync --delete src/` → `/opt/kindshot/src/`
+  - remote `rsync --delete tests/` → `/opt/kindshot/tests/`
+  - remote `./.venv/bin/python -m compileall src/kindshot tests dashboard`
+  - remote `./.venv/bin/python -m pip install -e . --quiet`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `systemctl status kindshot kindshot-dashboard --no-pager -l` → both active since `2026-03-28 06:59:25 KST`
+  - remote `/health` returned:
+    - `status=healthy`
+    - `started_at=2026-03-28T06:59:27.124060+09:00`
+    - `last_poll_source=feed`
+    - `last_poll_age_seconds=1`
+    - `guardrail_state.configured_max_positions=4`
+    - `guardrail_state.position_count=0`
+    - `trade_metrics.total_trades=0`
+    - `recent_pattern_profile.total_trades=14`
+  - remote dashboard probe `HEAD http://127.0.0.1:8501/` → `200 text/html`
+- Rollback: re-sync the prior known-good runtime tree to `/opt/kindshot`, rerun `./.venv/bin/python -m pip install -e . --quiet`, and restart `kindshot` plus `kindshot-dashboard`
+- Result: 성공
+- Notes: this was a deploy-only refresh on the same validated commit; no `deploy/`, secrets, `.env`, or live-order behavior changed
+
+### 2026-03-28 06:47 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `21af9e6`
+- Deployer: Codex manual `rsync` + direct `ssh kindshot-server`
+- Summary:
+  1. **sector-priority runtime sync** — deployed the alpha-scanner sector snapshot consumer so runtime queue ordering now prefers rising-sector tickers and context cards persist sector momentum metadata
+  2. **bounded sector confidence shaping** — shipped the deterministic sector rotation confidence adjustment without changing fail-open behavior when alpha-scanner sector data is absent
+  3. **service restart + health sign-off** — recompiled the remote tree, reinstalled it with `./.venv/bin/python -m pip install -e . --quiet`, restarted `kindshot` and `kindshot-dashboard`, then confirmed fresh runtime and dashboard health
+- Validation:
+  - local `python3 -m compileall src scripts tests`
+  - local `.venv/bin/python -m pytest tests/test_guardrails.py tests/test_context_card.py tests/test_pipeline.py -q` → `234 passed`
+  - local `.venv/bin/python -m pytest -q` → `1019 passed, 1 skipped, 1 warning`
+  - diagnostics `lsp_diagnostics_directory` → `0 errors`, `0 warnings`
+  - `git push origin main` → `21af9e6` pushed to `origin/main`
+  - remote `./.venv/bin/python -m compileall src/kindshot tests dashboard`
+  - remote `./.venv/bin/python -m pip install -e . --quiet`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `systemctl status kindshot kindshot-dashboard --no-pager -l` → both active since `2026-03-28 06:46:47 KST`
+  - remote `/health` returned:
+    - `status=healthy`
+    - `started_at=2026-03-28T06:46:49.663916+09:00`
+    - `last_poll_source=feed`
+    - `last_poll_age_seconds=12`
+    - `guardrail_state.configured_max_positions=4`
+    - `guardrail_state.position_count=0`
+    - `recent_pattern_profile.total_trades=14`
+  - remote dashboard probe `HEAD http://127.0.0.1:8501/` → `200 text/html`
+- Rollback: re-sync the prior known-good runtime tree to `/opt/kindshot`, rerun `./.venv/bin/python -m pip install -e . --quiet`, and restart `kindshot` plus `kindshot-dashboard`
+- Result: 성공
+- Notes: the local shell still used direct `ssh`/`rsync` instead of the missing `ks` alias; this run kept `deploy/`, secrets, `.env`, and live-order behavior unchanged
+
 ### 2026-03-28 06:30 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)

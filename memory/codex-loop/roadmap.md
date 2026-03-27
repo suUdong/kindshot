@@ -15,10 +15,10 @@
 
 ## Current Focus
 
-- Track: User-Directed Runtime Performance Profiling
+- Track: NLP Signal Enrichment
 - Phase: Post-Deployment Observation
 - Status: In Progress (user override)
-- Reason: The requested profiling/caching slice is now deployed. The next bounded step is not more implementation by default; it is collecting the first real post-rollout latency samples from the new runtime surfaces.
+- Reason: The requested NLP semantic-enrichment slice is now deployed. The next bounded step is collecting the first live-session evidence that numeric extraction, related-news clustering, and impact-score metadata are present and behaving sanely under real paper-mode headlines.
 
 ## Phases
 
@@ -59,9 +59,9 @@
 
 ## Next Run Candidates
 
-1. Observe the next live paper session and confirm that `/health.latency_profile` starts filling with real stage samples and a stable bottleneck ranking.
-2. Re-run `scripts/runtime_latency_report.py` once fresh profiled events exist and decide whether one additional narrow optimization is justified.
-3. If runtime latency is acceptable, return to the next highest-leverage strategy hypothesis using the new profiling surface as a guardrail against hidden performance regressions.
+1. Observe the next live paper session and confirm that deployed event/context logs contain `news_signal` metadata with plausible contract/revenue/op-profit/cluster/impact values.
+2. If live paper decisions appear over-boosted or under-boosted, replay a recent headline batch and recalibrate the bounded impact-score adjustment before changing other guardrails.
+3. Once semantic-enrichment coverage is confirmed, return to the next highest-leverage hypothesis with this richer headline surface available to analysis and prompt tuning.
 
 ## Deferred
 
