@@ -102,11 +102,18 @@ def test_format_backfill_notification_success():
     )
     state = CollectorState(status="idle", cursor_date="20260314", last_completed_date="20260315")
 
-    text = format_backfill_notification(result, state, _summary(), status_report=_status_report())
+    text = format_backfill_notification(
+        result,
+        state,
+        _summary(),
+        status_report=_status_report(),
+        report_paths={"backfill_report": "data/collector/backfill/latest.json"},
+    )
 
     assert "Kindshot Backfill OK" in text
     assert "range=20260315->20260315 finalized=20260315" in text
     assert "processed=1 complete=1 partial=0 skipped=0" in text
+    assert "backfill_report=data/collector/backfill/latest.json" in text
     assert "collector=idle cursor=20260314 last_completed=20260315" in text
     assert "backlog_health=error_backlog oldest_blocked_age_s=300" in text
 
@@ -140,9 +147,21 @@ def test_format_backfill_notification_includes_manifest_aware_partial_and_error_
 def test_format_backfill_notification_failure():
     state = CollectorState(status="error", cursor_date="20260315", last_completed_date="20260314")
 
-    text = format_backfill_notification(None, state, _summary(), error=RuntimeError("boom"), status_report=_status_report())
+    text = format_backfill_notification(
+        None,
+        state,
+        _summary(),
+        error=RuntimeError("boom"),
+        status_report=_status_report(),
+        report_paths={
+            "backfill_report": "data/collector/backfill/latest.json",
+            "auto_report": "data/collector/backfill/auto_latest.json",
+        },
+    )
 
     assert "Kindshot Backfill FAIL" in text
+    assert "backfill_report=data/collector/backfill/latest.json" in text
+    assert "auto_report=data/collector/backfill/auto_latest.json" in text
     assert "error=RuntimeError: boom" in text
     assert "collector=error cursor=20260315 last_completed=20260314" in text
     assert "error_detail=20260314 error=boom manifest_reason=daily_prices_missing manifest_status=partial manifest=data/collector/manifests/20260314.json" in text

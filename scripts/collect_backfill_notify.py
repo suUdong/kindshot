@@ -51,7 +51,7 @@ async def _main() -> int:
     state = load_collector_state(config.collector_state_path)
     summary = load_collection_log_summary(config.collector_log_path)
     status_report = load_collection_status_report(config, backlog_limit=5, state=state, summary=summary)
-    write_collection_backfill_report(
+    _, report_path = write_collection_backfill_report(
         config,
         cursor=args.cursor,
         from_date=args.from_date,
@@ -61,7 +61,14 @@ async def _main() -> int:
         state=state,
         summary=summary,
     )
-    message = format_backfill_notification(result, state, summary, error=error, status_report=status_report)
+    message = format_backfill_notification(
+        result,
+        state,
+        summary,
+        error=error,
+        status_report=status_report,
+        report_paths={"backfill_report": str(report_path)},
+    )
     print(message)
 
     sent = send_telegram_message(message, bot_token, chat_id)

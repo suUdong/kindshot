@@ -31,6 +31,25 @@ def _detail_rows_by_date(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]
     }
 
 
+def _report_path_lines(report_paths: dict[str, str] | None) -> list[str]:
+    if not report_paths:
+        return []
+    lines: list[str] = []
+    seen: set[str] = set()
+    for label in ("backfill_report", "auto_report"):
+        path = str(report_paths.get(label, "") or "").strip()
+        if path:
+            lines.append(f"{label}={path}")
+            seen.add(label)
+    for label, raw_path in report_paths.items():
+        if label in seen:
+            continue
+        path = str(raw_path or "").strip()
+        if path:
+            lines.append(f"{label}={path}")
+    return lines
+
+
 def _format_blocked_detail_line(label: str, detail: dict[str, Any], *, primary_key: str) -> str:
     primary_value = str(detail.get(primary_key, "") or "").strip()
     manifest_reason = str(detail.get("manifest_status_reason", "") or "").strip()
@@ -72,6 +91,7 @@ def format_backfill_notification(
     *,
     error: Exception | None = None,
     status_report: dict[str, Any] | None = None,
+    report_paths: dict[str, str] | None = None,
 ) -> str:
     """Format a concise Telegram-safe backfill notification."""
     status = "FAIL" if error is not None else "OK"
@@ -104,6 +124,7 @@ def format_backfill_notification(
             if skip_reasons := _format_reason_pairs(result.skipped_dates, summary):
                 lines.append(f"skip_reasons={skip_reasons}")
 
+    lines.extend(_report_path_lines(report_paths))
     lines.append(
         "collector="
         f"{state.status or 'idle'} cursor={state.cursor_date or '-'} "

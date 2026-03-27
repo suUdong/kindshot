@@ -73,6 +73,7 @@ async def _main() -> int:
     rounds: list[dict[str, object]] = []
     stop_reason = "caught_up"
     latest_backfill_report_path = ""
+    auto_report_path = ""
 
     try:
         with backfill_lock(default_lock_path(config)):
@@ -139,7 +140,7 @@ async def _main() -> int:
         status_report = load_collection_status_report(config, backlog_limit=5, state=state, summary=summary)
         _, latest_report_path = write_collection_backfill_report(config, error=exc, state=state, summary=summary)
         latest_backfill_report_path = str(latest_report_path)
-        write_auto_backfill_report(
+        _, written_auto_report_path = write_auto_backfill_report(
             config,
             max_days=args.max_days,
             max_rounds=args.max_rounds,
@@ -153,7 +154,18 @@ async def _main() -> int:
             latest_backfill_report_path=latest_backfill_report_path,
             error=exc,
         )
-        message = format_backfill_notification(None, state, summary, error=exc, status_report=status_report)
+        auto_report_path = str(written_auto_report_path)
+        message = format_backfill_notification(
+            None,
+            state,
+            summary,
+            error=exc,
+            status_report=status_report,
+            report_paths={
+                "backfill_report": latest_backfill_report_path,
+                "auto_report": auto_report_path,
+            },
+        )
         print(message)
         _send_if_configured(message, notify_required=False)
         raise
@@ -162,7 +174,7 @@ async def _main() -> int:
     summary = load_collection_log_summary(config.collector_log_path)
     state = load_collector_state(config.collector_state_path)
     status_report = load_collection_status_report(config, backlog_limit=5, state=state, summary=summary)
-    write_auto_backfill_report(
+    _, written_auto_report_path = write_auto_backfill_report(
         config,
         max_days=args.max_days,
         max_rounds=args.max_rounds,
@@ -175,7 +187,17 @@ async def _main() -> int:
         status_report=status_report,
         latest_backfill_report_path=latest_backfill_report_path,
     )
-    message = format_backfill_notification(None, state, summary, status_report=status_report)
+    auto_report_path = str(written_auto_report_path)
+    message = format_backfill_notification(
+        None,
+        state,
+        summary,
+        status_report=status_report,
+        report_paths={
+            "backfill_report": latest_backfill_report_path,
+            "auto_report": auto_report_path,
+        },
+    )
     if total_processed > 0:
         message = f"Kindshot Backfill AUTO DONE\nrounds={round_num} total_processed={total_processed}\n{message}"
     print(message)
