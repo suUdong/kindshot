@@ -449,6 +449,7 @@ def backfill_from_logs(
         # 이벤트 로드
         events: dict[str, dict[str, Any]] = {}
         decisions: dict[str, dict[str, Any]] = {}
+        snap_by_event: dict[str, dict[str, dict[str, Any]]] = {}
         with open(log_file, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -464,6 +465,10 @@ def backfill_from_logs(
                     events[eid] = record
                 elif rtype == "decision" and eid:
                     decisions[eid] = record
+                elif rtype == "price_snapshot" and eid:
+                    horizon = str(record.get("horizon", "")).strip()
+                    if horizon:
+                        snap_by_event.setdefault(eid, {})[horizon] = record
 
         # BUY 이벤트 필터
         buy_events = {
@@ -473,9 +478,9 @@ def backfill_from_logs(
         if not buy_events:
             continue
 
-        # 스냅샷 로드
+        # 스냅샷 로드: 로그 내 embedded snapshot을 기본으로 두고,
+        # 별도 runtime snapshot 파일이 있으면 해당 horizon을 overlay 한다.
         snap_path = snapshots_dir / f"{date_str}.jsonl"
-        snap_by_event: dict[str, dict[str, dict[str, Any]]] = {}
         if snap_path.exists():
             with open(snap_path, encoding="utf-8") as f:
                 for line in f:

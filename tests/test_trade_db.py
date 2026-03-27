@@ -240,3 +240,74 @@ class TestBackfill:
             assert count == 0
         finally:
             db.close()
+
+    def test_backfill_uses_embedded_price_snapshots_when_external_file_missing(self, tmp_path: Path) -> None:
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+        snaps_dir = tmp_path / "snaps"
+        snaps_dir.mkdir()
+
+        log_path = logs_dir / "kindshot_20260327.jsonl"
+        rows = [
+            {
+                "type": "event",
+                "event_id": "embedded001",
+                "ticker": "005930",
+                "corp_name": "삼성전자",
+                "headline": "삼성전자 흑자 전환",
+                "bucket": "POS_STRONG",
+                "keyword_hits": ["흑자전환"],
+                "decision_action": "BUY",
+                "decision_confidence": 84,
+                "decision_size_hint": "M",
+                "decision_reason": "historical buy",
+                "detected_at": "2026-03-27T10:00:00+09:00",
+                "ctx": {
+                    "ret_today": 1.0,
+                    "adv_value_20d": 10000000000.0,
+                    "spread_bps": 10.0,
+                },
+                "market_ctx": {},
+            },
+            {
+                "type": "price_snapshot",
+                "event_id": "embedded001",
+                "horizon": "t0",
+                "px": 100.0,
+                "ret_long_vs_t0": None,
+            },
+            {
+                "type": "price_snapshot",
+                "event_id": "embedded001",
+                "horizon": "t+5m",
+                "px": 101.0,
+                "ret_long_vs_t0": 0.01,
+            },
+            {
+                "type": "price_snapshot",
+                "event_id": "embedded001",
+                "horizon": "t+20m",
+                "px": 102.0,
+                "ret_long_vs_t0": 0.02,
+            },
+            {
+                "type": "price_snapshot",
+                "event_id": "embedded001",
+                "horizon": "close",
+                "px": 101.5,
+                "ret_long_vs_t0": 0.015,
+            },
+        ]
+        log_path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
+
+        db = TradeDB(tmp_path / "embedded.db")
+        try:
+            count = backfill_from_logs(db, logs_dir, snaps_dir)
+            assert count == 1
+            row = db.query("SELECT ret_t5m, ret_t20m, ret_close, exit_ret_pct FROM trades WHERE event_id = 'embedded001'")[0]
+            assert row["ret_t5m"] == 1.0
+            assert row["ret_t20m"] == 2.0
+            assert row["ret_close"] == 1.5
+            assert row["exit_ret_pct"] is not None
+        finally:
+            db.close()
