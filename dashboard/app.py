@@ -929,6 +929,100 @@ with tab5:
             fig_tl.update_layout(height=400)
             st.plotly_chart(fig_tl, use_container_width=True)
 
+        # ── 전략 최적화 제안 ──
+        if not valid_detail.empty and total_t >= 3:
+            st.divider()
+            st.subheader("전략 최적화 제안")
+            suggestions = []
+
+            # 1. 최적 Confidence 임계값 탐색
+            conf_numeric = pd.to_numeric(valid_detail["confidence"], errors="coerce").dropna()
+            if len(conf_numeric) >= 3:
+                best_thresh, best_profit = 78, 0.0
+                for thresh in range(70, 95):
+                    above = valid_detail[pd.to_numeric(valid_detail["confidence"], errors="coerce") >= thresh]
+                    if len(above) >= 2:
+                        profit = above["final_ret_pct"].sum()
+                        if profit > best_profit:
+                            best_profit = profit
+                            best_thresh = thresh
+                current_thresh = 78
+                if best_thresh != current_thresh:
+                    suggestions.append({
+                        "항목": "Confidence 임계값",
+                        "현재": f"{current_thresh}",
+                        "제안": f"{best_thresh}",
+                        "근거": f"총수익률 {best_profit:.2f}% (현재 기준 대비 최적)",
+                        "영향": "높음",
+                    })
+
+            # 2. 위험 시간대 식별
+            if "detected_at" in valid_detail.columns:
+                vt = valid_detail[valid_detail["detected_at"].notna()].copy()
+                if not vt.empty:
+                    vt["hour"] = vt["detected_at"].dt.hour
+                    for h in vt["hour"].unique():
+                        h_data = vt[vt["hour"] == h]
+                        if len(h_data) >= 2:
+                            h_wr = (h_data["final_ret_pct"] > 0).mean() * 100
+                            h_avg = h_data["final_ret_pct"].mean()
+                            if h_wr < 30 and h_avg < -0.3:
+                                suggestions.append({
+                                    "항목": f"{int(h)}시 매매 제한",
+                                    "현재": "허용",
+                                    "제안": "제한 검토",
+                                    "근거": f"승률 {h_wr:.0f}%, 평균 {h_avg:.2f}% (n={len(h_data)})",
+                                    "영향": "중간",
+                                })
+
+            # 3. 수익 키워드 미등록 감지 (UNKNOWN에서 수익 낸 키워드)
+            if "keyword_hits" in valid_detail.columns:
+                unknown_wins = valid_detail[
+                    (valid_detail["bucket"] == "UNKNOWN") & (valid_detail["final_ret_pct"] > 0.5)
+                ]
+                if not unknown_wins.empty:
+                    suggestions.append({
+                        "항목": "UNKNOWN 버킷 수익 종목",
+                        "현재": f"{len(unknown_wins)}건 미분류",
+                        "제안": "POS 버킷 키워드 등록 검토",
+                        "근거": f"UNKNOWN에서 +0.5% 이상 수익 {len(unknown_wins)}건",
+                        "영향": "높음",
+                    })
+
+            # 4. 손실 버킷 경고
+            bucket_perf_check = valid_detail.groupby("bucket")["final_ret_pct"].agg(["mean", "count", "sum"])
+            for b, row in bucket_perf_check.iterrows():
+                if row["count"] >= 3 and row["sum"] < -2.0:
+                    suggestions.append({
+                        "항목": f"버킷 {b} 손실 누적",
+                        "현재": "매매 허용",
+                        "제안": "버킷 필터 강화 검토",
+                        "근거": f"총손실 {row['sum']:.2f}%, 평균 {row['mean']:.2f}% (n={int(row['count'])})",
+                        "영향": "높음",
+                    })
+
+            # 5. Size Hint 최적화
+            if "size_hint" in valid_detail.columns:
+                for sh in valid_detail["size_hint"].dropna().unique():
+                    sh_data = valid_detail[valid_detail["size_hint"] == sh]
+                    if len(sh_data) >= 3:
+                        sh_wr = (sh_data["final_ret_pct"] > 0).mean() * 100
+                        sh_avg = sh_data["final_ret_pct"].mean()
+                        if sh == "L" and sh_wr < 40:
+                            suggestions.append({
+                                "항목": "Large 포지션 승률 저조",
+                                "현재": f"L 사이즈 허용",
+                                "제안": "M으로 하향 검토",
+                                "근거": f"승률 {sh_wr:.0f}%, 평균 {sh_avg:.2f}% (n={len(sh_data)})",
+                                "영향": "중간",
+                            })
+
+            if suggestions:
+                sug_df = pd.DataFrame(suggestions)
+                st.dataframe(sug_df, use_container_width=True, hide_index=True)
+            else:
+                st.success("현재 설정에서 특별한 최적화 제안 없음. 전략이 안정적입니다.")
+
 
 # ── 푸터 ──────────────────────────────────────────────
 st.sidebar.divider()
