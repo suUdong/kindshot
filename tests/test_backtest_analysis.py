@@ -63,6 +63,9 @@ def test_analyze_paths_builds_matrices_and_recommendations(tmp_path):
     assert stats["guardrail_review"]["blocked_buy_count"] == 1
     assert stats["guardrail_review"]["shadow_blocked_buy_count"] == 1
     assert stats["guardrail_review"]["by_reason"]["LOW_CONFIDENCE"]["count"] == 1
+    assert "recent_pattern_profile" in stats
+    assert "boost_patterns" in stats["recent_pattern_profile"]
+    assert "loss_guardrail_patterns" in stats["recent_pattern_profile"]
 
 
 def test_render_report_includes_new_sections():
@@ -126,6 +129,30 @@ def test_render_report_includes_new_sections():
             "by_confidence_band": {"75-77": 1},
             "by_hour_bucket": {"afternoon": 1},
         },
+        "recent_pattern_profile": {
+            "enabled": True,
+            "analysis_dates": ["20260327"],
+            "total_trades": 1,
+            "boost_patterns": [
+                {
+                    "pattern_type": "hour_bucket",
+                    "key": "pre_open",
+                    "count": 1,
+                    "win_rate": 1.0,
+                    "total_pnl_pct": 3.0,
+                    "confidence_delta": 3,
+                }
+            ],
+            "loss_guardrail_patterns": [],
+            "top_profit_exact": {
+                "pattern_type": "news_type_ticker_hour_bucket",
+                "key": "contract|111111|pre_open",
+                "count": 1,
+                "win_rate": 1.0,
+                "total_pnl_pct": 3.0,
+            },
+            "top_loss_exact": None,
+        },
         "by_exit_type": {"TP": {"count": 1, "win_rate": 100.0, "avg_pnl": 3.0, "total_pnl": 3.0, "avg_win": 3.0, "avg_loss": 0.0, "profit_factor": None, "median_pnl": 3.0, "mdd_pct": 0.0}},
         "horizon_returns": {"t+30s": {"count": 1, "win_rate": 100.0, "avg": 1.0, "median": 1.0}},
         "profit_leakage": [],
@@ -133,8 +160,76 @@ def test_render_report_includes_new_sections():
 
     rendered = mod.render_report(stats, [trade])
     assert "Guardrail Review" in rendered
+    assert "Recent Pattern Profile" in rendered
     assert "Blockers By Reason" in rendered
     assert "By News Type" in rendered
     assert "Top Entry Conditions" in rendered
     assert "Exit Optimization Candidates" in rendered
     assert "Trades Detail" in rendered
+
+
+def test_recent_pattern_profile_normalizes_news_category_strings():
+    from kindshot.config import Config
+    from kindshot.pattern_profile import build_recent_pattern_profile_from_rows
+
+    profile = build_recent_pattern_profile_from_rows(
+        [
+            {
+                "date": "20260327",
+                "ticker": "068270",
+                "headline": "셀트리온, 품목허가 승인",
+                "keyword_hits": '["허가"]',
+                "news_category": "임상허가",
+                "hour_slot": 9,
+                "exit_ret_pct": -0.4,
+            },
+            {
+                "date": "20260328",
+                "ticker": "068270",
+                "headline": "셀트리온, 품목허가 승인",
+                "keyword_hits": '["허가"]',
+                "news_category": "임상허가",
+                "hour_slot": 10,
+                "exit_ret_pct": -0.3,
+            },
+            {
+                "date": "20260328",
+                "ticker": "358570",
+                "headline": "마이크론 최대 매출… 32만전자 보인다",
+                "keyword_hits": [],
+                "news_category": "",
+                "hour_slot": 11,
+                "exit_ret_pct": 0.2,
+            },
+            {
+                "date": "20260329",
+                "ticker": "358570",
+                "headline": "마이크론 최대 매출… 32만전자 보인다",
+                "keyword_hits": [],
+                "news_category": "",
+                "hour_slot": 12,
+                "exit_ret_pct": 0.16,
+            },
+        ],
+        Config(
+            recent_pattern_min_trades=2,
+            recent_pattern_profit_min_win_rate=0.5,
+            recent_pattern_profit_min_total_pnl_pct=0.15,
+            recent_pattern_loss_max_win_rate=0.25,
+            recent_pattern_loss_max_total_pnl_pct=-0.5,
+        ),
+    )
+
+    assert any(
+        row.pattern_type == "news_type_ticker_hour_bucket"
+        and row.news_type == "other"
+        and row.ticker == "358570"
+        and row.hour_bucket == "midday"
+        for row in profile.boost_patterns
+    )
+    assert any(
+        row.pattern_type == "news_type_ticker"
+        and row.news_type == "clinical_regulatory"
+        and row.ticker == "068270"
+        for row in profile.loss_guardrail_patterns
+    )

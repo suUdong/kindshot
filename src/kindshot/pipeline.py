@@ -26,6 +26,7 @@ from kindshot.feed import RawDisclosure
 from kindshot.headline_parser import normalize_analysis_headline
 from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile, detect_volatility_regime, apply_volatility_confidence_adjustment, apply_news_category_confidence_adjustment, apply_mtf_confidence_adjustment, resolve_daily_loss_budget
 from kindshot.news_category import classify_news_type
+from kindshot.pattern_profile import match_loss_guardrail, match_profit_boost
 from kindshot.ticker_learning import TickerLearner
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
@@ -116,6 +117,22 @@ def counter_snapshot(counters: RuntimeCounters) -> dict[str, dict[str, int]]:
     }
 
 
+def _hour_bucket_from_datetime(dt: datetime) -> str:
+    dt_kst = dt.astimezone(_KST) if dt.tzinfo else dt.replace(tzinfo=_KST)
+    hour = dt_kst.hour
+    if hour < 9:
+        return "pre_open"
+    if hour == 9:
+        return "open"
+    if hour == 10:
+        return "mid_morning"
+    if 11 <= hour <= 13:
+        return "midday"
+    if hour == 14:
+        return "afternoon"
+    return "late"
+
+
 def _parse_disclosure_meta(raw: RawDisclosure, detected_at: datetime) -> tuple[Optional[datetime], bool, Optional[int]]:
     disclosed_at: Optional[datetime] = None
     disclosed_at_missing = True
@@ -171,6 +188,7 @@ async def execute_bucket_path(
     feed_source: str,
     health_state: Optional[object] = None,
     order_executor: Optional[object] = None,
+    recent_pattern_profile: Optional[object] = None,
     analysis_tag_override: Optional[str] = None,
     promotion_original_event_id: Optional[str] = None,
     promotion_original_bucket: Optional[Bucket] = None,
@@ -441,6 +459,7 @@ async def execute_bucket_path(
     # ── Confidence 조정 파이프라인 ──
     # 총 감점 상한: LLM 원본에서 -10 이상 감점 방지 (과다 감점 = 진짜 촉매 놓침)
     # llm_original_conf를 모든 감점 전에 캡처해야 article(-10) + pipeline(-10) = -20 방지
+    news_cat = classify_news_type(analysis_headline, keyword_hits)
     if decision.action == Action.BUY:
         llm_original_conf = decision.confidence
         # v66: graduated cap 보호 강화 — 유효 촉매 과다 차단 방지
@@ -588,7 +607,6 @@ async def execute_bucket_path(
                         raw.ticker, before, decision.confidence, vol_regime)
 
         # 7. v67: 뉴스 카테고리별 confidence 보정
-        news_cat = classify_news_type(analysis_headline, keyword_hits)
         before = decision.confidence
         decision.confidence = apply_news_category_confidence_adjustment(decision.confidence, news_cat)
         if decision.confidence != before:
@@ -636,6 +654,26 @@ async def execute_bucket_path(
                 raw.ticker, decision.confidence, floored, total_delta, _MAX_TOTAL_PENALTY, llm_original_conf,
             )
             decision.confidence = floored
+
+        pattern_boost = match_profit_boost(
+            recent_pattern_profile,
+            news_type=news_cat,
+            ticker=raw.ticker,
+            hour_bucket=_hour_bucket_from_datetime(detected_at),
+        )
+        if pattern_boost is not None and pattern_boost.confidence_delta:
+            before = decision.confidence
+            decision.confidence = min(100, decision.confidence + pattern_boost.confidence_delta)
+            logger.info(
+                "Recent pattern boost [%s]: %d → %d (%s %s count=%d total=%+.3f)",
+                raw.ticker,
+                before,
+                decision.confidence,
+                pattern_boost.pattern_type,
+                pattern_boost.key,
+                pattern_boost.count,
+                pattern_boost.total_pnl_pct,
+            )
 
     # 킬 스위치: 연패 시 size_hint 다운그레이드
     if decision.action == Action.BUY and guardrail_state is not None:
@@ -697,6 +735,29 @@ async def execute_bucket_path(
             guardrail_profile.fast_profile_no_buy_after_kst_hour,
             guardrail_profile.fast_profile_no_buy_after_kst_minute,
         )
+
+    pattern_loss = match_loss_guardrail(
+        recent_pattern_profile,
+        news_type=news_cat,
+        ticker=raw.ticker,
+        hour_bucket=_hour_bucket_from_datetime(detected_at),
+    )
+    if decision.action == Action.BUY and pattern_loss is not None:
+        event_rec.skip_stage = SkipStage.GUARDRAIL
+        event_rec.skip_reason = pattern_loss.guardrail_reason or "PATTERN_LOSS_GUARDRAIL"
+        event_rec.guardrail_result = event_rec.skip_reason
+        await log.write(event_rec)
+        _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason=event_rec.skip_reason)
+        logger.info(
+            "Recent pattern guardrail [%s]: %s (%s %s count=%d total=%+.3f)",
+            raw.ticker,
+            event_rec.skip_reason,
+            pattern_loss.pattern_type,
+            pattern_loss.key,
+            pattern_loss.count,
+            pattern_loss.total_pnl_pct,
+        )
+        return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason=event_rec.skip_reason)
 
     gr = check_guardrails(
         ticker=raw.ticker,
@@ -906,6 +967,7 @@ async def process_registered_event(
     unknown_review_queue: Optional[asyncio.Queue] = None,
     health_state: Optional[object] = None,
     order_executor: Optional[object] = None,
+    recent_pattern_profile: Optional[object] = None,
     registry: Optional[EventRegistry] = None,
     premarket_pending: Optional[list] = None,
 ) -> None:
@@ -993,6 +1055,7 @@ async def process_registered_event(
             feed_source=feed_source,
             health_state=health_state,
             order_executor=order_executor,
+            recent_pattern_profile=recent_pattern_profile,
         )
     except (LlmTimeoutError, LlmCallError, LlmParseError) as llm_exc:
         err_type = type(llm_exc).__name__
@@ -1028,6 +1091,7 @@ async def process_registered_event(
                     feed_source=feed_source,
                     health_state=health_state,
                     order_executor=order_executor,
+                    recent_pattern_profile=recent_pattern_profile,
                 )
             except Exception:
                 logger.warning("Rule fallback retry also failed for [%s]", raw.ticker, exc_info=True)
@@ -1233,6 +1297,7 @@ async def pipeline_loop(
     unknown_review_queue: Optional[asyncio.Queue] = None,
     health_state: Optional[object] = None,
     order_executor: Optional[object] = None,
+    recent_pattern_profile: Optional[object] = None,
 ) -> None:
     """Main pipeline: feed/registry + queue/worker event processing."""
     worker_count = max(1, config.pipeline_workers)
@@ -1267,6 +1332,7 @@ async def pipeline_loop(
                     unknown_review_queue=unknown_review_queue,
                     health_state=health_state,
                     order_executor=order_executor,
+                    recent_pattern_profile=recent_pattern_profile,
                     registry=registry,
                     premarket_pending=premarket_pending,
                 )

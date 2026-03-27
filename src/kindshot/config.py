@@ -93,13 +93,13 @@ class Config:
     paper_stop_loss_pct: float = field(default_factory=lambda: _env_float("PAPER_STOP_LOSS_PCT", -1.5))  # -1.5% 손절 (V자 반등 대응, 기존 -0.7%에서 완화)
     # Trailing stop + 30분 룰
     trailing_stop_enabled: bool = field(default_factory=lambda: _env_bool("TRAILING_STOP_ENABLED", True))
-    trailing_stop_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_PCT", 0.8))  # v65: 0.5→0.8% 기본 trailing (수익 트레이드 조기 청산 방지)
+    trailing_stop_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_PCT", 1.0))  # v70: 0.8→1.0% (3/27: 조기 trailing→종가 수익 유실 방지)
     trailing_stop_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_ACTIVATION_PCT", 0.5))  # v65: 0.3→0.5% 이상 수익 시 trailing 활성화 (노이즈 필터링)
     # 시간대별 trailing stop 폭 (진입 후 경과 시간 기준) — v65: 전체 완화
     trailing_stop_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_EARLY_PCT", 0.5))  # 0~5분: v65 0.3→0.5 (초기 노이즈 허용)
     trailing_stop_mid_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_MID_PCT", 0.8))  # 5~30분: v65 0.5→0.8 (추세 유지)
     trailing_stop_late_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_LATE_PCT", 1.0))  # 30분+: v65 0.7→1.0 (장기 홀드 여유)
-    max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 15))  # v65: 10→15분 (t+5m→t+30m 수익 개선 데이터 근거)
+    max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 20))  # v70: 15→20분 (3/27: TIMEOUT→종가 +0.35% 개선, 18건 중 10건 종가가 높음)
     # t+5m 체크포인트 청산: 5분 경과 시 손실이면 즉시 청산, 수익이면 타이트 trailing
     t5m_loss_exit_enabled: bool = field(default_factory=lambda: _env_bool("T5M_LOSS_EXIT_ENABLED", True))
     t5m_profit_trailing_pct: float = field(default_factory=lambda: _env_float("T5M_PROFIT_TRAILING_PCT", 0.5))  # v65: 0.2→0.5% t+5m 이후 수익 포지션 trailing (기존 너무 타이트)
@@ -214,6 +214,19 @@ class Config:
     ticker_learning_enabled: bool = field(default_factory=lambda: _env_bool("TICKER_LEARNING_ENABLED", True))
     ticker_learning_min_trades: int = field(default_factory=lambda: _env_int("TICKER_LEARNING_MIN_TRADES", 3))
 
+    # --- Recent pattern profile ---
+    recent_pattern_enabled: bool = field(default_factory=lambda: _env_bool("RECENT_PATTERN_ENABLED", True))
+    recent_pattern_profile_path: Path = field(default_factory=lambda: Path(_env("RECENT_PATTERN_PROFILE_PATH", "data/runtime/recent_pattern_profile.json")))
+    recent_pattern_lookback_days: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_LOOKBACK_DAYS", 6))
+    recent_pattern_min_trades: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MIN_TRADES", 2))
+    recent_pattern_profit_boost: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_PROFIT_BOOST", 3))
+    recent_pattern_profit_min_win_rate: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_PROFIT_MIN_WIN_RATE", 0.5))
+    recent_pattern_profit_min_total_pnl_pct: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_PROFIT_MIN_TOTAL_PNL_PCT", 0.15))
+    recent_pattern_loss_max_win_rate: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_LOSS_MAX_WIN_RATE", 0.25))
+    recent_pattern_loss_max_total_pnl_pct: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_LOSS_MAX_TOTAL_PNL_PCT", -0.5))
+    recent_pattern_max_profit_patterns: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MAX_PROFIT_PATTERNS", 2))
+    recent_pattern_max_loss_patterns: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MAX_LOSS_PATTERNS", 2))
+
     # --- Pipeline ---
     pipeline_workers: int = field(default_factory=lambda: _env_int("PIPELINE_WORKERS", 4))
     pipeline_queue_maxsize: int = field(default_factory=lambda: _env_int("PIPELINE_QUEUE_MAXSIZE", 512))
@@ -314,6 +327,16 @@ class Config:
             raise ValueError(
                 f"pos_strong_adv_threshold must be non-negative, got {self.pos_strong_adv_threshold}"
             )
+        if self.recent_pattern_lookback_days <= 0:
+            raise ValueError("recent_pattern_lookback_days must be positive")
+        if self.recent_pattern_min_trades <= 0:
+            raise ValueError("recent_pattern_min_trades must be positive")
+        if not (0 <= self.recent_pattern_profit_boost <= 20):
+            raise ValueError("recent_pattern_profit_boost must be within 0..20")
+        if not (0.0 <= self.recent_pattern_profit_min_win_rate <= 1.0):
+            raise ValueError("recent_pattern_profit_min_win_rate must be within 0..1")
+        if not (0.0 <= self.recent_pattern_loss_max_win_rate <= 1.0):
+            raise ValueError("recent_pattern_loss_max_win_rate must be within 0..1")
 
         if not self.kis_app_key or not self.kis_app_secret:
             warnings.append("KIS API keys not set")

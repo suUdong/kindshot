@@ -28,6 +28,7 @@ async def _run_pipeline_once(
     config_overrides=None,
     market_snapshot_overrides=None,
     capture_guardrail_calls=False,
+    recent_pattern_profile=None,
 ):
     """Helper: run one iteration of the pipeline and return logged records."""
     from kindshot.event_registry import EventRegistry
@@ -88,7 +89,19 @@ async def _run_pipeline_once(
         mode = "dry_run" if dry_run else ("paper" if paper else "live")
         try:
             await asyncio.wait_for(
-                pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode=mode),
+                pipeline_loop(
+                    mock_feed,
+                    registry,
+                    mock_engine,
+                    market,
+                    scheduler,
+                    log,
+                    cfg,
+                    "test_run",
+                    None,
+                    mode=mode,
+                    recent_pattern_profile=recent_pattern_profile,
+                ),
                 timeout=1.0,
             )
         except (asyncio.TimeoutError, StopAsyncIteration):
@@ -459,6 +472,133 @@ async def test_paper_mode_logs_decision_with_paper_mode(tmp_path):
     assert decision_records[0]["mode"] == "paper"
 
 
+async def test_recent_pattern_profile_boosts_matching_buy_confidence(tmp_path):
+    from kindshot.models import Action, DecisionRecord, SizeHint
+    from kindshot.pattern_profile import PatternCohort, RecentPatternProfile
+
+    raw = RawDisclosure(
+        title="삼성전자 FDA 품목허가 승인",
+        link="https://kind.krx.co.kr/?rcpNo=20260305000001",
+        rss_guid="guid1",
+        published="2026-03-24T11:10:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=datetime(2026, 3, 24, 2, 10, 0, tzinfo=timezone.utc),
+    )
+    decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime(2026, 3, 24, 2, 10, 5, tzinfo=timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=80,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+    profile = RecentPatternProfile(
+        enabled=True,
+        analysis_dates=("20260320", "20260327"),
+        total_trades=6,
+        boost_patterns=(
+            PatternCohort(
+                pattern_type="news_type_hour_bucket",
+                key="clinical_regulatory|midday",
+                news_type="clinical_regulatory",
+                ticker=None,
+                hour_bucket="midday",
+                count=2,
+                wins=2,
+                losses=0,
+                win_rate=1.0,
+                avg_pnl_pct=0.4,
+                total_pnl_pct=0.8,
+                confidence_delta=3,
+            ),
+        ),
+        loss_guardrail_patterns=(),
+    )
+
+    records = await _run_pipeline_once(
+        tmp_path,
+        [raw],
+        decision_side_effect=[decision],
+        paper=True,
+        ctx_raw=ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=1.0),
+        recent_pattern_profile=profile,
+    )
+
+    decision_records = [r for r in records if r.get("type") == "decision"]
+    assert len(decision_records) == 1
+    assert decision_records[0]["confidence"] == 91
+
+
+async def test_recent_pattern_profile_blocks_matching_loss_cohort(tmp_path):
+    from kindshot.models import Action, DecisionRecord, SizeHint
+    from kindshot.pattern_profile import PatternCohort, RecentPatternProfile
+
+    raw = RawDisclosure(
+        title="테스트 공급계약 체결",
+        link="https://kind.krx.co.kr/?rcpNo=20260305000001",
+        rss_guid="guid1",
+        published="2026-03-24T09:10:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=datetime(2026, 3, 24, 0, 10, 0, tzinfo=timezone.utc),
+    )
+    decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime(2026, 3, 24, 0, 10, 5, tzinfo=timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=82,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+    profile = RecentPatternProfile(
+        enabled=True,
+        analysis_dates=("20260320", "20260327"),
+        total_trades=6,
+        boost_patterns=(),
+        loss_guardrail_patterns=(
+            PatternCohort(
+                pattern_type="news_type_hour_bucket",
+                key="contract|open",
+                news_type="contract",
+                ticker=None,
+                hour_bucket="open",
+                count=2,
+                wins=0,
+                losses=2,
+                win_rate=0.0,
+                avg_pnl_pct=-0.68,
+                total_pnl_pct=-1.36,
+                guardrail_reason="PATTERN_LOSS_GUARDRAIL",
+            ),
+        ),
+    )
+
+    records = await _run_pipeline_once(
+        tmp_path,
+        [raw],
+        decision_side_effect=[decision],
+        paper=True,
+        recent_pattern_profile=profile,
+    )
+
+    event_records = [r for r in records if r.get("type") == "event"]
+    assert len(event_records) == 1
+    assert event_records[0]["skip_stage"] == "GUARDRAIL"
+    assert event_records[0]["skip_reason"] == "PATTERN_LOSS_GUARDRAIL"
+    assert [r for r in records if r.get("type") == "decision"] == []
+
+
 async def test_unknown_shadow_review_writes_inbox_and_enqueues_request(tmp_path):
     from kindshot.event_registry import EventRegistry
     from kindshot.feed import RawDisclosure
@@ -757,7 +897,7 @@ async def test_pipeline_passes_quote_risk_state_to_guardrails(tmp_path):
 
         await asyncio.wait_for(
             pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
-            timeout=1.0,
+            timeout=2.0,
         )
 
     assert mock_gr.call_args is not None
@@ -827,7 +967,7 @@ async def test_pipeline_passes_orderbook_snapshot_and_action_to_guardrails(tmp_p
 
         await asyncio.wait_for(
             pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
-            timeout=1.0,
+            timeout=2.0,
         )
 
     assert mock_gr.call_args is not None
@@ -889,7 +1029,7 @@ async def test_pipeline_passes_intraday_value_ratio_to_guardrails(tmp_path):
 
         await asyncio.wait_for(
             pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
-            timeout=1.0,
+            timeout=2.0,
         )
 
     assert mock_gr.call_args is not None

@@ -153,9 +153,12 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _available_unknown_dates(config: Config) -> list[str]:
+def _available_unknown_dates(config: Config, *, include_inbox: bool = True) -> list[str]:
     dates: set[str] = set()
-    for base_dir in (config.unknown_inbox_dir, config.unknown_review_dir, config.unknown_promotion_dir):
+    base_dirs = [config.unknown_review_dir, config.unknown_promotion_dir]
+    if include_inbox:
+        base_dirs.insert(0, config.unknown_inbox_dir)
+    for base_dir in base_dirs:
         if not base_dir.exists():
             continue
         for path in base_dir.glob("*.jsonl"):
@@ -509,7 +512,7 @@ def _print_unknown_rule_report(report: dict[str, Any]) -> None:
 
 
 def _build_unknown_rule_report(config: Config) -> dict[str, Any]:
-    dates = _available_unknown_dates(config)
+    dates = _available_unknown_dates(config, include_inbox=False)
     rows = [_build_unknown_rule_day_report(config, dt) for dt in dates]
     candidate_count = sum(int(row.get("candidate_count", 0)) for row in rows)
     promoted_candidate_count = sum(int(row.get("promoted_candidate_count", 0)) for row in rows)

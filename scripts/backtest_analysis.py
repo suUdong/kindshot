@@ -25,6 +25,7 @@ if str(SRC_DIR) not in sys.path:
 from kindshot.config import Config
 from kindshot.guardrails import get_dynamic_stop_loss_pct, get_dynamic_tp_pct
 from kindshot.hold_profile import resolve_hold_profile
+from kindshot.pattern_profile import build_recent_pattern_profile_from_rows
 from kindshot.tz import KST as _KST
 
 HORIZON_ORDER = ["t+30s", "t+1m", "t+2m", "t+5m", "t+10m", "t+15m", "t+20m", "t+30m", "close"]
@@ -981,6 +982,21 @@ def analyze_trades(
     baseline_exit, exit_candidates = _evaluate_exit_candidates(trades, runtime_defaults)
     shadow_summary = _stats_dict(shadow_trades) if shadow_trades else None
     guardrail_review = build_guardrail_review(trades, guardrail_blocks, shadow_trades)
+    recent_pattern_profile = build_recent_pattern_profile_from_rows(
+        [
+            {
+                "date": trade.date,
+                "ticker": trade.ticker,
+                "headline": trade.headline,
+                "keyword_hits": list(trade.keyword_hits),
+                "news_category": trade.news_type,
+                "hour_slot": trade.hour,
+                "exit_ret_pct": trade.exit_pnl_pct,
+            }
+            for trade in trades
+        ],
+        runtime_cfg,
+    )
 
     return {
         "analysis_window": {
@@ -1044,6 +1060,7 @@ def analyze_trades(
             "exit": exit_candidates[0] if exit_candidates else baseline_exit,
         },
         "guardrail_review": guardrail_review,
+        "recent_pattern_profile": recent_pattern_profile.summary(),
         "shadow_summary": shadow_summary,
         "trade_rows": [trade.to_row() for trade in sorted(trades, key=lambda item: item.detected_at)],
     }
@@ -1223,7 +1240,44 @@ def render_report(stats: dict[str, Any], trades: list[Trade]) -> str:
             w(f"  {row['ticker']:<8} {row['leaked']:>+6.2f}% {row['exit_type']:<12} {row['headline']}")
         w("")
 
-    w("## 16. Trades Detail")
+    recent_pattern_profile = stats.get("recent_pattern_profile") or {}
+    if recent_pattern_profile:
+        w("## 16. Recent Pattern Profile")
+        top_profit_exact = recent_pattern_profile.get("top_profit_exact")
+        top_loss_exact = recent_pattern_profile.get("top_loss_exact")
+        if top_profit_exact:
+            w(
+                f"  Top profit exact: {top_profit_exact['pattern_type']} {top_profit_exact['key']} "
+                f"count={top_profit_exact['count']} win={top_profit_exact['win_rate']:.1%} "
+                f"total={top_profit_exact['total_pnl_pct']:+.3f}%"
+            )
+        if top_loss_exact:
+            w(
+                f"  Top loss exact: {top_loss_exact['pattern_type']} {top_loss_exact['key']} "
+                f"count={top_loss_exact['count']} win={top_loss_exact['win_rate']:.1%} "
+                f"total={top_loss_exact['total_pnl_pct']:+.3f}%"
+            )
+        for title, key in (
+            ("Boost patterns", "boost_patterns"),
+            ("Loss guardrail patterns", "loss_guardrail_patterns"),
+        ):
+            rows = recent_pattern_profile.get(key) or []
+            if not rows:
+                continue
+            w(f"  {title}:")
+            for row in rows:
+                suffix = (
+                    f"boost={row['confidence_delta']:+d}"
+                    if "confidence_delta" in row
+                    else f"reason={row['guardrail_reason']}"
+                )
+                w(
+                    f"    - {row['pattern_type']} {row['key']} count={row['count']} "
+                    f"win={row['win_rate']:.1%} total={row['total_pnl_pct']:+.3f}% {suffix}"
+                )
+        w("")
+
+    w("## 17. Trades Detail")
     w(f"  {'Date':<10} {'Ticker':<8} {'NewsType':<22} {'Hour':>4} {'Conf':>4} {'PnL':>8} {'Exit':<12} {'Headline'}")
     w(f"  {'-' * 10} {'-' * 8} {'-' * 22} {'-' * 4} {'-' * 4} {'-' * 8} {'-' * 12} {'-' * 40}")
     for trade in sorted(trades, key=lambda item: item.detected_at):
@@ -1235,7 +1289,7 @@ def render_report(stats: dict[str, Any], trades: list[Trade]) -> str:
     shadow_summary = stats.get("shadow_summary")
     if shadow_summary:
         w("")
-        w("## 17. Shadow Summary")
+        w("## 18. Shadow Summary")
         w(
             f"  Shadow trades: {shadow_summary['count']} | win={shadow_summary['win_rate']}% "
             f"| avg={shadow_summary['avg_pnl']:+.3f}% | total={shadow_summary['total_pnl']:+.3f}%"

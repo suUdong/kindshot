@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import signal
 import uuid
@@ -23,6 +24,7 @@ from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.market import MarketMonitor
 from kindshot.performance import PerformanceTracker
+from kindshot.pattern_profile import build_recent_pattern_profile
 from kindshot.pipeline import (
     RuntimeCounters,
     counter_snapshot,
@@ -266,6 +268,13 @@ async def run() -> None:
 
         guardrail_state = GuardrailState(config, state_dir=state_dir)
         performance_tracker = PerformanceTracker(config.data_dir)
+        recent_pattern_profile = build_recent_pattern_profile(config)
+        recent_pattern_path = config.recent_pattern_profile_path
+        recent_pattern_path.parent.mkdir(parents=True, exist_ok=True)
+        recent_pattern_path.write_text(
+            json.dumps(recent_pattern_profile.summary(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         daily_summary_notifier = (
             DailySummaryNotifier(state_dir / "daily_summary_telegram_state.json", close_delay_s=config.close_snapshot_delay_s)
             if telegram_configured()
@@ -444,6 +453,7 @@ async def run() -> None:
         health_state.set_llm_client(decision_engine._llm)
         health_state.set_feed(feed)
         health_state.set_performance_tracker(performance_tracker)
+        health_state.set_recent_pattern_profile(recent_pattern_profile)
         health_runner = None
         try:
             health_runner, _health_task = await start_health_server(
@@ -463,6 +473,7 @@ async def run() -> None:
                 unknown_review_queue=unknown_review_queue,
                 health_state=health_state,
                 order_executor=order_executor,
+                recent_pattern_profile=recent_pattern_profile,
             ), name="pipeline"),
             asyncio.create_task(scheduler.run(), name="snapshots"),
             asyncio.create_task(_market_loop(), name="market"),

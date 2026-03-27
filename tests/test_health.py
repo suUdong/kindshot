@@ -8,6 +8,7 @@ from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from kindshot.health import HealthState, _health_handler, start_health_server
 from kindshot.performance import PerformanceTracker
+from kindshot.pattern_profile import RecentPatternProfile
 
 _KST = timezone(timedelta(hours=9))
 
@@ -77,6 +78,22 @@ def test_health_state_degraded():
         state.record_error()
     snap = state.snapshot()
     assert snap["status"] == "degraded"
+
+
+def test_health_snapshot_exposes_recent_pattern_profile():
+    state = HealthState()
+    profile = RecentPatternProfile(
+        enabled=True,
+        analysis_dates=("20260320", "20260327"),
+        total_trades=6,
+        boost_patterns=(),
+        loss_guardrail_patterns=(),
+    )
+    state.set_recent_pattern_profile(profile)
+
+    snap = state.snapshot()
+    assert snap["recent_pattern_profile"]["enabled"] is True
+    assert snap["recent_pattern_profile"]["analysis_dates"] == ["20260320", "20260327"]
 
 
 def test_health_server_default_bind_is_localhost():

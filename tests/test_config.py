@@ -13,7 +13,7 @@ def test_default_config_creates_without_error():
         "KIS_", "ANTHROPIC_", "ADV_", "POS_STRONG_", "LLM_", "FEED_", "SPREAD_",
         "CHASE_", "MIN_BUY_", "PAPER_", "TRAILING_", "PARTIAL_", "DYNAMIC_", "MAX_HOLD_",
         "NO_BUY_", "KOSPI_", "MIN_MARKET_", "DAILY_LOSS_", "MAX_POSITIONS",
-        "MAX_SECTOR_", "ORDER_SIZE", "PIPELINE_", "PYKRX_", "UNKNOWN_", "SESSION_",
+        "MAX_SECTOR_", "ORDER_SIZE", "PIPELINE_", "PYKRX_", "RECENT_PATTERN_", "UNKNOWN_", "SESSION_",
         "FINALIZE_", "COLLECTOR_", "LOG_DIR", "DATA_DIR",
     ))}
     with patch.dict(os.environ, clean_env, clear=True):
@@ -53,13 +53,13 @@ def test_trailing_stop_defaults():
         "KIS_", "ANTHROPIC_", "ADV_", "POS_STRONG_", "LLM_", "FEED_", "SPREAD_",
         "CHASE_", "MIN_BUY_", "PAPER_", "TRAILING_", "PARTIAL_", "DYNAMIC_", "MAX_HOLD_",
         "NO_BUY_", "KOSPI_", "MIN_MARKET_", "DAILY_LOSS_", "MAX_POSITIONS",
-        "MAX_SECTOR_", "ORDER_SIZE", "PIPELINE_", "PYKRX_", "UNKNOWN_", "SESSION_",
+        "MAX_SECTOR_", "ORDER_SIZE", "PIPELINE_", "PYKRX_", "RECENT_PATTERN_", "UNKNOWN_", "SESSION_",
         "FINALIZE_", "COLLECTOR_", "LOG_DIR", "DATA_DIR", "FAST_PROFILE_",
     ))}
     with patch.dict(os.environ, clean_env, clear=True):
         cfg = Config()
         assert cfg.trailing_stop_enabled is True
-        assert cfg.trailing_stop_pct == 0.8  # v65: 0.5→0.8
+        assert cfg.trailing_stop_pct == 1.0  # v70: 0.8→1.0
         assert cfg.trailing_stop_activation_pct == 0.5  # v65: 0.3→0.5
         assert cfg.trailing_stop_early_pct == 0.5  # v65: 0.3→0.5
         assert cfg.trailing_stop_mid_pct == 0.8  # v65: 0.5→0.8
@@ -70,7 +70,7 @@ def test_trailing_stop_defaults():
         assert cfg.trailing_stop_post_partial_early_pct == 0.4
         assert cfg.trailing_stop_post_partial_mid_pct == 0.6
         assert cfg.trailing_stop_post_partial_late_pct == 0.8
-        assert cfg.max_hold_minutes == 15  # v65: 10→15
+        assert cfg.max_hold_minutes == 20  # v70: 15→20
         assert cfg.fast_profile_hold_minutes == 20
         assert cfg.fast_profile_no_buy_after_kst_hour == 14
         assert cfg.fast_profile_no_buy_after_kst_minute == 0
@@ -137,3 +137,27 @@ def test_load_config_calls_validate():
     import pytest
     with pytest.raises(ValueError):
         load_config(paper_take_profit_pct=-1.0)
+
+
+def test_recent_pattern_defaults_and_overrides():
+    with patch.dict(
+        os.environ,
+        {
+            "RECENT_PATTERN_ENABLED": "true",
+            "RECENT_PATTERN_LOOKBACK_DAYS": "8",
+            "RECENT_PATTERN_MIN_TRADES": "3",
+            "RECENT_PATTERN_PROFIT_BOOST": "4",
+            "RECENT_PATTERN_PROFIT_MIN_WIN_RATE": "0.6",
+            "RECENT_PATTERN_LOSS_MAX_WIN_RATE": "0.2",
+            "RECENT_PATTERN_LOSS_MAX_TOTAL_PNL_PCT": "-0.7",
+        },
+        clear=False,
+    ):
+        cfg = Config()
+        assert cfg.recent_pattern_enabled is True
+        assert cfg.recent_pattern_lookback_days == 8
+        assert cfg.recent_pattern_min_trades == 3
+        assert cfg.recent_pattern_profit_boost == 4
+        assert cfg.recent_pattern_profit_min_win_rate == 0.6
+        assert cfg.recent_pattern_loss_max_win_rate == 0.2
+        assert cfg.recent_pattern_loss_max_total_pnl_pct == -0.7

@@ -110,6 +110,8 @@ VERSION_MAP: list[dict[str, Any]] = [
     {"tag": "v66", "dates": [], "description": "confidence 감점 완화, 시간대 보정, shadow snapshot"},
     {"tag": "v67", "dates": [], "description": "변동성 레짐 동적 confidence, 뉴스 카테고리"},
     {"tag": "v68", "dates": [], "description": "뉴스소스 확장, 멀티타임프레임, 종목별 학습"},
+    {"tag": "v69", "dates": [], "description": "VTS stale exit, prompt enrichment"},
+    {"tag": "v70", "dates": [], "description": "max_hold 20분, trailing 1.0%, 고배당/재공시 IGNORE"},
 ]
 
 # strategy parameter sets per version (for retroactive simulation)
@@ -172,6 +174,27 @@ VERSION_PARAMS: dict[str, dict[str, Any]] = {
         "trailing_stop_mid_pct": 0.8,
         "trailing_stop_late_pct": 1.0,
         "max_hold_minutes": 15,
+        "min_buy_confidence": 78,
+    },
+    "v69": {
+        "paper_take_profit_pct": 2.0,
+        "paper_stop_loss_pct": -1.5,
+        "trailing_stop_activation_pct": 0.5,
+        "trailing_stop_early_pct": 0.5,
+        "trailing_stop_mid_pct": 0.8,
+        "trailing_stop_late_pct": 1.0,
+        "max_hold_minutes": 15,
+        "min_buy_confidence": 78,
+    },
+    "v70": {
+        "paper_take_profit_pct": 2.0,
+        "paper_stop_loss_pct": -1.5,
+        "trailing_stop_activation_pct": 0.5,
+        "trailing_stop_early_pct": 0.5,
+        "trailing_stop_mid_pct": 0.8,
+        "trailing_stop_late_pct": 1.0,
+        "max_hold_minutes": 20,
+        "trailing_stop_pct": 1.0,
         "min_buy_confidence": 78,
     },
 }

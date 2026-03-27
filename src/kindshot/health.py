@@ -38,6 +38,7 @@ class HealthState:
         self._llm_client: Optional[Any] = None
         self._feed: Optional[Any] = None
         self._performance_tracker: Optional[Any] = None
+        self._recent_pattern_profile: Optional[Any] = None
         # Guardrail block tracking
         self.guardrail_blocks: dict[str, int] = {}
 
@@ -52,6 +53,9 @@ class HealthState:
 
     def set_performance_tracker(self, tracker: Any) -> None:
         self._performance_tracker = tracker
+
+    def set_recent_pattern_profile(self, profile: Any) -> None:
+        self._recent_pattern_profile = profile
 
     def record_poll(self, polled_at: Optional[datetime | str] = None) -> None:
         if isinstance(polled_at, datetime):
@@ -174,6 +178,9 @@ class HealthState:
 
         if self._performance_tracker is not None and hasattr(self._performance_tracker, "live_metrics"):
             result["trade_metrics"] = self._performance_tracker.live_metrics()
+
+        if self._recent_pattern_profile is not None and hasattr(self._recent_pattern_profile, "summary"):
+            result["recent_pattern_profile"] = self._recent_pattern_profile.summary()
 
         return result
 
