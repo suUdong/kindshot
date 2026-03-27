@@ -43,6 +43,7 @@ cache key omissions) that cost more tokens to find and fix later.
 - SSH alias: `ks` (= `ssh kindshot-server`)
 - 서버 경로: `/opt/kindshot`
 - systemd: `kindshot.service` (paper mode)
+- systemd: `kindshot-dashboard.service` (Streamlit 대시보드, 포트 8501)
 
 ### 배포 방법
 **방법 1 — rsync (GitHub 인증 불필요, 권장):**
@@ -58,9 +59,16 @@ ks "cd /opt/kindshot && source .venv/bin/activate && pip install -e . --quiet &&
 ks "cd /opt/kindshot && bash deploy/deploy.sh"
 ```
 
+### 대시보드 배포
+```bash
+rsync -avz --exclude='__pycache__' dashboard/ kindshot-server:/opt/kindshot/dashboard/
+ks "sudo systemctl restart kindshot-dashboard"
+```
+
 ### 배포 확인
 ```bash
 ks "sudo systemctl status kindshot --no-pager"
+ks "sudo systemctl status kindshot-dashboard --no-pager"
 ks "journalctl -u kindshot -n 20 --no-pager"
 ```
 

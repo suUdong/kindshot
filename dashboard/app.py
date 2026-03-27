@@ -204,15 +204,55 @@ with tab1:
             fig_skip.update_layout(showlegend=False, height=300)
             st.plotly_chart(fig_skip, use_container_width=True)
 
+        # Decision Source 분석
+        if "decision_source" in events_df.columns:
+            src_data = events_df[events_df["decision_source"].notna()]
+            if not src_data.empty:
+                st.subheader("Decision Source 분석")
+                col_src1, col_src2 = st.columns(2)
+                with col_src1:
+                    src_counts = src_data["decision_source"].value_counts().reset_index()
+                    src_counts.columns = ["source", "count"]
+                    fig_src = px.pie(src_counts, names="source", values="count",
+                                    title="판단 경로 비율", hole=0.4,
+                                    color_discrete_sequence=px.colors.qualitative.Set2)
+                    fig_src.update_layout(height=300)
+                    st.plotly_chart(fig_src, use_container_width=True)
+                with col_src2:
+                    src_action = src_data.groupby(["decision_source", "decision_action"]).size().reset_index(name="count")
+                    fig_src_act = px.bar(src_action, x="decision_source", y="count",
+                                         color="decision_action", barmode="group",
+                                         color_discrete_map={"BUY": "#2ecc71", "SKIP": "#e74c3c"},
+                                         title="Source별 BUY/SKIP")
+                    fig_src_act.update_layout(height=300)
+                    st.plotly_chart(fig_src_act, use_container_width=True)
+
+                # LLM 레이턴시 분포
+                if "llm_latency_ms" in events_df.columns:
+                    lat_data = events_df["llm_latency_ms"].dropna()
+                    if len(lat_data):
+                        st.subheader("LLM 레이턴시 분포")
+                        fig_lat = px.histogram(lat_data, nbins=30,
+                                               title="LLM 응답 시간 (ms)",
+                                               color_discrete_sequence=["#3498db"])
+                        fig_lat.update_layout(height=250)
+                        st.plotly_chart(fig_lat, use_container_width=True)
+
         # 최근 BUY 시그널 테이블
         st.subheader("BUY 시그널 상세")
+        buy_cols = ["detected_at", "ticker", "corp_name", "headline", "bucket",
+                    "decision_confidence", "decision_size_hint", "decision_reason"]
+        if "decision_source" in events_df.columns:
+            buy_cols.append("decision_source")
         buy_events = events_df[events_df["decision_action"] == "BUY"][
-            ["detected_at", "ticker", "corp_name", "headline", "bucket",
-             "decision_confidence", "decision_size_hint", "decision_reason"]
+            [c for c in buy_cols if c in events_df.columns]
         ].copy()
         if not buy_events.empty:
-            buy_events.columns = ["시각", "종목코드", "종목명", "헤드라인", "버킷",
-                                  "Confidence", "Size", "사유"]
+            col_names = ["시각", "종목코드", "종목명", "헤드라인", "버킷",
+                         "Confidence", "Size", "사유"]
+            if "decision_source" in buy_events.columns:
+                col_names.append("Source")
+            buy_events.columns = col_names[:len(buy_events.columns)]
             st.dataframe(buy_events, use_container_width=True, hide_index=True)
         else:
             st.info("BUY 시그널 없음")

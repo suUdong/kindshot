@@ -51,12 +51,26 @@ def available_dates() -> list[str]:
 
 
 def load_events(date_str: str) -> pd.DataFrame:
-    """특정 날짜의 이벤트 로그를 DataFrame으로 로드."""
+    """특정 날짜의 이벤트 로그를 DataFrame으로 로드.
+
+    decision 레코드의 decision_source, llm_model, llm_latency_ms를 이벤트에 조인.
+    """
     path = LOGS_DIR / f"kindshot_{date_str}.jsonl"
     records = _read_jsonl(path)
     events = [r for r in records if r.get("type") == "event"]
+    decisions = {
+        r["event_id"]: r for r in records
+        if r.get("type") == "decision" and r.get("event_id")
+    }
     if not events:
         return pd.DataFrame()
+    # decision 필드를 event에 조인
+    for ev in events:
+        dec = decisions.get(ev.get("event_id"))
+        if dec:
+            ev.setdefault("decision_source", dec.get("decision_source"))
+            ev.setdefault("llm_model", dec.get("llm_model"))
+            ev.setdefault("llm_latency_ms", dec.get("llm_latency_ms"))
     df = pd.DataFrame(events)
     if "detected_at" in df.columns:
         df["detected_at"] = pd.to_datetime(df["detected_at"], errors="coerce")
