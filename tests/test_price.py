@@ -570,6 +570,187 @@ async def test_session_late_max_hold_reduced():
     assert scheduler._virtual_exits["evt1"] == "t+5m"
 
 
+def test_close_snapshot_near_market_close_uses_remaining_seconds():
+    """장 마감 직전 진입이면 close snapshot은 남은 장 시간만큼만 대기한다."""
+    cfg = Config(close_snapshot_delay_s=300.0)
+    fetcher = PriceFetcher(kis=None)
+    scheduler = SnapshotScheduler(cfg, fetcher, MagicMock())
+    kst = timezone(timedelta(hours=9))
+    near_close = datetime(2026, 3, 27, 15, 29, 0, tzinfo=kst)
+
+    with patch("kindshot.price.datetime") as mock_dt:
+        mock_dt.now.return_value = near_close
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        scheduler.schedule_t0(
+            event_id="evt1",
+            ticker="005930",
+            t0_basis=T0Basis.DETECTED_AT,
+            t0_ts=near_close,
+            run_id="run1",
+        )
+
+    t0_snap = [s for s in scheduler._heap if s.event_id == "evt1" and s.horizon == "t0"][0]
+    close_snap = [s for s in scheduler._heap if s.event_id == "evt1" and s.horizon == "close"][0]
+    t10_snap = [s for s in scheduler._heap if s.event_id == "evt1" and s.horizon == "t+10m"][0]
+
+    assert abs((close_snap.fire_at - t0_snap.fire_at) - 360.0) < 2.0
+    assert close_snap.fire_at < t10_snap.fire_at
+
+
+async def test_t5m_gap_down_hits_stop_loss_before_loss_checkpoint():
+    """t+5m 갭 하락이 SL 아래면 loss checkpoint보다 SL 경로가 우선한다."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-1.0,
+        trailing_stop_enabled=False,
+        t5m_loss_exit_enabled=True,
+        max_hold_minutes=30,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+    scheduler._entry_times["evt1"] = time.monotonic() - 310
+    scheduler._entry_times_kst["evt1"] = datetime(2026, 3, 27, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=9880.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=850_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+5m"][0]
+    with patch("kindshot.price.logger.info") as mock_info:
+        await scheduler._fire(snap)
+
+    assert scheduler._virtual_exits["evt1"] == "t+5m"
+    assert scheduler._t5m_profitable["evt1"] is False
+    assert "PAPER SL hit" in mock_info.call_args.args[0]
+
+
+async def test_t5m_gap_up_marks_profitable_checkpoint():
+    """t+5m 첫 스냅샷이 갭 상승이면 profitable checkpoint로 기록하고 즉시 청산하지 않는다."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=True,
+        trailing_stop_activation_pct=0.3,
+        trailing_stop_mid_pct=0.5,
+        t5m_loss_exit_enabled=True,
+        max_hold_minutes=30,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+    scheduler._entry_times["evt1"] = time.monotonic() - 310
+    scheduler._entry_times_kst["evt1"] = datetime(2026, 3, 27, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10300.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_300_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+5m"][0]
+    await scheduler._fire(snap)
+
+    assert scheduler._t5m_profitable["evt1"] is True
+    assert scheduler._peak_returns["evt1"] == pytest.approx(3.0)
+    assert "evt1" not in scheduler._virtual_exits
+
+
+async def test_trailing_stop_exact_boundary_triggers():
+    """일반 trailing stop은 peak-trail 경계값과 정확히 같아도 청산한다."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=True,
+        trailing_stop_activation_pct=0.3,
+        trailing_stop_mid_pct=0.5,
+        t5m_loss_exit_enabled=False,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+    scheduler._entry_times["evt1"] = time.monotonic() - 360
+    scheduler._peak_returns["evt1"] = 1.0
+
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10050.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_050_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+5m"][0]
+    await scheduler._fire(snap)
+
+    assert scheduler._virtual_exits["evt1"] == "t+5m"
+
+
+async def test_t5m_profit_trailing_exact_boundary_triggers():
+    """t+5m 이후 타이트 trailing도 peak-trail 경계값에서 청산한다."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=True,
+        trailing_stop_activation_pct=0.3,
+        t5m_profit_trailing_pct=0.2,
+        max_hold_minutes=30,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+    scheduler._entry_times["evt1"] = time.monotonic() - 310
+    scheduler._entry_times_kst["evt1"] = datetime(2026, 3, 27, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+    scheduler._t5m_profitable["evt1"] = True
+    scheduler._peak_returns["evt1"] = 1.0
+
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10080.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_080_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+10m"][0]
+    await scheduler._fire(snap)
+
+    assert scheduler._virtual_exits["evt1"] == "t+10m"
+
+
+async def test_consecutive_fills_are_tracked_per_event_id():
+    """같은 티커 연속 체결도 event_id별 상태를 분리해 추적한다."""
+    cfg = Config(
+        paper_take_profit_pct=1.0,
+        paper_stop_loss_pct=-1.0,
+        trailing_stop_enabled=False,
+    )
+    fetcher = PriceFetcher(kis=None)
+    log = MagicMock()
+    log.write = AsyncMock()
+    scheduler = SnapshotScheduler(cfg, fetcher, log)
+
+    for event_id in ("evt1", "evt2"):
+        scheduler.schedule_t0(
+            event_id=event_id,
+            ticker="005930",
+            t0_basis=T0Basis.DECIDED_AT,
+            t0_ts=datetime.now(timezone.utc),
+            run_id="run1",
+            mode="paper",
+            is_buy_decision=True,
+        )
+
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10000.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_000_000.0, fetch_latency_ms=10,
+    ))
+    for event_id in ("evt1", "evt2"):
+        t0_snap = [s for s in scheduler._heap if s.event_id == event_id and s.horizon == "t0"][0]
+        await scheduler._fire(t0_snap)
+
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10120.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_120_000.0, fetch_latency_ms=10,
+    ))
+    evt1_snap = [s for s in scheduler._heap if s.event_id == "evt1" and s.horizon == "t+30s"][0]
+    await scheduler._fire(evt1_snap)
+
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=9900.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=900_000.0, fetch_latency_ms=10,
+    ))
+    evt2_snap = [s for s in scheduler._heap if s.event_id == "evt2" and s.horizon == "t+1m"][0]
+    await scheduler._fire(evt2_snap)
+
+    assert scheduler._virtual_exits["evt1"] == "t+30s"
+    assert scheduler._virtual_exits["evt2"] == "t+1m"
+    assert scheduler._t0_prices["evt1"][0] == pytest.approx(10000.0)
+    assert scheduler._t0_prices["evt2"][0] == pytest.approx(10000.0)
+
+
 async def test_flush_close_on_shutdown_fires_pending_close_after_cutoff():
     cfg = Config(close_snapshot_delay_s=300.0)
     fetcher = PriceFetcher(kis=None)
