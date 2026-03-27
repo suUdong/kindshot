@@ -1,7 +1,7 @@
 import json
 
 from kindshot.collector import BackfillResult, CollectionLogRecord, CollectionLogSummary, CollectorState
-from kindshot.telegram_ops import format_backfill_notification, send_telegram_message
+from kindshot.telegram_ops import _sanitize_path, format_backfill_notification, send_telegram_message
 
 
 def _summary() -> CollectionLogSummary:
@@ -165,6 +165,30 @@ def test_format_backfill_notification_failure():
     assert "error=RuntimeError: boom" in text
     assert "collector=error cursor=20260315 last_completed=20260314" in text
     assert "error_detail=20260314 error=boom manifest_reason=daily_prices_missing manifest_status=partial manifest=data/collector/manifests/20260314.json" in text
+
+
+def test_sanitize_path_strips_absolute_prefix():
+    assert _sanitize_path("/opt/kindshot/data/collector/backfill/latest.json") == "data/collector/backfill/latest.json"
+    assert _sanitize_path("/home/user/app/logs/state/paper") == "logs/state/paper"
+    assert _sanitize_path("data/collector/backfill/latest.json") == "data/collector/backfill/latest.json"
+    assert _sanitize_path("/unknown/path/report.json") == "report.json"
+    assert _sanitize_path("") == ""
+
+
+def test_format_backfill_notification_sanitizes_absolute_paths():
+    state = CollectorState(status="idle", cursor_date="20260315", last_completed_date="20260314")
+    text = format_backfill_notification(
+        None,
+        state,
+        _summary(),
+        report_paths={
+            "backfill_report": "/opt/kindshot/data/collector/backfill/latest.json",
+            "auto_report": "/opt/kindshot/data/collector/backfill/auto_latest.json",
+        },
+    )
+    assert "/opt/kindshot/" not in text
+    assert "backfill_report=data/collector/backfill/latest.json" in text
+    assert "auto_report=data/collector/backfill/auto_latest.json" in text
 
 
 def test_send_telegram_message_builds_request(monkeypatch):

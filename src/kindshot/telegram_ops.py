@@ -31,20 +31,33 @@ def _detail_rows_by_date(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]
     }
 
 
+def _sanitize_path(path_str: str) -> str:
+    """서버 절대 경로 노출 방지: 알려진 프로젝트 하위 디렉토리 기준으로 상대 경로만 반환."""
+    if not path_str:
+        return path_str
+    for marker in ("data/", "logs/"):
+        idx = path_str.find(marker)
+        if idx >= 0:
+            return path_str[idx:]
+    # 알려진 마커가 없으면 파일명만 반환
+    from pathlib import PurePosixPath
+    return PurePosixPath(path_str).name
+
+
 def _report_path_lines(report_paths: dict[str, str] | None) -> list[str]:
     if not report_paths:
         return []
     lines: list[str] = []
     seen: set[str] = set()
     for label in ("backfill_report", "auto_report"):
-        path = str(report_paths.get(label, "") or "").strip()
+        path = _sanitize_path(str(report_paths.get(label, "") or "").strip())
         if path:
             lines.append(f"{label}={path}")
             seen.add(label)
     for label, raw_path in report_paths.items():
         if label in seen:
             continue
-        path = str(raw_path or "").strip()
+        path = _sanitize_path(str(raw_path or "").strip())
         if path:
             lines.append(f"{label}={path}")
     return lines
@@ -64,7 +77,7 @@ def _format_blocked_detail_line(label: str, detail: dict[str, Any], *, primary_k
     if manifest_status:
         parts.append(f"manifest_status={manifest_status}")
     if manifest_path:
-        parts.append(f"manifest={manifest_path}")
+        parts.append(f"manifest={_sanitize_path(manifest_path)}")
     return " ".join(parts)
 
 
