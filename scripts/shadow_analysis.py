@@ -416,6 +416,54 @@ def render_report(trades: list[ShadowTrade], tp_pct: float, sl_pct: float) -> st
     return "\n".join(lines)
 
 
+def render_telegram_summary(trades: list[ShadowTrade], tp_pct: float, sl_pct: float) -> str:
+    """Telegram용 요약 리포트 (4096자 제한 대응)."""
+    if not trades:
+        return "📊 Shadow 기회비용: 데이터 없음 (차단된 BUY 시그널이 아직 없습니다)"
+
+    total = len(trades)
+    tp_trades = [t for t in trades if t.virtual_exit_type == "TP"]
+    sl_trades = [t for t in trades if t.virtual_exit_type == "SL"]
+    virtual_win_rate = len(tp_trades) / total * 100 if total else 0
+    total_pnl = sum(t.virtual_exit_pnl for t in trades)
+    avg_pnl = total_pnl / total if total else 0
+    avg_max_gain = sum(t.max_gain_pct for t in trades) / total if total else 0
+
+    lines = [
+        f"📊 Shadow 기회비용 리포트 (TP={tp_pct:+.1f}% SL={sl_pct:+.1f}%)",
+        f"총 차단={total} TP도달={len(tp_trades)} SL도달={len(sl_trades)}",
+        f"가상승률={virtual_win_rate:.1f}% 총P&L={total_pnl:+.2f}% 평균={avg_pnl:+.2f}%",
+        f"평균max↑={avg_max_gain:+.2f}%",
+    ]
+
+    # 놓친 수익 TOP 3
+    if tp_trades:
+        lines.append("\n놓친 수익 TOP:")
+        for t in sorted(tp_trades, key=lambda x: -x.virtual_exit_pnl)[:3]:
+            lines.append(f"  {t.ticker} conf={t.confidence} {t.virtual_exit_pnl:+.2f}% ({t.skip_reason})")
+
+    # 차단 사유별
+    reason_groups: dict[str, list[ShadowTrade]] = defaultdict(list)
+    for t in trades:
+        reason_groups[t.skip_reason or "UNKNOWN"].append(t)
+    lines.append("\n차단 사유별:")
+    for reason, group in sorted(reason_groups.items(), key=lambda x: -len(x[1]))[:5]:
+        n = len(group)
+        wr = len([t for t in group if t.virtual_exit_type == "TP"]) / n * 100
+        avg_p = sum(t.virtual_exit_pnl for t in group) / n
+        lines.append(f"  {reason}: {n}건 승률={wr:.0f}% avg={avg_p:+.2f}%")
+
+    # 결론
+    if virtual_win_rate > 50 and avg_pnl > 0:
+        lines.append("\n⚠ guardrail 과잉 차단 의심")
+    elif virtual_win_rate < 30:
+        lines.append("\n✓ guardrail 정상 작동")
+    else:
+        lines.append("\n◐ 혼합 결과 — 추가 데이터 필요")
+
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Shadow snapshot 기회비용 분석")
     parser.add_argument("--snapshot-dir", type=Path, default=PROJECT_ROOT / "data" / "runtime" / "price_snapshots")
@@ -424,6 +472,7 @@ def main():
     parser.add_argument("--tp", type=float, default=DEFAULT_TP_PCT, help="가상 TP %% (기본: 2.0)")
     parser.add_argument("--sl", type=float, default=DEFAULT_SL_PCT, help="가상 SL %% (기본: -1.5)")
     parser.add_argument("--output", type=str, help="리포트 출력 파일")
+    parser.add_argument("--telegram", action="store_true", help="Telegram으로 요약 리포트 발송")
     args = parser.parse_args()
 
     events, decisions, snapshots = load_shadow_data(
@@ -440,6 +489,20 @@ def main():
     if args.output:
         Path(args.output).write_text(report, encoding="utf-8")
         print(f"\n리포트 저장: {args.output}")
+
+    if args.telegram:
+        from kindshot.telegram_ops import send_telegram_message, _telegram_target
+        target = _telegram_target()
+        if target is None:
+            print("\nTelegram 환경변수 미설정 (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)")
+        else:
+            bot_token, chat_id = target
+            tg_text = render_telegram_summary(trades, tp_pct=args.tp, sl_pct=args.sl)
+            try:
+                ok = send_telegram_message(tg_text, bot_token, chat_id)
+                print(f"\nTelegram 발송: {'OK' if ok else 'FAIL'}")
+            except Exception as e:
+                print(f"\nTelegram 발송 실패: {e}")
 
 
 if __name__ == "__main__":

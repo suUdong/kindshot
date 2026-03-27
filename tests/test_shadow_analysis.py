@@ -62,3 +62,39 @@ def test_render_report_includes_reason_hour_and_flat_sections():
     move_trade = [t for t in trades if t.event_id == "shadow_evt_move"][0]
     assert flat_trade.news_type == "other"  # "주식소각" ≠ "자사주소각"
     assert move_trade.news_type == "clinical_regulatory"  # "임상 3상 승인"
+
+
+def test_render_telegram_summary_within_limit():
+    mod = _load_shadow_analysis_module()
+    events = [
+        {
+            "event_id": f"evt_{i}",
+            "ticker": f"00{i:04d}",
+            "headline": f"테스트 헤드라인 {i}",
+            "bucket": "POS_STRONG",
+            "decision_confidence": 80 + i,
+            "skip_reason": "LOW_CONFIDENCE",
+            "detected_at": "2026-03-27T10:00:00+09:00",
+        }
+        for i in range(5)
+    ]
+    snapshots = []
+    for i in range(5):
+        base_px = 10000.0 + i * 1000
+        snapshots.extend([
+            {"event_id": f"shadow_evt_{i}", "horizon": "t0", "px": base_px, "ts": "2026-03-27"},
+            {"event_id": f"shadow_evt_{i}", "horizon": "t+5m", "px": base_px * 1.025, "ts": "2026-03-27"},
+        ])
+
+    trades = mod.build_shadow_trades(events, snapshots, tp_pct=2.0, sl_pct=-1.5)
+    tg_text = mod.render_telegram_summary(trades, tp_pct=2.0, sl_pct=-1.5)
+
+    assert len(tg_text) <= 4096, f"Telegram 메시지가 4096자 초과: {len(tg_text)}"
+    assert "Shadow 기회비용" in tg_text
+    assert "LOW_CONFIDENCE" in tg_text
+
+
+def test_render_telegram_summary_empty():
+    mod = _load_shadow_analysis_module()
+    tg_text = mod.render_telegram_summary([], tp_pct=2.0, sl_pct=-1.5)
+    assert "데이터 없음" in tg_text
