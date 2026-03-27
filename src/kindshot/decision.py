@@ -94,6 +94,19 @@ def _build_prompt(
         kosdaq = f"{market_ctx.kosdaq_change_pct:+.1f}%" if market_ctx.kosdaq_change_pct is not None else "N/A"
         breadth = f"{market_ctx.kospi_breadth_ratio:.2f}" if market_ctx.kospi_breadth_ratio is not None else "N/A"
         market_line = f"\nctx_market: KOSPI={kospi} KOSDAQ={kosdaq} breadth_ratio={breadth}"
+        if market_ctx.macro_overall_regime:
+            macro_conf = (
+                f"{market_ctx.macro_overall_confidence:.0%}"
+                if market_ctx.macro_overall_confidence is not None
+                else "N/A"
+            )
+            market_line += (
+                " "
+                f"macro={market_ctx.macro_overall_regime}"
+                f" macro_conf={macro_conf}"
+                f" kr_macro={market_ctx.macro_kr_regime or 'N/A'}"
+                f" crypto_macro={market_ctx.macro_crypto_regime or 'N/A'}"
+            )
 
     strategy = _load_strategy_prompt()
 

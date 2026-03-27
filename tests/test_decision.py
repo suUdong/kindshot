@@ -20,7 +20,7 @@ from kindshot.decision import (
     LlmParseError,
     LlmCallError,
 )
-from kindshot.models import Bucket, ContextCard, Action, SizeHint
+from kindshot.models import Bucket, ContextCard, Action, MarketContext, SizeHint
 
 
 def test_parse_valid_json():
@@ -148,6 +148,39 @@ def test_build_prompt():
     assert "BUY" in prompt
     assert "intraday_value_vs_adv20d=0.043" in prompt
     assert "top_ask_notional=8500000" in prompt
+
+
+def test_build_prompt_includes_macro_market_context():
+    ctx = ContextCard(
+        ret_today=1.5,
+        ret_1d=0.4,
+        ret_3d=1.2,
+        pos_20d=63,
+        gap=0.1,
+        adv_value_20d=25e9,
+        spread_bps=11,
+    )
+    market_ctx = MarketContext(
+        kospi_change_pct=-0.5,
+        kosdaq_change_pct=0.3,
+        kospi_breadth_ratio=1.2,
+        macro_overall_regime="contractionary",
+        macro_overall_confidence=0.74,
+        macro_kr_regime="neutral",
+        macro_crypto_regime="contractionary",
+    )
+    prompt = _build_prompt(
+        bucket=Bucket.POS_STRONG,
+        headline="대규모 수주 공시",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at="09:10:00",
+        ctx=ctx,
+        market_ctx=market_ctx,
+    )
+    assert "macro=contractionary" in prompt
+    assert "kr_macro=neutral" in prompt
+    assert "crypto_macro=contractionary" in prompt
 
 
 def test_build_prompt_truncates_long_headline():

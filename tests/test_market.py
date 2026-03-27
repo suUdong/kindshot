@@ -139,6 +139,42 @@ async def test_snapshot_returns_market_context():
     assert isinstance(snap, MarketContext)
 
 
+async def test_update_fetches_macro_regime_when_configured():
+    mock_kis = AsyncMock()
+    mock_kis.get_index_info = AsyncMock(
+        side_effect=lambda iscd: IndexInfo(
+            iscd=iscd,
+            change_pct=-0.3 if iscd == "0001" else 0.2,
+            fetch_latency_ms=10,
+            up_issue_count=400,
+            down_issue_count=300,
+        )
+    )
+    monitor = MarketMonitor(_cfg(macro_api_base_url="http://macro.local"), kis=mock_kis)
+
+    with patch("kindshot.market._fetch_vkospi", new_callable=AsyncMock, return_value=19.0), \
+         patch(
+             "kindshot.market._fetch_macro_regime",
+             new_callable=AsyncMock,
+             return_value={
+                 "status": "ok",
+                 "overall_regime": "neutral",
+                 "overall_confidence": 0.68,
+                 "layers": {
+                     "kr": {"regime": "neutral"},
+                     "crypto": {"regime": "contractionary"},
+                 },
+             },
+         ):
+        await monitor.update()
+
+    snap = monitor.snapshot
+    assert snap.macro_overall_regime == "neutral"
+    assert snap.macro_overall_confidence == pytest.approx(0.68)
+    assert snap.macro_kr_regime == "neutral"
+    assert snap.macro_crypto_regime == "contractionary"
+
+
 async def test_append_runtime_snapshot_writes_jsonl(tmp_path):
     mock_kis = AsyncMock()
     mock_kis.get_index_info = AsyncMock(

@@ -7,7 +7,9 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+import aiohttp
 
 from kindshot.config import Config
 from kindshot.kis_client import IndexInfo, KisClient
@@ -25,6 +27,23 @@ async def _fetch_vkospi() -> Optional[float]:
     VKOSPI is optional context data; returning None is safe.
     """
     return None
+
+
+async def _fetch_macro_regime(base_url: str, timeout_s: float) -> dict[str, Any] | None:
+    """Fetch the latest macro regime from macro-intelligence over HTTP."""
+    if not base_url:
+        return None
+
+    url = f"{base_url.rstrip('/')}/regime/current"
+    timeout = aiohttp.ClientTimeout(total=timeout_s)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url) as response:
+            response.raise_for_status()
+            payload = await response.json()
+
+    if payload.get("status") != "ok":
+        return None
+    return payload
 
 
 class MarketMonitor:
@@ -48,6 +67,10 @@ class MarketMonitor:
         self._kospi_breadth_ratio: Optional[float] = None
         self._kosdaq_breadth_ratio: Optional[float] = None
         self._vkospi: Optional[float] = None
+        self._macro_overall_regime: Optional[str] = None
+        self._macro_overall_confidence: Optional[float] = None
+        self._macro_kr_regime: Optional[str] = None
+        self._macro_crypto_regime: Optional[str] = None
         self._last_ts: Optional[datetime] = None
 
     def _runtime_market_context_path(self, ts: datetime) -> Path:
@@ -77,6 +100,10 @@ class MarketMonitor:
             kospi_breadth_ratio=self._kospi_breadth_ratio,
             kosdaq_breadth_ratio=self._kosdaq_breadth_ratio,
             vkospi=self._vkospi,
+            macro_overall_regime=self._macro_overall_regime,
+            macro_overall_confidence=self._macro_overall_confidence,
+            macro_kr_regime=self._macro_kr_regime,
+            macro_crypto_regime=self._macro_crypto_regime,
         )
 
     async def append_runtime_snapshot(self) -> None:
@@ -159,5 +186,20 @@ class MarketMonitor:
                 self._vkospi = vkospi
         except Exception:
             logger.exception("VKOSPI update failed")
+
+        if self._config.macro_api_base_url:
+            try:
+                macro = await _fetch_macro_regime(
+                    self._config.macro_api_base_url,
+                    self._config.macro_api_timeout_s,
+                )
+                if macro is not None:
+                    self._macro_overall_regime = macro.get("overall_regime")
+                    self._macro_overall_confidence = macro.get("overall_confidence")
+                    layers = macro.get("layers", {})
+                    self._macro_kr_regime = layers.get("kr", {}).get("regime")
+                    self._macro_crypto_regime = layers.get("crypto", {}).get("regime")
+            except Exception:
+                logger.warning("Macro regime update failed", exc_info=True)
 
         self._last_ts = datetime.now(timezone.utc)

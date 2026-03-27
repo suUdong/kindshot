@@ -96,6 +96,10 @@ class MarketContext(BaseModel):
     kospi_breadth_ratio: Optional[float] = None
     kosdaq_breadth_ratio: Optional[float] = None
     vkospi: Optional[float] = None
+    macro_overall_regime: Optional[str] = None
+    macro_overall_confidence: Optional[float] = None
+    macro_kr_regime: Optional[str] = None
+    macro_crypto_regime: Optional[str] = None
 
 
 class ContextCard(BaseModel):
