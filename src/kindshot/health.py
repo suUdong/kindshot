@@ -167,6 +167,7 @@ class HealthState:
             result["guardrail_state"] = {
                 "daily_pnl": getattr(gs, "daily_pnl", 0.0),
                 "position_count": getattr(gs, "position_count", 0),
+                "configured_max_positions": getattr(gs, "configured_max_positions", 0),
                 "consecutive_stop_losses": getattr(gs, "consecutive_stop_losses", 0),
                 "consecutive_loss_halt_threshold": getattr(gs, "consecutive_loss_halt_threshold", 0),
                 "bought_tickers_count": len(getattr(gs, "bought_tickers", set())),

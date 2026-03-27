@@ -1,0 +1,4 @@
+[portfolio_risk]
+# Repository-owned simultaneous-position cap for paper trading.
+# Runtime only honors MAX_POSITIONS env overrides when they stay within 1..5.
+max_positions = 4

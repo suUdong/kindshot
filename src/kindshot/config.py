@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import tomllib
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,6 +29,62 @@ def _env_int(key: str, default: int = 0) -> int:
 def _env_float(key: str, default: float = 0.0) -> float:
     v = _env(key, "")
     return float(v) if v else default
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_RISK_LIMITS_PATH = _REPO_ROOT / "config" / "risk_limits.toml"
+_DEFAULT_MAX_POSITIONS = 4
+
+
+@lru_cache(maxsize=1)
+def _load_repo_config() -> dict[str, object]:
+    if not _RISK_LIMITS_PATH.exists():
+        return {}
+    try:
+        with _RISK_LIMITS_PATH.open("rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _repo_int(section: str, key: str, default: int) -> int:
+    section_data = _load_repo_config().get(section)
+    if not isinstance(section_data, dict):
+        return default
+    value = section_data.get(key)
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
+def _risk_cap_int(
+    env_key: str,
+    *,
+    section: str,
+    key: str,
+    default: int,
+    min_value: int,
+    max_value: int,
+) -> int:
+    repo_value = _repo_int(section, key, default)
+    raw = _env(env_key, "")
+    if not raw:
+        return repo_value
+    try:
+        value = int(raw)
+    except ValueError:
+        return repo_value
+    if min_value <= value <= max_value:
+        return value
+    return repo_value
 
 
 @dataclass(frozen=True)
@@ -127,7 +185,17 @@ class Config:
     # 킬 스위치: 연패 기반 size 축소 & 당일 중단
     consecutive_loss_size_down: int = field(default_factory=lambda: _env_int("CONSECUTIVE_LOSS_SIZE_DOWN", 2))  # N연패 시 size 한단계 다운
     consecutive_loss_halt: int = field(default_factory=lambda: _env_int("CONSECUTIVE_LOSS_HALT", 3))  # N연패 시 당일 BUY 중단
-    max_positions: int = field(default_factory=lambda: _env_int("MAX_POSITIONS", 3))
+    # Repo-owned paper-trading guardrail. Legacy unlimited env values are ignored.
+    max_positions: int = field(
+        default_factory=lambda: _risk_cap_int(
+            "MAX_POSITIONS",
+            section="portfolio_risk",
+            key="max_positions",
+            default=_DEFAULT_MAX_POSITIONS,
+            min_value=1,
+            max_value=5,
+        )
+    )
     max_sector_positions: int = field(default_factory=lambda: _env_int("MAX_SECTOR_POSITIONS", 2))
     order_size: float = field(default_factory=lambda: _env_float("ORDER_SIZE", 5_000_000))  # won per trade (기본, M size)
     order_size_l: float = field(default_factory=lambda: _env_float("ORDER_SIZE_L", 7_000_000))  # L size (high confidence)
@@ -344,6 +412,8 @@ class Config:
             raise ValueError(
                 f"pos_strong_adv_threshold must be non-negative, got {self.pos_strong_adv_threshold}"
             )
+        if not (1 <= self.max_positions <= 5):
+            raise ValueError("max_positions must be within 1..5")
         if self.recent_pattern_lookback_days <= 0:
             raise ValueError("recent_pattern_lookback_days must be positive")
         if self.recent_pattern_min_trades <= 0:

@@ -251,6 +251,10 @@ class GuardrailState:
     def consecutive_loss_halt_threshold(self) -> int:
         return self._config.consecutive_loss_halt
 
+    @property
+    def configured_max_positions(self) -> int:
+        return self._config.max_positions
+
 
 # Well-known restricted stock markers from KRX
 _RESTRICTED_MARKERS = frozenset(["관리종목", "투자경고", "투자위험", "투자주의", "거래정지"])

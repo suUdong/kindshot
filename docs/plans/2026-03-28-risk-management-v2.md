@@ -9,6 +9,7 @@ This slice covers three linked risk controls:
 1. recent win-rate based daily loss-floor tightening
 2. consecutive-loss auto halt
 3. same-sector simultaneous position limits with runtime-accurate state updates
+4. sane simultaneous-position cap governance from repository-owned config
 
 ## Current State
 
@@ -19,10 +20,11 @@ This slice covers three linked risk controls:
   - `main.py` records sells without sector metadata
   - `context_card.py` exposes a `sector` field but does not populate it
 - Result: the branch logic exists, but sector concentration is not reliably enforced in production state.
+- `Config.max_positions` exists, but repository `.env` currently sets `MAX_POSITIONS=9999`, which effectively disables the simultaneous-position cap despite the intended risk control.
 
 ## Hypothesis
 
-If the guardrail state persists recent closed-trade outcomes and open-position sector mappings, then the runtime can tighten its daily loss floor when the same-day recent win rate deteriorates, halt after repeated losses, and block over-concentrated sector exposure using real runtime state instead of partially wired branches.
+If the guardrail state persists recent closed-trade outcomes and open-position sector mappings, and `max_positions` is sourced from a repository-governed risk config with a sane default cap, then the runtime can tighten its daily loss floor when the same-day recent win rate deteriorates, halt after repeated losses, and block both over-concentrated sector exposure and excessive simultaneous positions without relying on an effectively-unlimited `.env` override.
 
 ## Design
 
@@ -65,6 +67,19 @@ Suggested defaults:
   - full exits
   - same-day restarts
 
+### 4. Max position cap governance
+
+- Introduce a repository-owned risk default for `max_positions` with a target paper-trading cap of `4`.
+- Treat the checked-in risk config as the source of truth for this guardrail.
+- Preserve environment overrides only when they remain inside the allowed simultaneous-position range.
+- Ignore legacy or obviously unsafe values such as `9999` so an old `.env` cannot silently disable the guardrail.
+- Expose the resolved `max_positions` value through health output so deployment checks can verify the active cap remotely.
+
+Rollout / safety notes:
+- No `.env` mutation is required for this slice.
+- Existing BUY block reason stays `MAX_POSITIONS`; only the configured threshold source changes.
+- This keeps the deployment reversible because rollback only requires redeploying the prior code path.
+
 ## Logging / Observability
 
 - Include recent-win-rate stats in the daily loss budget snapshot.
@@ -73,6 +88,7 @@ Suggested defaults:
   - recent closed-trade count
   - recent win rate
   - sector positions
+  - configured max positions
   - configured consecutive-loss halt threshold
 - Keep existing guardrail block reason reporting unchanged so dashboards and alerts remain compatible.
 

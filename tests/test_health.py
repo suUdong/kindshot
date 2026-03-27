@@ -114,6 +114,7 @@ def test_health_snapshot_exposes_extended_guardrail_state():
     state.set_guardrail_state(guardrail_state)
     snap = state.snapshot()
 
+    assert snap["guardrail_state"]["configured_max_positions"] == cfg.max_positions
     assert snap["guardrail_state"]["sector_positions"] == {"반도체": 1}
     assert snap["guardrail_state"]["recent_closed_trades"] == 3
     assert snap["guardrail_state"]["recent_win_rate"] == pytest.approx(1 / 3)

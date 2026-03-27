@@ -22,6 +22,7 @@ def test_default_config_creates_without_error():
         assert cfg.kis_is_paper is True
         assert cfg.adv_threshold == 500_000_000
         assert cfg.pos_strong_adv_threshold == 300_000_000
+        assert cfg.max_positions == 4
 
 
 def test_env_override_string():
@@ -46,6 +47,18 @@ def test_env_override_int():
     with patch.dict(os.environ, {"MIN_BUY_CONFIDENCE": "80"}):
         cfg = Config()
         assert cfg.min_buy_confidence == 80
+
+
+def test_max_positions_env_override_within_safe_range():
+    with patch.dict(os.environ, {"MAX_POSITIONS": "5"}, clear=False):
+        cfg = Config()
+        assert cfg.max_positions == 5
+
+
+def test_max_positions_invalid_high_env_falls_back_to_repo_default():
+    with patch.dict(os.environ, {"MAX_POSITIONS": "9999"}, clear=False):
+        cfg = Config()
+        assert cfg.max_positions == 4
 
 
 def test_trailing_stop_defaults():
@@ -129,6 +142,13 @@ def test_validate_bad_confidence_raises():
     import pytest
     cfg = Config(min_buy_confidence=150)
     with pytest.raises(ValueError, match="min_buy_confidence"):
+        cfg.validate()
+
+
+def test_validate_bad_max_positions_raises():
+    import pytest
+    cfg = Config(max_positions=9)
+    with pytest.raises(ValueError, match="max_positions"):
         cfg.validate()
 
 
