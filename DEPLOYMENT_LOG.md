@@ -28,6 +28,32 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-27 17:44 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `a2a6f8a` deployed via clean export overwrite
+- Deployer: Codex manual SSH + `rsync`
+- Summary:
+  1. **clean export 배포** — 로컬/원격 worktree가 모두 dirty여서 `git pull` 대신 `git archive a2a6f8a` 산출물만 `/opt/kindshot`에 `rsync` 동기화
+  2. **a2a6f8a 반영 확인** — `scripts/auto_tune_strategy.py`, `scripts/backtest_analysis.py`, `tests/test_auto_tune_strategy.py`, `tests/test_backtest_analysis.py`를 서버에 반영하고 해시 일치 검증
+  3. **서비스 재기동 및 운영 검증** — `kindshot`, `kindshot-dashboard` 재시작 후 `/health`, `journalctl`, 대시보드 HTTP 응답 확인
+- Validation:
+  - remote `pip install -e . --quiet`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `curl http://127.0.0.1:8080/health` → `{"status":"healthy", ...}`
+  - remote recent/live journal confirmed `kindshot 0.1.3 starting`, `Health server started on 127.0.0.1:8080`, Streamlit `Local URL: http://localhost:8501`
+  - remote `curl -I http://127.0.0.1:8501` → `HTTP/1.1 200 OK`
+  - local SSH tunnel `18501 -> remote 8501` then `curl -I http://127.0.0.1:18501` → `HTTP/1.1 200 OK`
+  - remote sha256 matched clean export for:
+    - `scripts/auto_tune_strategy.py`
+    - `scripts/backtest_analysis.py`
+    - `tests/test_auto_tune_strategy.py`
+    - `tests/test_backtest_analysis.py`
+- Rollback: re-sync the prior known-good tree to `/opt/kindshot` and restart `kindshot` + `kindshot-dashboard`, or restore the previously deployed files from the remote worktree backup/source of truth
+- Result: 성공
+- Notes: direct public `http://3.35.14.35:8501` from this environment timed out, but remote local access and SSH-tunneled access both returned `200 OK`; likely external network policy or path-specific reachability issue outside the app process itself
+
 ### 2026-03-27 17:19 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)

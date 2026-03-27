@@ -148,6 +148,41 @@ def test_build_prompt():
     assert "BUY" in prompt
     assert "intraday_value_vs_adv20d=0.043" in prompt
     assert "top_ask_notional=8500000" in prompt
+    assert "ctx_signal:" in prompt
+    assert "news_category=contract" in prompt
+    assert "hold_profile=20m" in prompt
+    assert "direct_disclosure=true" in prompt
+
+
+def test_build_prompt_includes_structured_risk_context():
+    from kindshot.guardrails import DailyLossBudgetSnapshot
+
+    ctx = ContextCard(ret_today=1.2, ret_1d=0.4, ret_3d=1.8, pos_20d=64, gap=0.1, adv_value_20d=12e9, spread_bps=8)
+    prompt = _build_prompt(
+        bucket=Bucket.POS_STRONG,
+        headline="자사주 소각 결정",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at="09:05:00",
+        ctx=ctx,
+        raw_headline='KB증권 "삼성전자 자사주 소각 결정"',
+        dorg="연합뉴스",
+        keyword_hits=["자사주 소각"],
+        hold_minutes=0,
+        risk_budget=DailyLossBudgetSnapshot(
+            effective_floor_won=-500000,
+            remaining_budget_won=250000,
+            effective_floor_pct=-0.5,
+            remaining_budget_pct=0.25,
+            streak_multiplier=0.75,
+        ),
+        consecutive_stop_losses=2,
+    )
+    assert "broker_note=true" in prompt
+    assert "hold_profile=EOD" in prompt
+    assert "loss_floor_won=-500000" in prompt
+    assert "remaining_loss_budget_won=250000" in prompt
+    assert "consecutive_stop_losses=2" in prompt
 
 
 def test_build_prompt_includes_macro_market_context():

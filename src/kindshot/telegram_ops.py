@@ -261,6 +261,11 @@ def format_sell_signal(
     hold_seconds: int = 0,
     mode: str = "paper",
     open_positions: int | None = None,
+    position_closed: bool = True,
+    remaining_size_won: float = 0.0,
+    exit_fraction: float = 1.0,
+    cumulative_pnl_won: float = 0.0,
+    cumulative_ret_pct: float = 0.0,
 ) -> str:
     """Format a real-time SELL/close notification."""
     lines = [
@@ -272,12 +277,19 @@ def format_sell_signal(
         meta_parts.append(f"conf={confidence}")
     if size_won > 0:
         meta_parts.append(f"size={size_won:.0f}won")
+    if exit_fraction < 1.0:
+        meta_parts.append(f"exit_fraction={exit_fraction:.2f}")
     if hold_seconds > 0:
         meta_parts.append(f"hold={hold_seconds}s")
     if open_positions is not None:
         meta_parts.append(f"positions={open_positions}")
+    meta_parts.append(f"status={'final' if position_closed else 'partial'}")
+    if remaining_size_won > 0:
+        meta_parts.append(f"remaining={remaining_size_won:.0f}won")
     if meta_parts:
         lines.append(" ".join(meta_parts))
+    if position_closed and cumulative_pnl_won:
+        lines.append(f"cumulative_ret={cumulative_ret_pct:+.2f}% cumulative_pnl={cumulative_pnl_won:+.0f}won")
     return "\n".join(lines)
 
 
@@ -422,6 +434,11 @@ def try_send_sell_signal(
     hold_seconds: int = 0,
     mode: str = "paper",
     open_positions: int | None = None,
+    position_closed: bool = True,
+    remaining_size_won: float = 0.0,
+    exit_fraction: float = 1.0,
+    cumulative_pnl_won: float = 0.0,
+    cumulative_ret_pct: float = 0.0,
 ) -> bool:
     """Best-effort SELL signal telegram notification. Never raises."""
     target = _telegram_target()
@@ -440,6 +457,11 @@ def try_send_sell_signal(
             hold_seconds=hold_seconds,
             mode=mode,
             open_positions=open_positions,
+            position_closed=position_closed,
+            remaining_size_won=remaining_size_won,
+            exit_fraction=exit_fraction,
+            cumulative_pnl_won=cumulative_pnl_won,
+            cumulative_ret_pct=cumulative_ret_pct,
         )
         return send_telegram_message(text, bot_token, chat_id)
     except Exception:

@@ -18,6 +18,7 @@ from kindshot.guardrails import (
     calculate_position_size,
     downgrade_size_hint, get_kill_switch_size_hint,
     resolve_dynamic_guardrail_profile,
+    resolve_daily_loss_budget,
 )
 from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
 from kindshot.models import Action
@@ -869,6 +870,36 @@ def test_daily_loss_limit_pct_passes_under():
     state.record_pnl(-50_000)  # -0.5%
     r = check_guardrails("005930", cfg, state=state, **_base_args())
     assert r.passed is True
+
+
+def test_resolve_daily_loss_budget_tightens_after_loss_streak():
+    cfg = _cfg(
+        daily_loss_limit=1_000_000,
+        dynamic_daily_loss_enabled=True,
+        dynamic_daily_loss_size_down_multiplier=0.75,
+        dynamic_daily_loss_halt_multiplier=0.5,
+        consecutive_loss_size_down=2,
+        consecutive_loss_halt=3,
+    )
+    state = GuardrailState(cfg)
+    state.record_stop_loss()
+    state.record_stop_loss()
+    budget = resolve_daily_loss_budget(cfg, state)
+    assert budget.effective_floor_won == pytest.approx(-750000)
+    assert budget.streak_multiplier == pytest.approx(0.75)
+
+
+def test_resolve_daily_loss_budget_locks_part_of_profit():
+    cfg = _cfg(
+        daily_loss_limit=1_000_000,
+        dynamic_daily_loss_enabled=True,
+        dynamic_daily_loss_profit_lock_ratio=0.5,
+    )
+    state = GuardrailState(cfg)
+    state.record_pnl(600_000)
+    budget = resolve_daily_loss_budget(cfg, state)
+    assert budget.effective_floor_won == pytest.approx(0.0)
+    assert budget.remaining_budget_won == pytest.approx(600000)
 
 
 # ── US-006: 시간대별 confidence 문턱 테스트 ──────────────────

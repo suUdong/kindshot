@@ -113,6 +113,11 @@ class SnapshotScheduler:
         self._event_confidence: dict[str, int] = {}
         # 이벤트별 실제 포지션 사이즈 (P&L 계산용)
         self._event_order_size: dict[str, float] = {}
+        self._remaining_position_pct: dict[str, float] = {}
+        self._partial_take_profit_taken: dict[str, bool] = {}
+        self._realized_pnl_won: dict[str, float] = {}
+        self._realized_closed_size_won: dict[str, float] = {}
+        self._realized_exit_notional: dict[str, float] = {}
         # Stale position 감지: 3분 경과 후 모멘텀 소멸 시 exit (5분→3분 타이트닝)
         self._stale_threshold_pct_default: float = 0.2
         self._stale_min_elapsed_s: float = 180.0  # 3분
@@ -134,11 +139,26 @@ class SnapshotScheduler:
             return self._config.trailing_stop_pct
         elapsed_s = time.monotonic() - entry_time
         if elapsed_s < 300:  # 0~5분
-            base = self._config.trailing_stop_early_pct
+            base = (
+                self._config.trailing_stop_post_partial_early_pct
+                if self._partial_take_profit_taken.get(event_id)
+                else self._config.trailing_stop_early_pct
+            )
         elif elapsed_s < 1800:  # 5~30분
-            base = self._config.trailing_stop_mid_pct
+            base = (
+                self._config.trailing_stop_post_partial_mid_pct
+                if self._partial_take_profit_taken.get(event_id)
+                else self._config.trailing_stop_mid_pct
+            )
         else:  # 30분+
-            base = self._config.trailing_stop_late_pct
+            base = (
+                self._config.trailing_stop_post_partial_late_pct
+                if self._partial_take_profit_taken.get(event_id)
+                else self._config.trailing_stop_late_pct
+            )
+
+        if self._partial_take_profit_taken.get(event_id):
+            return base
 
         # Hold profile 보정
         hold = self._max_hold_minutes.get(event_id, self._config.max_hold_minutes)
@@ -224,6 +244,11 @@ class SnapshotScheduler:
             self._event_confidence[event_id] = confidence
         if is_buy_decision:
             self._event_order_size[event_id] = self._config.order_size_for_hint(size_hint)
+            self._remaining_position_pct[event_id] = 1.0
+            self._partial_take_profit_taken[event_id] = False
+            self._realized_pnl_won[event_id] = 0.0
+            self._realized_closed_size_won[event_id] = 0.0
+            self._realized_exit_notional[event_id] = 0.0
 
         # t0: fire immediately (will be fetched in the run loop)
         heapq.heappush(self._heap, ScheduledSnapshot(
@@ -279,17 +304,37 @@ class SnapshotScheduler:
         ret_long: float,
         exit_type: str,
         horizon: str,
+        close_fraction: float | None = None,
+        position_closed: bool = True,
+        remaining_position_pct: float = 0.0,
     ) -> None:
-        if snap.event_id in self._sell_triggered:
+        if position_closed and snap.event_id in self._sell_triggered:
             return
-        actual_size = self._event_order_size.get(snap.event_id, self._config.order_size)
-        pnl_won = ret_long * actual_size
+        initial_size = self._event_order_size.get(snap.event_id, self._config.order_size)
+        active_fraction = self._remaining_position_pct.get(snap.event_id, 1.0)
+        realized_fraction = active_fraction if close_fraction is None else min(active_fraction, max(0.0, close_fraction))
+        realized_size = initial_size * realized_fraction
+        pnl_won = ret_long * realized_size
         entry_px = self._t0_prices.get(snap.event_id, (None, None))[0]
         hold_seconds = 0
         entry_time = self._entry_times.get(snap.event_id)
         if entry_time is not None:
             hold_seconds = max(0, int(time.monotonic() - entry_time))
-        self._sell_triggered.add(snap.event_id)
+        self._realized_pnl_won[snap.event_id] = self._realized_pnl_won.get(snap.event_id, 0.0) + pnl_won
+        self._realized_closed_size_won[snap.event_id] = self._realized_closed_size_won.get(snap.event_id, 0.0) + realized_size
+        self._realized_exit_notional[snap.event_id] = self._realized_exit_notional.get(snap.event_id, 0.0) + (realized_size * exit_px)
+        cumulative_pnl_won = self._realized_pnl_won[snap.event_id]
+        cumulative_ret_pct = (cumulative_pnl_won / initial_size) * 100 if initial_size > 0 else ret_long * 100
+        average_exit_px = (
+            self._realized_exit_notional[snap.event_id] / self._realized_closed_size_won[snap.event_id]
+            if self._realized_closed_size_won[snap.event_id] > 0
+            else exit_px
+        )
+        if position_closed:
+            self._remaining_position_pct[snap.event_id] = 0.0
+            self._sell_triggered.add(snap.event_id)
+        else:
+            self._remaining_position_pct[snap.event_id] = remaining_position_pct
         if self._pnl_callback:
             self._pnl_callback(snap.ticker, pnl_won)
         if self._trade_close_callback and entry_px is not None:
@@ -303,9 +348,16 @@ class SnapshotScheduler:
                 exit_type=exit_type,
                 horizon=horizon,
                 hold_seconds=hold_seconds,
-                size_won=actual_size,
+                size_won=realized_size,
                 confidence=self._event_confidence.get(snap.event_id, 0),
                 mode=snap.mode,
+                position_closed=position_closed,
+                remaining_size_won=initial_size * remaining_position_pct,
+                exit_fraction=realized_fraction,
+                initial_size_won=initial_size,
+                cumulative_pnl_won=cumulative_pnl_won,
+                cumulative_ret_pct=cumulative_ret_pct,
+                average_exit_px=average_exit_px,
             )
 
     def _cleanup_event_tracking(self, event_id: str) -> None:
@@ -317,6 +369,11 @@ class SnapshotScheduler:
         self._max_hold_minutes.pop(event_id, None)
         self._event_confidence.pop(event_id, None)
         self._event_order_size.pop(event_id, None)
+        self._remaining_position_pct.pop(event_id, None)
+        self._partial_take_profit_taken.pop(event_id, None)
+        self._realized_pnl_won.pop(event_id, None)
+        self._realized_closed_size_won.pop(event_id, None)
+        self._realized_exit_notional.pop(event_id, None)
         self._peak_returns.pop(event_id, None)
         self._virtual_exits.pop(event_id, None)
         self._virtual_exit_reasons.pop(event_id, None)
@@ -427,13 +484,45 @@ class SnapshotScheduler:
                 # 첫 번째 5분+ 스냅샷에서 체크포인트 판정
                 self._t5m_profitable[snap.event_id] = ret_pct > 0
 
-            if tp_active and ret_pct >= effective_tp:
+            partial_target_pct = effective_tp * self._config.partial_take_profit_target_ratio if tp_active else 0.0
+            remaining_position_pct = self._remaining_position_pct.get(snap.event_id, 1.0)
+            if tp_active and not self._partial_take_profit_taken.get(snap.event_id, False) and ret_pct >= effective_tp:
                 self._virtual_exits[snap.event_id] = snap.horizon
                 self._virtual_exit_reasons[snap.event_id] = "take_profit"
                 logger.info(
                     "PAPER TP hit [%s] %s: +%.2f%% at %s (target %.1f%%, conf=%d)",
                     snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
                     effective_tp, evt_conf,
+                )
+            elif (
+                snap.mode == "paper"
+                and self._config.partial_take_profit_enabled
+                and not self._partial_take_profit_taken.get(snap.event_id, False)
+                and tp_active
+                and ret_pct >= partial_target_pct
+            ):
+                close_fraction = min(remaining_position_pct, self._config.partial_take_profit_size_pct / 100)
+                post_partial_remaining = max(0.0, remaining_position_pct - close_fraction)
+                self._partial_take_profit_taken[snap.event_id] = True
+                self._emit_trade_close(
+                    snap=snap,
+                    exit_px=px,
+                    ret_long=ret_long,
+                    exit_type="partial_take_profit",
+                    horizon=snap.horizon,
+                    close_fraction=close_fraction,
+                    position_closed=False,
+                    remaining_position_pct=post_partial_remaining,
+                )
+                logger.info(
+                    "PAPER PARTIAL TP [%s] %s: +%.2f%% at %s (target %.1f%%, close %.0f%%, remain %.0f%%)",
+                    snap.ticker,
+                    snap.event_id[:8],
+                    ret_pct,
+                    snap.horizon,
+                    partial_target_pct,
+                    close_fraction * 100,
+                    post_partial_remaining * 100,
                 )
             elif sl_active and ret_pct <= effective_sl:
                 self._virtual_exits[snap.event_id] = snap.horizon
@@ -527,6 +616,8 @@ class SnapshotScheduler:
                             ret_long=ret_long,
                             exit_type=exit_type,
                             horizon=self._virtual_exits[snap.event_id],
+                            close_fraction=self._remaining_position_pct.get(snap.event_id, 1.0),
+                            position_closed=True,
                         )
                 except Exception:
                     logger.exception("LIVE SELL order error [%s]", snap.ticker)
@@ -537,6 +628,8 @@ class SnapshotScheduler:
                     ret_long=ret_long,
                     exit_type=exit_type,
                     horizon=self._virtual_exits[snap.event_id],
+                    close_fraction=self._remaining_position_pct.get(snap.event_id, 1.0),
+                    position_closed=True,
                 )
 
         if (
@@ -552,6 +645,8 @@ class SnapshotScheduler:
                 ret_long=ret_long,
                 exit_type="close",
                 horizon="close",
+                close_fraction=self._remaining_position_pct.get(snap.event_id, 1.0),
+                position_closed=True,
             )
 
         if snap.horizon == "close":

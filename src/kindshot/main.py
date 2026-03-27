@@ -292,26 +292,45 @@ async def run() -> None:
             size_won: float,
             confidence: int,
             mode: str,
+            position_closed: bool = True,
+            remaining_size_won: float = 0.0,
+            exit_fraction: float = 1.0,
+            initial_size_won: float = 0.0,
+            cumulative_pnl_won: float | None = None,
+            cumulative_ret_pct: float | None = None,
+            average_exit_px: float | None = None,
         ) -> None:
             guardrail_state.record_pnl(pnl_won)
-            guardrail_state.record_sell(ticker)
-            if pnl_won < 0:
-                guardrail_state.record_stop_loss()
-            else:
-                guardrail_state.record_profitable_exit()
-            try:
-                performance_tracker.record_trade(
-                    ticker,
-                    entry_px,
-                    exit_px,
-                    ret_pct,
-                    size_won=size_won,
-                    hold_seconds=hold_seconds,
-                    exit_type=exit_type,
-                    confidence=confidence,
-                )
-            except Exception:
-                logger.warning("Failed to record trade for %s", ticker, exc_info=True)
+            final_pnl_won = cumulative_pnl_won if cumulative_pnl_won is not None else pnl_won
+            final_ret_pct = cumulative_ret_pct if cumulative_ret_pct is not None else ret_pct
+            final_exit_px = average_exit_px if average_exit_px is not None else exit_px
+            final_size_won = initial_size_won if initial_size_won > 0 else size_won
+            if position_closed:
+                guardrail_state.record_sell(ticker)
+                if final_pnl_won < 0:
+                    guardrail_state.record_stop_loss()
+                else:
+                    guardrail_state.record_profitable_exit()
+                try:
+                    performance_tracker.record_trade(
+                        ticker,
+                        entry_px,
+                        final_exit_px,
+                        final_ret_pct,
+                        event_id=event_id,
+                        size_won=final_size_won,
+                        hold_seconds=hold_seconds,
+                        exit_type=exit_type,
+                        confidence=confidence,
+                        position_closed=position_closed,
+                        remaining_size_won=remaining_size_won,
+                        initial_size_won=initial_size_won,
+                        exit_fraction=exit_fraction,
+                        cumulative_pnl_won=final_pnl_won,
+                        cumulative_ret_pct=final_ret_pct,
+                    )
+                except Exception:
+                    logger.warning("Failed to record trade for %s", ticker, exc_info=True)
             try_send_sell_signal(
                 ticker=ticker,
                 exit_type=exit_type,
@@ -323,13 +342,20 @@ async def run() -> None:
                 hold_seconds=hold_seconds,
                 mode=mode,
                 open_positions=guardrail_state.position_count,
+                position_closed=position_closed,
+                remaining_size_won=remaining_size_won,
+                exit_fraction=exit_fraction,
+                cumulative_pnl_won=final_pnl_won if position_closed else 0.0,
+                cumulative_ret_pct=final_ret_pct if position_closed else 0.0,
             )
             logger.info(
-                "Trade closed: %s %s %.0f won (ret=%.2f%%, daily total: %.0f, positions: %d)",
+                "Trade close event: %s %s %.0f won (ret=%.2f%%, final=%s, remain=%.0f, daily total: %.0f, positions: %d)",
                 ticker,
                 exit_type,
                 pnl_won,
                 ret_pct,
+                position_closed,
+                remaining_size_won,
                 guardrail_state.daily_pnl,
                 guardrail_state.position_count,
             )

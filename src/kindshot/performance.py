@@ -20,12 +20,19 @@ class TradeRecord:
     entry_px: float
     exit_px: float
     pnl_pct: float
+    event_id: str = ""
     size_won: float = 0.0
     pnl_won: float = 0.0
     hold_seconds: int = 0
     exit_type: str = ""  # TP, SL, TRAILING, TIMEOUT, MANUAL
     confidence: int = 0
     bucket: str = ""
+    position_closed: bool = True
+    remaining_size_won: float = 0.0
+    initial_size_won: float = 0.0
+    exit_fraction: float = 1.0
+    cumulative_pnl_won: float = 0.0
+    cumulative_ret_pct: float = 0.0
     timestamp: str = ""
 
 
@@ -108,22 +115,40 @@ class PerformanceTracker:
 
     def record_trade(
         self,
-        ticker: str,
-        entry_px: float,
-        exit_px: float,
-        pnl_pct: float,
-        *,
+        *args: object,
+        event_id: str = "",
         size_won: float = 0.0,
         hold_seconds: int = 0,
         exit_type: str = "",
         confidence: int = 0,
         bucket: str = "",
+        position_closed: bool = True,
+        remaining_size_won: float = 0.0,
+        initial_size_won: float = 0.0,
+        exit_fraction: float = 1.0,
+        cumulative_pnl_won: float | None = None,
+        cumulative_ret_pct: float | None = None,
     ) -> TradeRecord:
         """거래 결과 기록."""
         self._sync_current_date()
 
+        if len(args) == 5:
+            event_id = str(args[0])
+            ticker = str(args[1])
+            entry_px = float(args[2])
+            exit_px = float(args[3])
+            pnl_pct = float(args[4])
+        elif len(args) == 4:
+            ticker = str(args[0])
+            entry_px = float(args[1])
+            exit_px = float(args[2])
+            pnl_pct = float(args[3])
+        else:
+            raise TypeError("record_trade expects either (ticker, entry_px, exit_px, pnl_pct) or (event_id, ticker, entry_px, exit_px, pnl_pct)")
+
         pnl_won = size_won * (pnl_pct / 100) if size_won > 0 else 0.0
         record = TradeRecord(
+            event_id=event_id,
             ticker=ticker,
             entry_px=entry_px,
             exit_px=exit_px,
@@ -134,6 +159,12 @@ class PerformanceTracker:
             exit_type=exit_type,
             confidence=confidence,
             bucket=bucket,
+            position_closed=position_closed,
+            remaining_size_won=remaining_size_won,
+            initial_size_won=initial_size_won,
+            exit_fraction=exit_fraction,
+            cumulative_pnl_won=pnl_won if cumulative_pnl_won is None else cumulative_pnl_won,
+            cumulative_ret_pct=pnl_pct if cumulative_ret_pct is None else cumulative_ret_pct,
             timestamp=datetime.now(_KST).isoformat(),
         )
         self._trades.append(record)

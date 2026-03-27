@@ -10,8 +10,9 @@ from kindshot.tz import KST as _KST
 
 def test_record_trade_returns_record(tmp_path):
     tracker = PerformanceTracker(tmp_path)
-    rec = tracker.record_trade("005930", 50000, 50500, 1.0, size_won=5_000_000)
+    rec = tracker.record_trade("evt1", "005930", 50000, 50500, 1.0, size_won=5_000_000)
     assert isinstance(rec, TradeRecord)
+    assert rec.event_id == "evt1"
     assert rec.ticker == "005930"
     assert rec.pnl_pct == 1.0
     assert rec.pnl_won == 50000.0  # 5M * 1%
@@ -27,9 +28,9 @@ def test_daily_summary_empty(tmp_path):
 
 def test_daily_summary_with_trades(tmp_path):
     tracker = PerformanceTracker(tmp_path)
-    tracker.record_trade("005930", 50000, 50500, 1.0, size_won=5_000_000)
-    tracker.record_trade("035420", 30000, 29700, -1.0, size_won=5_000_000)
-    tracker.record_trade("000660", 80000, 80800, 1.0, size_won=5_000_000)
+    tracker.record_trade("evt1", "005930", 50000, 50500, 1.0, size_won=5_000_000)
+    tracker.record_trade("evt2", "035420", 30000, 29700, -1.0, size_won=5_000_000)
+    tracker.record_trade("evt3", "000660", 80000, 80800, 1.0, size_won=5_000_000)
 
     s = tracker.daily_summary()
     assert s.total_trades == 3
@@ -44,7 +45,7 @@ def test_daily_summary_with_trades(tmp_path):
 
 def test_flush_creates_summary_file(tmp_path):
     tracker = PerformanceTracker(tmp_path)
-    tracker.record_trade("005930", 50000, 50500, 1.0)
+    tracker.record_trade("evt1", "005930", 50000, 50500, 1.0)
     path = tracker.flush()
     assert path is not None
     assert path.exists()
@@ -58,7 +59,7 @@ def test_flush_empty_returns_none(tmp_path):
 
 def test_trade_log_jsonl_created(tmp_path):
     tracker = PerformanceTracker(tmp_path)
-    tracker.record_trade("005930", 50000, 50500, 1.0)
+    tracker.record_trade("evt1", "005930", 50000, 50500, 1.0)
     jsonl_files = list((tmp_path / "performance").glob("*_trades.jsonl"))
     assert len(jsonl_files) == 1
     content = jsonl_files[0].read_text()
@@ -67,14 +68,14 @@ def test_trade_log_jsonl_created(tmp_path):
 
 def test_profit_factor_no_losses(tmp_path):
     tracker = PerformanceTracker(tmp_path)
-    tracker.record_trade("005930", 50000, 50500, 1.0)
+    tracker.record_trade("evt1", "005930", 50000, 50500, 1.0)
     s = tracker.daily_summary()
     assert s.profit_factor == float("inf")
 
 
 def test_exit_type_recorded(tmp_path):
     tracker = PerformanceTracker(tmp_path)
-    rec = tracker.record_trade("005930", 50000, 50500, 1.0, exit_type="TP", confidence=85)
+    rec = tracker.record_trade("evt1", "005930", 50000, 50500, 1.0, exit_type="TP", confidence=85)
     assert rec.exit_type == "TP"
     assert rec.confidence == 85
 

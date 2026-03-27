@@ -119,3 +119,15 @@ def is_contract_commentary_headline(headline: str, *, dorg: str = "") -> bool:
     if has_direct_disclosure_marker and (has_amount or "단일판매" in normalized) and not is_broker_note_headline(raw, dorg=dorg):
         return False
     return is_commentary_headline(raw, dorg=dorg)
+
+
+def is_direct_disclosure_headline(headline: str, *, dorg: str = "") -> bool:
+    raw = str(headline or "").strip()
+    normalized = normalize_analysis_headline(raw)
+    if not normalized or is_commentary_headline(raw, dorg=dorg):
+        return False
+    has_direct_disclosure_marker = any(marker in normalized for marker in _DIRECT_DISCLOSURE_MARKERS)
+    has_amount = bool(re.search(r"\d", normalized))
+    if has_direct_disclosure_marker and (has_amount or any(keyword in normalized for keyword in _CONTRACT_FAMILY_KEYWORDS)):
+        return True
+    return is_disclosure_source_dorg(dorg) and not is_broker_note_headline(raw, dorg=dorg)

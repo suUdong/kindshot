@@ -261,7 +261,7 @@ def test_format_sell_signal_includes_exit_metrics():
     )
     assert "[PAPER] SELL 005930" in text
     assert "exit=take_profit horizon=t+5m ret=+1.25% pnl=+62500won" in text
-    assert "conf=84 size=5000000won hold=300s positions=1" in text
+    assert "conf=84 size=5000000won hold=300s positions=1 status=final" in text
 
 
 def test_format_daily_summary_signal_includes_positions_and_report():

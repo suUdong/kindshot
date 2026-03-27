@@ -25,7 +25,11 @@ async def update_runtime_artifact_index(
 
     index_path = config.runtime_index_path
     if index_path.exists():
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        try:
+            raw = index_path.read_text(encoding="utf-8").strip()
+            payload = json.loads(raw) if raw else _empty_runtime_index()
+        except json.JSONDecodeError:
+            payload = _empty_runtime_index()
     else:
         payload = _empty_runtime_index()
 

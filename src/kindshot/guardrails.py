@@ -52,6 +52,15 @@ class DynamicGuardrailProfile:
         )
 
 
+@dataclass(frozen=True)
+class DailyLossBudgetSnapshot:
+    effective_floor_won: float
+    remaining_budget_won: float
+    effective_floor_pct: float | None
+    remaining_budget_pct: float | None
+    streak_multiplier: float
+
+
 class GuardrailState:
     """Tracks intra-day trading state for portfolio-level guardrails."""
 
@@ -186,6 +195,18 @@ class GuardrailState:
     def account_balance(self) -> float:
         return self._account_balance
 
+    @property
+    def daily_loss_budget(self) -> DailyLossBudgetSnapshot:
+        return resolve_daily_loss_budget(self._config, self)
+
+    @property
+    def dynamic_daily_loss_floor_won(self) -> float:
+        return self.daily_loss_budget.effective_floor_won
+
+    @property
+    def dynamic_daily_loss_remaining_won(self) -> float:
+        return self.daily_loss_budget.remaining_budget_won
+
 
 # Well-known restricted stock markers from KRX
 _RESTRICTED_MARKERS = frozenset(["관리종목", "투자경고", "투자위험", "투자주의", "거래정지"])
@@ -252,6 +273,48 @@ def resolve_dynamic_guardrail_profile(
         fast_profile_no_buy_after_kst_hour=fast_hour,
         fast_profile_no_buy_after_kst_minute=fast_minute,
         supportive_market=True,
+    )
+
+
+def resolve_daily_loss_budget(config: Config, state: GuardrailState) -> DailyLossBudgetSnapshot:
+    base_limit_won = max(0.0, config.daily_loss_limit)
+    streak_multiplier = 1.0
+    if config.dynamic_daily_loss_enabled:
+        if state.consecutive_stop_losses >= config.consecutive_loss_halt:
+            streak_multiplier = min(streak_multiplier, config.dynamic_daily_loss_halt_multiplier)
+        elif state.consecutive_stop_losses >= config.consecutive_loss_size_down:
+            streak_multiplier = min(streak_multiplier, config.dynamic_daily_loss_size_down_multiplier)
+
+    effective_limit_won = base_limit_won * streak_multiplier
+    effective_floor_won = -effective_limit_won
+    if config.dynamic_daily_loss_enabled and state.daily_pnl > 0 and effective_limit_won > 0:
+        locked_floor = min(
+            0.0,
+            state.daily_pnl - (effective_limit_won * config.dynamic_daily_loss_profit_lock_ratio),
+        )
+        effective_floor_won = max(effective_floor_won, locked_floor)
+
+    effective_floor_pct: float | None = None
+    remaining_budget_pct: float | None = None
+    if state.account_balance > 0:
+        realized_pct = (state.daily_pnl / state.account_balance) * 100
+        effective_limit_pct = abs(config.daily_loss_limit_pct) * streak_multiplier
+        effective_floor_pct = -effective_limit_pct
+        if config.dynamic_daily_loss_enabled:
+            if realized_pct > 0 and effective_limit_pct > 0:
+                locked_floor_pct = min(
+                    0.0,
+                    realized_pct - (effective_limit_pct * config.dynamic_daily_loss_profit_lock_ratio),
+                )
+                effective_floor_pct = max(effective_floor_pct, locked_floor_pct)
+        remaining_budget_pct = realized_pct - effective_floor_pct
+
+    return DailyLossBudgetSnapshot(
+        effective_floor_won=effective_floor_won,
+        remaining_budget_won=state.daily_pnl - effective_floor_won,
+        effective_floor_pct=effective_floor_pct,
+        remaining_budget_pct=remaining_budget_pct,
+        streak_multiplier=streak_multiplier,
     )
 
 
@@ -412,14 +475,24 @@ def check_guardrails(
 
     # 8-11: Portfolio-level guardrails (require state tracking)
     if state is not None:
-        # 8. Daily loss limit (won 기반)
-        if state.daily_pnl <= -config.daily_loss_limit:
+        budget = resolve_daily_loss_budget(config, state)
+
+        # 8. Daily loss limit (won 기반, dynamic floor 반영)
+        if state.daily_pnl <= budget.effective_floor_won:
+            logger.info(
+                "Daily loss floor blocked BUY [%s]: pnl=%.0f floor=%.0f remaining=%.0f streak=%d",
+                ticker,
+                state.daily_pnl,
+                budget.effective_floor_won,
+                budget.remaining_budget_won,
+                state.consecutive_stop_losses,
+            )
             return GuardrailResult(passed=False, reason="DAILY_LOSS_LIMIT")
 
         # 8b. Daily loss limit (비율 기반 — account_balance가 state에 있을 때)
-        if hasattr(state, 'account_balance') and state.account_balance > 0:
+        if hasattr(state, 'account_balance') and state.account_balance > 0 and budget.effective_floor_pct is not None:
             loss_pct = (state.daily_pnl / state.account_balance) * 100
-            if loss_pct <= config.daily_loss_limit_pct:
+            if loss_pct <= budget.effective_floor_pct:
                 return GuardrailResult(passed=False, reason="DAILY_LOSS_LIMIT_PCT")
 
         # 9. Same-stock re-buy today
@@ -500,6 +573,14 @@ def get_dynamic_tp_pct(config: Config, confidence: int, hold_minutes: int = 0) -
         tp = tp * 0.9
 
     return tp
+
+
+def get_partial_take_profit_pct(config: Config, confidence: int, hold_minutes: int = 0) -> float:
+    """Return the first partial take-profit target derived from the dynamic TP."""
+    full_tp = get_dynamic_tp_pct(config, confidence, hold_minutes)
+    partial_tp = full_tp * config.partial_take_profit_target_ratio
+    # Keep the partial target meaningfully below the final TP while avoiding very tiny locks.
+    return max(0.4, min(partial_tp, max(0.4, full_tp - 0.1)))
 
 
 def apply_market_confidence_adjustment(

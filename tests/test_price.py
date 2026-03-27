@@ -173,7 +173,7 @@ async def test_scheduler_persists_runtime_price_snapshots(tmp_path):
 
 
 async def test_paper_virtual_exit_emits_trade_close_callback_once():
-    cfg = Config(paper_take_profit_pct=0.8, paper_stop_loss_pct=-5.0, trailing_stop_enabled=False)
+    cfg = Config(paper_take_profit_pct=0.8, paper_stop_loss_pct=-5.0, trailing_stop_enabled=False, partial_take_profit_enabled=False)
     fetcher = PriceFetcher(kis=None)
     log = MagicMock()
     log.write = AsyncMock()
@@ -267,7 +267,7 @@ async def _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=10.0):
 
 async def test_paper_take_profit_triggers():
     """TP 0.8%: t0=10000, t+1m=10200 (+2%) → TP hit."""
-    cfg = Config(paper_take_profit_pct=0.8, paper_stop_loss_pct=-1.0, trailing_stop_enabled=False)
+    cfg = Config(paper_take_profit_pct=0.8, paper_stop_loss_pct=-1.0, trailing_stop_enabled=False, partial_take_profit_enabled=False)
     scheduler, log = await _make_scheduler_with_t0(cfg)
 
     # Fire t+1m with price up 2%
@@ -355,7 +355,7 @@ async def test_paper_max_hold_triggers():
 
 async def test_virtual_exit_prevents_double_trigger():
     """Once TP fires, SL should not fire on subsequent snapshots."""
-    cfg = Config(paper_take_profit_pct=1.0, paper_stop_loss_pct=-1.0, trailing_stop_enabled=False)
+    cfg = Config(paper_take_profit_pct=1.0, paper_stop_loss_pct=-1.0, trailing_stop_enabled=False, partial_take_profit_enabled=False)
     scheduler, log = await _make_scheduler_with_t0(cfg)
 
     # t+30s: +2% → TP hit
@@ -809,6 +809,7 @@ async def test_consecutive_fills_are_tracked_per_event_id():
         paper_take_profit_pct=1.0,
         paper_stop_loss_pct=-1.0,
         trailing_stop_enabled=False,
+        partial_take_profit_enabled=False,
     )
     fetcher = PriceFetcher(kis=None)
     log = MagicMock()
@@ -852,6 +853,98 @@ async def test_consecutive_fills_are_tracked_per_event_id():
     assert scheduler._virtual_exits["evt2"] == "t+1m"
     assert scheduler._t0_prices["evt1"][0] == pytest.approx(10000.0)
     assert scheduler._t0_prices["evt2"][0] == pytest.approx(10000.0)
+
+
+async def test_partial_take_profit_realizes_half_and_keeps_position_open():
+    cfg = Config(
+        paper_take_profit_pct=2.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=True,
+        partial_take_profit_enabled=True,
+        partial_take_profit_target_ratio=0.5,
+        partial_take_profit_size_pct=50.0,
+    )
+    fetcher = PriceFetcher(kis=None)
+    log = MagicMock()
+    log.write = AsyncMock()
+    close_cb = MagicMock()
+    scheduler = SnapshotScheduler(cfg, fetcher, log, trade_close_callback=close_cb)
+    scheduler._fetcher.fetch = AsyncMock(side_effect=[
+        PriceInfo(px=10000.0, open_px=10000.0, spread_bps=0.0, cum_value=1_000_000.0, fetch_latency_ms=10),
+        PriceInfo(px=10120.0, open_px=10000.0, spread_bps=0.0, cum_value=1_120_000.0, fetch_latency_ms=10),
+    ])
+    scheduler.schedule_t0(
+        event_id="evt1",
+        ticker="005930",
+        t0_basis=T0Basis.DECIDED_AT,
+        t0_ts=datetime.now(timezone.utc),
+        run_id="run1",
+        mode="paper",
+        is_buy_decision=True,
+        confidence=82,
+        size_hint="M",
+    )
+
+    snaps = {snap.horizon: snap for snap in scheduler._heap if snap.horizon in {"t0", "t+1m"}}
+    await scheduler._fire(snaps["t0"])
+    await scheduler._fire(snaps["t+1m"])
+
+    close_cb.assert_called_once()
+    kwargs = close_cb.call_args.kwargs
+    assert kwargs["exit_type"] == "partial_take_profit"
+    assert kwargs["position_closed"] is False
+    assert kwargs["remaining_size_won"] == pytest.approx(2500000.0)
+    assert scheduler._remaining_position_pct["evt1"] == pytest.approx(0.5)
+    assert "evt1" not in scheduler._sell_triggered
+
+
+async def test_post_partial_trailing_closes_remaining_position():
+    cfg = Config(
+        paper_take_profit_pct=2.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=True,
+        trailing_stop_activation_pct=0.3,
+        partial_take_profit_enabled=True,
+        partial_take_profit_target_ratio=0.5,
+        partial_take_profit_size_pct=50.0,
+        trailing_stop_post_partial_early_pct=0.2,
+    )
+    fetcher = PriceFetcher(kis=None)
+    log = MagicMock()
+    log.write = AsyncMock()
+    close_cb = MagicMock()
+    scheduler = SnapshotScheduler(cfg, fetcher, log, trade_close_callback=close_cb)
+    scheduler._fetcher.fetch = AsyncMock(side_effect=[
+        PriceInfo(px=10000.0, open_px=10000.0, spread_bps=0.0, cum_value=1_000_000.0, fetch_latency_ms=10),
+        PriceInfo(px=10120.0, open_px=10000.0, spread_bps=0.0, cum_value=1_120_000.0, fetch_latency_ms=10),
+        PriceInfo(px=10080.0, open_px=10000.0, spread_bps=0.0, cum_value=1_080_000.0, fetch_latency_ms=10),
+    ])
+    scheduler.schedule_t0(
+        event_id="evt1",
+        ticker="005930",
+        t0_basis=T0Basis.DECIDED_AT,
+        t0_ts=datetime.now(timezone.utc),
+        run_id="run1",
+        mode="paper",
+        is_buy_decision=True,
+        confidence=82,
+        size_hint="M",
+    )
+
+    snaps = {snap.horizon: snap for snap in scheduler._heap if snap.horizon in {"t0", "t+30s", "t+1m"}}
+    await scheduler._fire(snaps["t0"])
+    await scheduler._fire(snaps["t+30s"])
+    await scheduler._fire(snaps["t+1m"])
+
+    assert close_cb.call_count == 2
+    partial_kwargs = close_cb.call_args_list[0].kwargs
+    final_kwargs = close_cb.call_args_list[1].kwargs
+    assert partial_kwargs["position_closed"] is False
+    assert final_kwargs["position_closed"] is True
+    assert final_kwargs["exit_type"] == "trailing_stop"
+    assert final_kwargs["size_won"] == pytest.approx(2500000.0)
+    assert final_kwargs["cumulative_pnl_won"] == pytest.approx(50000.0)
+    assert final_kwargs["cumulative_ret_pct"] == pytest.approx(1.0)
 
 
 async def test_flush_ready_on_shutdown_fires_due_snapshots_only():

@@ -508,3 +508,116 @@ def load_version_trend() -> pd.DataFrame:
         latest_metrics,
     ]
     return pd.DataFrame(rows)
+
+
+# ── DB 기반 분석 로더 ─────────────────────────────────────
+
+def _get_trade_db():
+    """TradeDB 인스턴스 반환 (없으면 백필 후 반환)."""
+    import sys
+    sys.path.insert(0, str(PROJECT_ROOT / "src"))
+    from kindshot.trade_db import TradeDB, backfill_from_logs
+
+    db_path = PROJECT_ROOT / "data" / "trade_history.db"
+    db = TradeDB(db_path)
+
+    if db.trade_count() == 0:
+        backfill_from_logs(
+            db,
+            LOGS_DIR,
+            PROJECT_ROOT / "data" / "runtime" / "price_snapshots",
+        )
+
+    return db
+
+
+def load_db_version_comparison() -> pd.DataFrame:
+    """DB 기반 버전별 시뮬레이션 비교 (동일 트레이드셋에 각 버전 파라미터 적용)."""
+    try:
+        db = _get_trade_db()
+        from kindshot.version_report import generate_version_comparison
+        metrics = generate_version_comparison(db)
+        db.close()
+        rows = []
+        for m in metrics:
+            rows.append({
+                "version": m.version,
+                "trades": m.total_trades,
+                "wins": m.wins,
+                "losses": m.losses,
+                "win_rate": m.win_rate,
+                "avg_ret_pct": m.avg_ret_pct,
+                "total_ret_pct": m.total_ret_pct,
+                "profit_factor": m.profit_factor,
+                "mdd_pct": m.mdd_pct,
+                "description": m.description,
+            })
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_db_ticker_summary() -> pd.DataFrame:
+    """DB 기반 종목별 성과."""
+    try:
+        db = _get_trade_db()
+        rows = db.ticker_summary()
+        db.close()
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_db_hour_summary() -> pd.DataFrame:
+    """DB 기반 시간대별 성과."""
+    try:
+        db = _get_trade_db()
+        rows = db.hour_summary()
+        db.close()
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_db_category_summary() -> pd.DataFrame:
+    """DB 기반 카테고리별 성과."""
+    try:
+        db = _get_trade_db()
+        rows = db.category_summary()
+        db.close()
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_db_daily_summary() -> pd.DataFrame:
+    """DB 기반 일별 성과."""
+    try:
+        db = _get_trade_db()
+        rows = db.daily_summary()
+        db.close()
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_db_exit_type_summary() -> pd.DataFrame:
+    """DB 기반 청산 유형별 성과."""
+    try:
+        db = _get_trade_db()
+        rows = db.exit_type_summary()
+        db.close()
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_db_version_x_hour() -> pd.DataFrame:
+    """DB 기반 버전 × 시간대 교차 매트릭스."""
+    try:
+        db = _get_trade_db()
+        rows = db.version_x_hour()
+        db.close()
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()

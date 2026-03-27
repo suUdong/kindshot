@@ -24,7 +24,7 @@ from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, Llm
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
 from kindshot.headline_parser import normalize_analysis_headline
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile, detect_volatility_regime, apply_volatility_confidence_adjustment, apply_news_category_confidence_adjustment, apply_mtf_confidence_adjustment
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile, detect_volatility_regime, apply_volatility_confidence_adjustment, apply_news_category_confidence_adjustment, apply_mtf_confidence_adjustment, resolve_daily_loss_budget
 from kindshot.news_category import classify_news_type
 from kindshot.ticker_learning import TickerLearner
 from kindshot.hold_profile import get_max_hold_minutes
@@ -375,6 +375,7 @@ async def execute_bucket_path(
             return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason="MAX_POSITIONS")
 
     try:
+        risk_budget = resolve_daily_loss_budget(config, guardrail_state) if guardrail_state is not None else None
         decision = await decision_engine.decide(
             ticker=raw.ticker,
             corp_name=raw.corp_name,
@@ -388,6 +389,8 @@ async def execute_bucket_path(
             run_id=run_id,
             schema_version=config.schema_version,
             market_ctx=market.snapshot,
+            risk_budget=risk_budget,
+            consecutive_stop_losses=guardrail_state.consecutive_stop_losses if guardrail_state is not None else 0,
         )
     except (LlmCallError, LlmTimeoutError, LlmParseError) as exc:
         logger.warning("LLM failed for [%s], using rule fallback: %s", raw.ticker, exc)

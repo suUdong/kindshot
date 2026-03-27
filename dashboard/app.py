@@ -13,6 +13,13 @@ from data_loader import (
     compute_multi_day_pnl,
     compute_trade_pnl,
     load_context_cards,
+    load_db_category_summary,
+    load_db_daily_summary,
+    load_db_exit_type_summary,
+    load_db_hour_summary,
+    load_db_ticker_summary,
+    load_db_version_comparison,
+    load_db_version_x_hour,
     load_events,
     load_health,
     load_live_feed,
@@ -163,12 +170,13 @@ live_feed_df = _load_live_feed(40, min(3, len(dates)))
 version_trend_df = _load_versions()
 
 # ── 탭 구성 ──────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 시그널 현황",
     "💰 매매 성과",
     "📉 기술지표",
     "🖥️ 시스템 상태",
     "🔬 전략 분석",
+    "📈 히스토리 분석",
 ])
 
 
@@ -1313,6 +1321,240 @@ with tab5:
                 st.dataframe(sug_df, use_container_width=True, hide_index=True)
             else:
                 st.success("현재 설정에서 특별한 최적화 제안 없음. 전략이 안정적입니다.")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TAB 6: 히스토리 분석 (DB 기반)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+with tab6:
+    st.header("히스토리 분석 — 전체 기간 통합")
+    st.caption("SQLite DB 기반 · 로그 자동 백필 · 버전별 시뮬레이션 비교")
+
+    # ── 버전별 성과 비교 ──────────────────────────────
+    st.subheader("버전별 성과 비교 (시뮬레이션)")
+    st.caption("동일한 트레이드셋에 각 버전의 TP/SL/trailing 파라미터를 적용한 결과")
+
+    @st.cache_data(ttl=300)
+    def _load_db_versions():
+        return load_db_version_comparison()
+
+    ver_df = _load_db_versions()
+    if ver_df.empty:
+        st.info("트레이드 데이터가 없습니다. 로그 파일을 확인하세요.")
+    else:
+        # KPI 카드 — 베스트 버전
+        best_wr = ver_df.loc[ver_df["win_rate"].idxmax()] if not ver_df.empty else None
+        best_pnl = ver_df.loc[ver_df["total_ret_pct"].idxmax()] if not ver_df.empty else None
+
+        vc1, vc2, vc3 = st.columns(3)
+        if best_wr is not None:
+            vc1.metric("최고 승률 버전", best_wr["version"], f"{best_wr['win_rate']:.1f}%")
+        if best_pnl is not None:
+            vc2.metric("최고 수익 버전", best_pnl["version"], f"{best_pnl['total_ret_pct']:+.2f}%")
+        total_trades = int(ver_df["trades"].max()) if not ver_df.empty else 0
+        vc3.metric("분석 트레이드 수", total_trades)
+
+        # 버전 비교 테이블
+        ver_display = ver_df[["version", "trades", "win_rate", "avg_ret_pct",
+                              "total_ret_pct", "profit_factor", "mdd_pct", "description"]].copy()
+        ver_display.columns = ["버전", "거래수", "승률(%)", "평균수익(%)",
+                               "총수익(%)", "PF", "MDD(%)", "설명"]
+        st.dataframe(ver_display, use_container_width=True, hide_index=True)
+
+        # 버전별 승률+수익 차트
+        col_v1, col_v2 = st.columns(2)
+        with col_v1:
+            fig_vwr = px.bar(ver_df, x="version", y="win_rate",
+                             color="win_rate",
+                             color_continuous_scale="RdYlGn",
+                             text="win_rate",
+                             title="버전별 승률 (%)")
+            fig_vwr.update_traces(texttemplate="%{text:.1f}%")
+            fig_vwr.update_layout(height=350, showlegend=False)
+            st.plotly_chart(fig_vwr, use_container_width=True)
+
+        with col_v2:
+            fig_vpnl = px.bar(ver_df, x="version", y="total_ret_pct",
+                              color="total_ret_pct",
+                              color_continuous_scale="RdYlGn",
+                              text="total_ret_pct",
+                              title="버전별 총수익률 (%)")
+            fig_vpnl.update_traces(texttemplate="%{text:+.2f}%")
+            fig_vpnl.update_layout(height=350, showlegend=False)
+            st.plotly_chart(fig_vpnl, use_container_width=True)
+
+    st.divider()
+
+    # ── 시간대별 성과 ──────────────────────────────────
+    st.subheader("시간대별 성과")
+
+    @st.cache_data(ttl=300)
+    def _load_db_hours():
+        return load_db_hour_summary()
+
+    hour_df = _load_db_hours()
+    if not hour_df.empty:
+        hour_df["win_rate"] = hour_df.apply(
+            lambda r: round(r["wins"] / r["trades"] * 100, 1) if r["trades"] > 0 else 0.0, axis=1
+        )
+        hour_df["hour_label"] = hour_df["hour_slot"].apply(lambda h: f"{h:02d}시")
+
+        col_h1, col_h2 = st.columns(2)
+        with col_h1:
+            fig_hwr = px.bar(hour_df, x="hour_label", y="win_rate",
+                             color="win_rate",
+                             color_continuous_scale="RdYlGn",
+                             text="trades",
+                             title="시간대별 승률")
+            fig_hwr.update_traces(texttemplate="n=%{text}")
+            fig_hwr.update_layout(height=350, showlegend=False)
+            st.plotly_chart(fig_hwr, use_container_width=True)
+
+        with col_h2:
+            fig_hpnl = px.bar(hour_df, x="hour_label", y="avg_ret_pct",
+                              color="avg_ret_pct",
+                              color_continuous_scale="RdYlGn",
+                              text="avg_ret_pct",
+                              title="시간대별 평균수익률")
+            fig_hpnl.update_traces(texttemplate="%{text:+.2f}%")
+            fig_hpnl.update_layout(height=350, showlegend=False)
+            st.plotly_chart(fig_hpnl, use_container_width=True)
+    else:
+        st.info("시간대별 데이터 없음")
+
+    st.divider()
+
+    # ── 종목별 성과 ──────────────────────────────────────
+    st.subheader("종목별 성과 (Top 20)")
+
+    @st.cache_data(ttl=300)
+    def _load_db_tickers():
+        return load_db_ticker_summary()
+
+    ticker_df = _load_db_tickers()
+    if not ticker_df.empty:
+        ticker_df["win_rate"] = ticker_df.apply(
+            lambda r: round(r["wins"] / r["trades"] * 100, 1) if r["trades"] > 0 else 0.0, axis=1
+        )
+        ticker_df["label"] = ticker_df.apply(
+            lambda r: f"{r['ticker']} {r.get('corp_name', '')}".strip(), axis=1
+        )
+        top20 = ticker_df.head(20)
+
+        fig_tk = px.bar(top20, x="label", y="total_ret_pct",
+                        color="total_ret_pct",
+                        color_continuous_scale="RdYlGn",
+                        text="trades",
+                        title="종목별 총수익률 (거래 건수 표시)")
+        fig_tk.update_traces(texttemplate="n=%{text}")
+        fig_tk.update_layout(height=400, showlegend=False, xaxis_tickangle=-45)
+        st.plotly_chart(fig_tk, use_container_width=True)
+
+        ticker_display = top20[["ticker", "corp_name", "trades", "wins", "win_rate",
+                                "avg_ret_pct", "total_ret_pct"]].copy()
+        ticker_display.columns = ["종목코드", "종목명", "거래수", "승", "승률(%)",
+                                  "평균수익(%)", "총수익(%)"]
+        st.dataframe(ticker_display, use_container_width=True, hide_index=True)
+    else:
+        st.info("종목별 데이터 없음")
+
+    st.divider()
+
+    # ── 카테고리별 성과 ──────────────────────────────────
+    col_cat, col_exit = st.columns(2)
+
+    with col_cat:
+        st.subheader("카테고리별 성과")
+
+        @st.cache_data(ttl=300)
+        def _load_db_cats():
+            return load_db_category_summary()
+
+        cat_df = _load_db_cats()
+        if not cat_df.empty:
+            cat_df["win_rate"] = cat_df.apply(
+                lambda r: round(r["wins"] / r["trades"] * 100, 1) if r["trades"] > 0 else 0.0, axis=1
+            )
+            fig_cat = px.bar(cat_df, x="category", y="total_ret_pct",
+                             color="total_ret_pct",
+                             color_continuous_scale="RdYlGn",
+                             text="trades",
+                             title="카테고리별 총수익률")
+            fig_cat.update_traces(texttemplate="n=%{text}")
+            fig_cat.update_layout(height=350, showlegend=False)
+            st.plotly_chart(fig_cat, use_container_width=True)
+        else:
+            st.info("카테고리 데이터 없음")
+
+    with col_exit:
+        st.subheader("청산 유형별 성과")
+
+        @st.cache_data(ttl=300)
+        def _load_db_exits():
+            return load_db_exit_type_summary()
+
+        exit_df = _load_db_exits()
+        if not exit_df.empty:
+            fig_exit = px.bar(exit_df, x="exit_type", y="avg_ret_pct",
+                              color="avg_ret_pct",
+                              color_continuous_scale="RdYlGn",
+                              text="trades",
+                              title="청산 유형별 평균수익률")
+            fig_exit.update_traces(texttemplate="n=%{text}")
+            fig_exit.update_layout(height=350, showlegend=False)
+            st.plotly_chart(fig_exit, use_container_width=True)
+        else:
+            st.info("청산 유형 데이터 없음")
+
+    st.divider()
+
+    # ── 일별 누적 수익곡선 ──────────────────────────────
+    st.subheader("일별 누적 수익곡선")
+
+    @st.cache_data(ttl=300)
+    def _load_db_daily():
+        return load_db_daily_summary()
+
+    daily_df = _load_db_daily()
+    if not daily_df.empty and "total_ret_pct" in daily_df.columns:
+        daily_df["cum_ret_pct"] = daily_df["total_ret_pct"].cumsum()
+        daily_df["date_label"] = daily_df["date"].apply(
+            lambda d: f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 else d
+        )
+
+        fig_cum = go.Figure()
+        fig_cum.add_trace(go.Scatter(
+            x=daily_df["date_label"], y=daily_df["cum_ret_pct"],
+            mode="lines+markers",
+            name="누적 수익률",
+            line=dict(color="#c65d2e", width=2),
+            marker=dict(size=8),
+        ))
+        fig_cum.add_trace(go.Bar(
+            x=daily_df["date_label"], y=daily_df["total_ret_pct"],
+            name="일별 수익률",
+            marker_color=daily_df["total_ret_pct"].apply(
+                lambda v: "#2ecc71" if v > 0 else "#e74c3c"
+            ),
+            opacity=0.5,
+        ))
+        fig_cum.update_layout(
+            height=400,
+            title="일별 수익률 + 누적 곡선",
+            yaxis_title="수익률 (%)",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        )
+        st.plotly_chart(fig_cum, use_container_width=True)
+
+        # 일별 테이블
+        daily_display = daily_df[["date", "version_tag", "trades", "wins",
+                                  "avg_ret_pct", "total_ret_pct", "cum_ret_pct"]].copy()
+        daily_display.columns = ["날짜", "버전", "거래수", "승", "평균(%)",
+                                 "일별(%)", "누적(%)"]
+        daily_display["누적(%)"] = daily_display["누적(%)"].round(2)
+        st.dataframe(daily_display, use_container_width=True, hide_index=True)
+    else:
+        st.info("일별 데이터 없음")
 
 
 # ── 푸터 ──────────────────────────────────────────────

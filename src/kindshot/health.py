@@ -112,6 +112,8 @@ class HealthState:
                 "position_count": getattr(gs, "position_count", 0),
                 "consecutive_stop_losses": getattr(gs, "consecutive_stop_losses", 0),
                 "bought_tickers_count": len(getattr(gs, "bought_tickers", set())),
+                "dynamic_daily_loss_floor_won": getattr(gs, "dynamic_daily_loss_floor_won", 0.0),
+                "dynamic_daily_loss_remaining_won": getattr(gs, "dynamic_daily_loss_remaining_won", 0.0),
             }
 
         if self.guardrail_blocks:

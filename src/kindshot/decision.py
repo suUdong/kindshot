@@ -14,7 +14,14 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from kindshot.config import Config
-from kindshot.headline_parser import is_commentary_headline, is_contract_commentary_headline
+from kindshot.guardrails import DailyLossBudgetSnapshot
+from kindshot.headline_parser import (
+    is_broker_note_headline,
+    is_commentary_headline,
+    is_contract_commentary_headline,
+    is_direct_disclosure_headline,
+)
+from kindshot.hold_profile import resolve_hold_profile
 from kindshot.llm_client import LlmClient, LlmCallError, LlmTimeoutError
 from kindshot.models import (
     Action,
@@ -24,6 +31,7 @@ from kindshot.models import (
     MarketContext,
     SizeHint,
 )
+from kindshot.news_category import classify_news_type
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +74,17 @@ def _build_prompt(
     detected_at: str,
     ctx: ContextCard,
     market_ctx: Optional[MarketContext] = None,
+    *,
+    raw_headline: str | None = None,
+    dorg: str = "",
+    keyword_hits: Optional[list[str]] = None,
+    hold_minutes: int | None = None,
+    risk_budget: DailyLossBudgetSnapshot | None = None,
+    consecutive_stop_losses: int = 0,
 ) -> str:
     # Truncate headline to prevent prompt injection via excessively long input
     headline = headline[:_MAX_HEADLINE_LEN]
+    raw_headline = (raw_headline or headline)[:_MAX_HEADLINE_LEN]
     rsi_str = f" rsi_14={ctx.rsi_14}" if ctx.rsi_14 is not None else ""
     macd_str = f" macd_hist={ctx.macd_hist}" if ctx.macd_hist is not None else ""
     bb_str = f" bb_pos={ctx.bb_position}" if ctx.bb_position is not None else ""
@@ -108,6 +124,46 @@ def _build_prompt(
                 f" crypto_macro={market_ctx.macro_crypto_regime or 'N/A'}"
             )
 
+    derived_hold_minutes = hold_minutes
+    hold_match = None
+    if derived_hold_minutes is None:
+        holder = type("_HoldConfig", (), {"max_hold_minutes": 15})()
+        derived_hold_minutes, hold_match = resolve_hold_profile(headline, list(keyword_hits or []), holder)
+    hold_label = "EOD" if derived_hold_minutes == 0 else f"{derived_hold_minutes}m"
+    news_category = classify_news_type(headline, keyword_hits or [])
+    commentary = is_commentary_headline(raw_headline, dorg=dorg)
+    broker_note = is_broker_note_headline(raw_headline, dorg=dorg)
+    contract_commentary = is_contract_commentary_headline(raw_headline, dorg=dorg)
+    direct_disclosure = is_direct_disclosure_headline(raw_headline, dorg=dorg)
+    amount_eok = _parse_contract_amount_eok(headline)
+    signal_parts = [
+        f"news_category={news_category}",
+        f"direct_disclosure={str(direct_disclosure).lower()}",
+        f"commentary={str(commentary).lower()}",
+        f"broker_note={str(broker_note).lower()}",
+        f"contract_commentary={str(contract_commentary).lower()}",
+        f"hold_profile={hold_label}",
+    ]
+    if hold_match:
+        signal_parts.append(f"hold_keyword={hold_match}")
+    if dorg:
+        signal_parts.append(f"dorg={dorg}")
+    signal_parts.append(
+        f"contract_amount_eok={amount_eok:.0f}" if amount_eok is not None else "contract_amount_eok=N/A"
+    )
+
+    risk_line = ""
+    if risk_budget is not None:
+        risk_parts = [
+            f"daily_pnl_won={int(round(risk_budget.remaining_budget_won + risk_budget.effective_floor_won))}",
+            f"loss_floor_won={int(round(risk_budget.effective_floor_won))}",
+            f"remaining_loss_budget_won={int(round(risk_budget.remaining_budget_won))}",
+            f"consecutive_stop_losses={consecutive_stop_losses}",
+        ]
+        if risk_budget.effective_floor_pct is not None:
+            risk_parts.append(f"loss_floor_pct={risk_budget.effective_floor_pct:.2f}")
+        risk_line = f"\nctx_risk: {' '.join(risk_parts)}"
+
     strategy = _load_strategy_prompt()
 
     return f"""event: [{bucket.value}] {corp_name}, {headline}
@@ -116,8 +172,9 @@ detected_at: {detected_at} KST
 
 ctx_price: {ctx_price}
 ctx_micro: {ctx_micro}{market_line}
+ctx_signal: {' '.join(signal_parts)}{risk_line}
 
-constraints: max_pos=10% no_overnight=true daily_loss_remaining=85%
+constraints: no_overnight=true respond_with_json_only=true prefer_ctx_signal_over_headline_tone=true
 
 {strategy}"""
 
@@ -533,14 +590,30 @@ class DecisionEngine:
         # In-flight dedup: same key requests await a single upstream LLM call.
         self._inflight: dict[str, asyncio.Task[DecisionRecord]] = {}
 
-    def _cache_key(self, ticker: str, headline: str, bucket: Bucket, ctx: ContextCard) -> str:
+    def _cache_key(
+        self,
+        ticker: str,
+        headline: str,
+        bucket: Bucket,
+        ctx: ContextCard,
+        *,
+        dorg: str = "",
+        risk_budget: DailyLossBudgetSnapshot | None = None,
+        consecutive_stop_losses: int = 0,
+    ) -> str:
         # Include context card data so market changes invalidate cache
         ctx_str = (
             f"{ctx.adv_value_20d}|{ctx.spread_bps}|{ctx.ret_today}|"
             f"{ctx.intraday_value_vs_adv20d}|{ctx.top_ask_notional}|"
             f"{ctx.quote_temp_stop}|{ctx.quote_liquidation_trade}"
         )
-        h = hashlib.sha256(f"{headline}|{ctx_str}".encode()).hexdigest()[:16]
+        risk_str = ""
+        if risk_budget is not None:
+            risk_str = (
+                f"|{risk_budget.effective_floor_won}|{risk_budget.remaining_budget_won}"
+                f"|{risk_budget.effective_floor_pct}|{consecutive_stop_losses}"
+            )
+        h = hashlib.sha256(f"{headline}|{dorg}|{ctx_str}{risk_str}".encode()).hexdigest()[:16]
         return f"{ticker}:{h}:{bucket.value}"
 
     def _sweep_cache(self) -> None:
@@ -662,6 +735,8 @@ class DecisionEngine:
         run_id: str = "",
         schema_version: str = "0.1.2",
         market_ctx: Optional[MarketContext] = None,
+        risk_budget: Optional[DailyLossBudgetSnapshot] = None,
+        consecutive_stop_losses: int = 0,
     ) -> DecisionRecord:
         """Call LLM for BUY/SKIP decision.
 
@@ -671,6 +746,7 @@ class DecisionEngine:
             LlmParseError: response parse/shape failure.
         """
         analysis_text = analysis_headline or headline
+        hold_minutes, _hold_match = resolve_hold_profile(analysis_text, list(keyword_hits or []), self._config)
 
         preflight = self._preflight_decide(
             analysis_text,
@@ -685,7 +761,15 @@ class DecisionEngine:
             return preflight
 
         self._sweep_cache()
-        key = self._cache_key(ticker, analysis_text, bucket, ctx)
+        key = self._cache_key(
+            ticker,
+            analysis_text,
+            bucket,
+            ctx,
+            dorg=dorg,
+            risk_budget=risk_budget,
+            consecutive_stop_losses=consecutive_stop_losses,
+        )
 
         # Cache hit
         if key in self._cache and self._cache[key].expires_at > time.monotonic():
@@ -702,7 +786,21 @@ class DecisionEngine:
             return self._as_cache_result(shared, run_id)
 
         async def _invoke_uncached() -> DecisionRecord:
-            prompt = _build_prompt(bucket, analysis_text, ticker, corp_name, detected_at_str, ctx, market_ctx)
+            prompt = _build_prompt(
+                bucket,
+                analysis_text,
+                ticker,
+                corp_name,
+                detected_at_str,
+                ctx,
+                market_ctx,
+                raw_headline=headline,
+                dorg=dorg,
+                keyword_hits=keyword_hits,
+                hold_minutes=hold_minutes,
+                risk_budget=risk_budget,
+                consecutive_stop_losses=consecutive_stop_losses,
+            )
 
             raw_text, latency_ms = await self._llm.call(prompt, max_tokens=200)
 
