@@ -28,6 +28,45 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 02:28 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `6d1a3f4`
+- Deployer: Codex manual SSH + `rsync` (`dashboard/app.py`, `dashboard/data_loader.py`) + `kindshot-dashboard` restart
+- Summary:
+  1. **final-check dashboard warning cleanup** — replaced deprecated Streamlit `use_container_width` usage with `width="stretch"` and normalized multi-day concat inputs to remove dashboard smoke-test warning noise without changing trading behavior
+  2. **dashboard-only deploy** — re-synced the two dashboard files to `/opt/kindshot/dashboard`, recompiled them remotely, and restarted only `kindshot-dashboard`
+  3. **final sign-off evidence** — re-ran remote dashboard AppTest with `-W error::FutureWarning`, confirmed all six tabs render with `exception_count=0`, and preserved backend health / prior-trading-day pipeline evidence
+- Validation:
+  - local `python3 -m compileall src scripts tests dashboard`
+  - local `.venv/bin/python -m pytest tests/test_dashboard.py -q` → `22 passed`
+  - local `.venv/bin/python -m pytest -q` → `974 passed, 1 skipped, 1 warning`
+  - local changed-file diagnostics on `dashboard/app.py`, `dashboard/data_loader.py` → `0 errors`
+  - remote `python3 -m compileall dashboard`
+  - remote `systemctl is-active kindshot-dashboard` → `active`
+  - remote `curl -I http://127.0.0.1:8501` → `HTTP/1.1 200 OK`
+  - remote AppTest (`PYTHONPATH=. ../.venv/bin/python -W error::FutureWarning`) returned:
+    - `tab_labels`: `📊 시그널 현황`, `💰 매매 성과`, `📉 기술지표`, `🖥️ 시스템 상태`, `🔬 전략 분석`, `📈 히스토리 분석`
+    - `exception_count: 0`
+  - remote `/health` after deploy returned:
+    - `status: "healthy"`
+    - `last_poll_source: "feed"`
+    - `last_poll_age_seconds: 8`
+    - `guardrail_state.configured_max_positions: 4`
+    - `guardrail_state.recent_win_rate_multiplier: 1.0`
+    - `recent_pattern_profile.total_trades: 14`
+  - remote `logs/kindshot_20260327.jsonl` showed end-to-end prior-session evidence:
+    - `event: 789`
+    - `decision: 37`
+    - `price_snapshot: 1242`
+    - executed BUY sample count: `5`
+    - guardrail-blocked BUY sample count from `guardrail_results`: `19`
+  - remote `logs/polling_trace_20260328.jsonl` showed active feed polling on `2026-03-28` with recent `poll_start/poll_end` cycles and `last_time_after=235650`
+- Rollback: re-sync the prior dashboard files from `5ea0269` (or redeploy the previous known-good tree to `/opt/kindshot/dashboard/`) and restart `kindshot-dashboard`
+- Result: 성공
+- Notes: `2026-03-28` is a Saturday in KST, so fresh same-day market events were unavailable; final end-to-end sign-off therefore uses live poll/health evidence plus the most recent trading-day log chain from `2026-03-27`
+
 ### 2026-03-28 02:03 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)
