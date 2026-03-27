@@ -936,7 +936,7 @@ class UnknownArticleEnricher:
         self._config = config
 
     async def fetch(self, request: UnknownReviewRequest) -> ArticleEnrichmentResult:
-        if not request.rss_link.strip():
+        if not request.rss_link.strip() or not request.rss_link.startswith(("http://", "https://")):
             return ArticleEnrichmentResult(status="empty")
 
         timeout = aiohttp.ClientTimeout(total=max(1.0, self._config.unknown_review_article_timeout_s))
