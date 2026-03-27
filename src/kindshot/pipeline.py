@@ -231,6 +231,19 @@ async def execute_bucket_path(
     should_track_price = False
 
     if bucket == Bucket.NEG_STRONG:
+        if config.news_exit_enabled and scheduler.has_open_position(raw.ticker):
+            closed = await scheduler.force_exit_ticker(
+                raw.ticker,
+                exit_type="news_exit",
+                horizon="news",
+            )
+            if closed:
+                logger.info(
+                    "NEG_STRONG news liquidation [%s]: closed=%d headline=%s",
+                    raw.ticker,
+                    closed,
+                    analysis_headline[:80],
+                )
         skip_stage = SkipStage.BUCKET
         skip_reason = "NEG_BUCKET"
         analysis_tag = analysis_tag or "SHORT_WATCH"
@@ -888,6 +901,7 @@ async def execute_bucket_path(
         max_hold_minutes=hold_minutes,
         confidence=decision.confidence if is_buy else 0,
         size_hint=decision.size_hint.value if is_buy else "M",
+        support_reference_px=raw_data.support_reference_px if is_buy else None,
     )
 
     # SKIP 종목 후속 추적: false negative 식별을 위해 가격 스냅샷 스케줄
@@ -1019,6 +1033,19 @@ async def process_registered_event(
 
     # 1.5. Skip correction/withdrawal events (only originals proceed to decision)
     if processed.event_kind in (EventKind.CORRECTION, EventKind.WITHDRAWAL):
+        if config.news_exit_enabled and scheduler.has_open_position(raw.ticker):
+            closed = await scheduler.force_exit_ticker(
+                raw.ticker,
+                exit_type="correction_exit",
+                horizon="correction",
+            )
+            if closed:
+                logger.info(
+                    "Correction/withdrawal liquidation [%s]: closed=%d headline=%s",
+                    raw.ticker,
+                    closed,
+                    analysis_headline[:80],
+                )
         event_rec = EventRecord(
             mode=mode,
             schema_version=config.schema_version,

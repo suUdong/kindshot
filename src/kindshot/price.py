@@ -118,6 +118,8 @@ class SnapshotScheduler:
         self._realized_pnl_won: dict[str, float] = {}
         self._realized_closed_size_won: dict[str, float] = {}
         self._realized_exit_notional: dict[str, float] = {}
+        self._support_reference_px: dict[str, float] = {}
+        self._active_buy_events_by_ticker: dict[str, set[str]] = {}
         # Stale position 감지: 3분 경과 후 모멘텀 소멸 시 exit (5분→3분 타이트닝)
         self._stale_threshold_pct_default: float = 0.2
         self._stale_min_elapsed_s: float = 180.0  # 3분
@@ -233,6 +235,7 @@ class SnapshotScheduler:
         max_hold_minutes: int = 0,
         confidence: int = 0,
         size_hint: str = "M",
+        support_reference_px: float | None = None,
     ) -> None:
         """Schedule t0 snapshot immediately + future horizons."""
         now = time.monotonic()
@@ -249,6 +252,9 @@ class SnapshotScheduler:
             self._realized_pnl_won[event_id] = 0.0
             self._realized_closed_size_won[event_id] = 0.0
             self._realized_exit_notional[event_id] = 0.0
+            if support_reference_px is not None and support_reference_px > 0:
+                self._support_reference_px[event_id] = support_reference_px
+            self._active_buy_events_by_ticker.setdefault(ticker, set()).add(event_id)
 
         # t0: fire immediately (will be fetched in the run loop)
         heapq.heappush(self._heap, ScheduledSnapshot(
@@ -295,6 +301,76 @@ class SnapshotScheduler:
             mode=mode,
             is_buy_decision=is_buy_decision,
         ))
+
+    def has_open_position(self, ticker: str) -> bool:
+        event_ids = self._active_buy_events_by_ticker.get(ticker, set())
+        return any(
+            self._remaining_position_pct.get(event_id, 0.0) > 0.0 and event_id not in self._sell_triggered
+            for event_id in event_ids
+        )
+
+    async def force_exit_ticker(
+        self,
+        ticker: str,
+        *,
+        exit_type: str,
+        horizon: str,
+    ) -> int:
+        event_ids = sorted(self._active_buy_events_by_ticker.get(ticker, set()))
+        closed = 0
+        for event_id in event_ids:
+            if self._remaining_position_pct.get(event_id, 0.0) <= 0.0 or event_id in self._sell_triggered:
+                continue
+            entry_px, _unused = self._t0_prices.get(event_id, (None, None))
+            if entry_px is None or entry_px <= 0:
+                logger.warning("Forced exit skipped [%s] %s: missing entry price", ticker, event_id[:8])
+                continue
+            price = await self._fetcher.fetch(ticker)
+            if price is None or price.px is None or price.px <= 0:
+                logger.warning("Forced exit skipped [%s] %s: current price unavailable", ticker, event_id[:8])
+                continue
+            ret_long = (price.px - entry_px) / entry_px
+            snap = ScheduledSnapshot(
+                fire_at=time.monotonic(),
+                event_id=event_id,
+                ticker=ticker,
+                horizon=horizon,
+                t0_basis=T0Basis.DECIDED_AT,
+                t0_ts=datetime.now(timezone.utc),
+                mode="live" if self._order_executor is not None else "paper",
+                is_buy_decision=True,
+            )
+            if self._order_executor is not None:
+                try:
+                    sell_result = await self._order_executor.sell_position(event_id, ticker)
+                    if not sell_result or not sell_result.success:
+                        logger.warning("Forced live sell rejected [%s] %s", ticker, event_id[:8])
+                        continue
+                except Exception:
+                    logger.exception("Forced live sell error [%s] %s", ticker, event_id[:8])
+                    continue
+            self._virtual_exits[event_id] = horizon
+            self._virtual_exit_reasons[event_id] = exit_type
+            self._emit_trade_close(
+                snap=snap,
+                exit_px=price.px,
+                ret_long=ret_long,
+                exit_type=exit_type,
+                horizon=horizon,
+                close_fraction=self._remaining_position_pct.get(event_id, 1.0),
+                position_closed=True,
+            )
+            logger.info(
+                "FORCED EXIT [%s] %s: %s at %s px=%.2f ret=%.2f%%",
+                ticker,
+                event_id[:8],
+                exit_type,
+                horizon,
+                price.px,
+                ret_long * 100,
+            )
+            closed += 1
+        return closed
 
     def _emit_trade_close(
         self,
@@ -362,7 +438,7 @@ class SnapshotScheduler:
 
     def _cleanup_event_tracking(self, event_id: str) -> None:
         self._t0_prices.pop(event_id, None)
-        self._event_tickers.pop(event_id, None)
+        ticker = self._event_tickers.pop(event_id, None)
         self._entry_times.pop(event_id, None)
         self._entry_times_kst.pop(event_id, None)
         self._t5m_profitable.pop(event_id, None)
@@ -377,6 +453,13 @@ class SnapshotScheduler:
         self._peak_returns.pop(event_id, None)
         self._virtual_exits.pop(event_id, None)
         self._virtual_exit_reasons.pop(event_id, None)
+        self._support_reference_px.pop(event_id, None)
+        if ticker:
+            event_ids = self._active_buy_events_by_ticker.get(ticker)
+            if event_ids is not None:
+                event_ids.discard(event_id)
+                if not event_ids:
+                    self._active_buy_events_by_ticker.pop(ticker, None)
         self._sell_triggered.discard(event_id)
 
     async def _fire(self, snap: ScheduledSnapshot) -> None:
@@ -484,45 +567,53 @@ class SnapshotScheduler:
                 # 첫 번째 5분+ 스냅샷에서 체크포인트 판정
                 self._t5m_profitable[snap.event_id] = ret_pct > 0
 
-            partial_target_pct = effective_tp * self._config.partial_take_profit_target_ratio if tp_active else 0.0
             remaining_position_pct = self._remaining_position_pct.get(snap.event_id, 1.0)
-            if tp_active and not self._partial_take_profit_taken.get(snap.event_id, False) and ret_pct >= effective_tp:
+            if (
+                tp_active
+                and snap.mode == "paper"
+                and self._config.partial_take_profit_enabled
+                and not self._partial_take_profit_taken.get(snap.event_id, False)
+                and ret_pct >= effective_tp
+            ):
+                close_fraction = min(remaining_position_pct, self._config.partial_take_profit_size_pct / 100)
+                if 0.0 < close_fraction < remaining_position_pct:
+                    post_partial_remaining = max(0.0, remaining_position_pct - close_fraction)
+                    self._partial_take_profit_taken[snap.event_id] = True
+                    self._emit_trade_close(
+                        snap=snap,
+                        exit_px=px,
+                        ret_long=ret_long,
+                        exit_type="partial_take_profit",
+                        horizon=snap.horizon,
+                        close_fraction=close_fraction,
+                        position_closed=False,
+                        remaining_position_pct=post_partial_remaining,
+                    )
+                    logger.info(
+                        "PAPER PARTIAL TP [%s] %s: +%.2f%% at %s (target %.1f%%, close %.0f%%, remain %.0f%%)",
+                        snap.ticker,
+                        snap.event_id[:8],
+                        ret_pct,
+                        snap.horizon,
+                        effective_tp,
+                        close_fraction * 100,
+                        post_partial_remaining * 100,
+                    )
+                else:
+                    self._virtual_exits[snap.event_id] = snap.horizon
+                    self._virtual_exit_reasons[snap.event_id] = "take_profit"
+                    logger.info(
+                        "PAPER TP hit [%s] %s: +%.2f%% at %s (target %.1f%%, conf=%d)",
+                        snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
+                        effective_tp, evt_conf,
+                    )
+            elif tp_active and not self._config.partial_take_profit_enabled and ret_pct >= effective_tp:
                 self._virtual_exits[snap.event_id] = snap.horizon
                 self._virtual_exit_reasons[snap.event_id] = "take_profit"
                 logger.info(
                     "PAPER TP hit [%s] %s: +%.2f%% at %s (target %.1f%%, conf=%d)",
                     snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
                     effective_tp, evt_conf,
-                )
-            elif (
-                snap.mode == "paper"
-                and self._config.partial_take_profit_enabled
-                and not self._partial_take_profit_taken.get(snap.event_id, False)
-                and tp_active
-                and ret_pct >= partial_target_pct
-            ):
-                close_fraction = min(remaining_position_pct, self._config.partial_take_profit_size_pct / 100)
-                post_partial_remaining = max(0.0, remaining_position_pct - close_fraction)
-                self._partial_take_profit_taken[snap.event_id] = True
-                self._emit_trade_close(
-                    snap=snap,
-                    exit_px=px,
-                    ret_long=ret_long,
-                    exit_type="partial_take_profit",
-                    horizon=snap.horizon,
-                    close_fraction=close_fraction,
-                    position_closed=False,
-                    remaining_position_pct=post_partial_remaining,
-                )
-                logger.info(
-                    "PAPER PARTIAL TP [%s] %s: +%.2f%% at %s (target %.1f%%, close %.0f%%, remain %.0f%%)",
-                    snap.ticker,
-                    snap.event_id[:8],
-                    ret_pct,
-                    snap.horizon,
-                    partial_target_pct,
-                    close_fraction * 100,
-                    post_partial_remaining * 100,
                 )
             elif sl_active and ret_pct <= effective_sl:
                 self._virtual_exits[snap.event_id] = snap.horizon
@@ -531,6 +622,24 @@ class SnapshotScheduler:
                     "PAPER SL hit [%s] %s: %.2f%% at %s (stop %.1f%%, conf=%d)",
                     snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
                     effective_sl, evt_conf,
+                )
+            elif (
+                self._config.support_exit_enabled
+                and (support_reference_px := self._support_reference_px.get(snap.event_id)) is not None
+                and support_reference_px > 0
+                and px <= support_reference_px * (1 - max(0.0, self._config.support_exit_buffer_pct) / 100)
+            ):
+                support_threshold_px = support_reference_px * (1 - max(0.0, self._config.support_exit_buffer_pct) / 100)
+                self._virtual_exits[snap.event_id] = snap.horizon
+                self._virtual_exit_reasons[snap.event_id] = "support_breach"
+                logger.info(
+                    "PAPER SUPPORT EXIT [%s] %s: px=%.2f at %s (support %.2f, threshold %.2f)",
+                    snap.ticker,
+                    snap.event_id[:8],
+                    px,
+                    snap.horizon,
+                    support_reference_px,
+                    support_threshold_px,
                 )
             elif (
                 self._config.t5m_loss_exit_enabled

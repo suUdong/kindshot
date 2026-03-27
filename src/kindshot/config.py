@@ -167,6 +167,9 @@ class Config:
     trailing_stop_post_partial_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_POST_PARTIAL_EARLY_PCT", 0.4))
     trailing_stop_post_partial_mid_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_POST_PARTIAL_MID_PCT", 0.6))
     trailing_stop_post_partial_late_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_POST_PARTIAL_LATE_PCT", 0.8))
+    news_exit_enabled: bool = field(default_factory=lambda: _env_bool("NEWS_EXIT_ENABLED", True))
+    support_exit_enabled: bool = field(default_factory=lambda: _env_bool("SUPPORT_EXIT_ENABLED", True))
+    support_exit_buffer_pct: float = field(default_factory=lambda: _env_float("SUPPORT_EXIT_BUFFER_PCT", 0.2))
     # 시간대별 청산 차등
     session_early_sl_multiplier: float = field(default_factory=lambda: _env_float("SESSION_EARLY_SL_MULT", 0.7))  # 09:00-09:30 SL 강화 (기본값 × 0.7)
     session_late_max_hold_divisor: float = field(default_factory=lambda: _env_float("SESSION_LATE_MAX_HOLD_DIV", 2.0))  # 14:00+ max_hold 축소 (÷2)

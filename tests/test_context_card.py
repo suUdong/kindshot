@@ -205,6 +205,34 @@ async def test_context_card_preserves_participation_fields(monkeypatch):
     assert raw.intraday_value_vs_adv20d == 0.005
 
 
+async def test_context_card_surfaces_support_reference(monkeypatch):
+    cc._pykrx_cache.clear()
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_TTL", 300)
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_MAX_SIZE", 512)
+
+    async def _fake_to_thread(func, *args, **kwargs):
+        return {
+            "prev_close": 50000,
+            "support_price_5d": 48200.0,
+            "support_price_20d": 47100.0,
+            "support_reference_px": 48200.0,
+        }
+
+    monkeypatch.setattr(cc.asyncio, "to_thread", _fake_to_thread)
+
+    mock_kis = AsyncMock()
+    mock_kis.get_price = AsyncMock(return_value=PriceInfo(
+        px=52000, open_px=51000, spread_bps=12.0, cum_value=1e9, fetch_latency_ms=50,
+    ))
+
+    card, raw = await cc.build_context_card("005930", kis=mock_kis)
+
+    assert card.support_price_5d == 48200.0
+    assert card.support_price_20d == 47100.0
+    assert card.support_reference_px == 48200.0
+    assert raw.support_reference_px == 48200.0
+
+
 async def test_context_card_normalizes_quote_and_liquidity_flags(monkeypatch):
     cc._pykrx_cache.clear()
     monkeypatch.setattr(cc, "_PYKRX_CACHE_TTL", 300)
@@ -248,6 +276,7 @@ def test_context_card_data_defaults():
 
     assert raw.adv_value_20d is None
     assert raw.sector == ""
+    assert raw.support_reference_px is None
 
 
 async def test_append_runtime_context_card_writes_jsonl(tmp_path):

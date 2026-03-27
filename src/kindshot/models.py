@@ -121,6 +121,9 @@ class ContextCard(BaseModel):
     macd_hist: Optional[float] = None
     bb_position: Optional[float] = None  # 볼린저밴드 위치 (0=하단, 100=상단)
     atr_14: Optional[float] = None  # ATR-14 변동성 (현재가 대비 %)
+    support_price_5d: Optional[float] = None
+    support_price_20d: Optional[float] = None
+    support_reference_px: Optional[float] = None
 
 
 # ── Log Records ────────────────────────────────────────

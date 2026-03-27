@@ -253,6 +253,59 @@ async def test_pipeline_records_buy_with_sector_metadata(tmp_path):
     guardrail_state.record_buy.assert_called_once_with("005930", sector="반도체")
 
 
+async def test_neg_strong_requests_news_exit_for_open_ticker(tmp_path):
+    from kindshot.event_registry import ProcessedEvent
+    from kindshot.logger import JsonlLogger
+    from kindshot.models import EventIdMethod, EventKind, MarketContext
+    from kindshot.pipeline import RuntimeCounters, execute_bucket_path
+
+    raw = _make_raw(title="삼성전자(005930) - 대규모 손상차손 및 실적 쇼크")
+    processed = ProcessedEvent(
+        event_id="evt_neg",
+        event_id_method=EventIdMethod.UID,
+        event_kind=EventKind.ORIGINAL,
+        parent_id=None,
+        event_group_id="evt_neg",
+        parent_match_method=None,
+        parent_match_score=None,
+        parent_candidate_count=None,
+        kind_uid=None,
+        raw=raw,
+    )
+    cfg = Config(log_dir=tmp_path / "logs", paper=True)
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    scheduler = MagicMock()
+    scheduler.has_open_position.return_value = True
+    scheduler.force_exit_ticker = AsyncMock(return_value=1)
+    market = MagicMock()
+    market.snapshot = MarketContext()
+
+    outcome = await execute_bucket_path(
+        raw=raw,
+        processed=processed,
+        bucket=Bucket.NEG_STRONG,
+        keyword_hits=[],
+        decision_engine=MagicMock(),
+        market=market,
+        scheduler=scheduler,
+        log=log,
+        config=cfg,
+        run_id="test_run",
+        kis=None,
+        counters=RuntimeCounters(),
+        mode="paper",
+        guardrail_state=None,
+        feed_source="KIS",
+    )
+
+    scheduler.force_exit_ticker.assert_awaited_once_with(
+        "005930",
+        exit_type="news_exit",
+        horizon="news",
+    )
+    assert outcome.skip_reason == "NEG_BUCKET"
+
+
 async def test_pipeline_passes_time_and_hold_profile_to_guardrails(tmp_path):
     from kindshot.models import DecisionRecord, Action, SizeHint
 

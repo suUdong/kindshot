@@ -40,6 +40,9 @@ class ContextCardData:
     quote_risk_state: object = None
     orderbook_snapshot: object = None
     sector: str = ""
+    support_price_5d: Optional[float] = None
+    support_price_20d: Optional[float] = None
+    support_reference_px: Optional[float] = None
 
 
 from kindshot.tz import KST as _KST
@@ -79,6 +82,8 @@ async def _pykrx_features(ticker: str) -> dict:
             close_col = "종가" if "종가" in df.columns else "Close" if "Close" in df.columns else None
             vol_col = "거래량" if "거래량" in df.columns else "Volume" if "Volume" in df.columns else None
             val_col = "거래대금" if "거래대금" in df.columns else "Value" if "Value" in df.columns else None
+            low_col = "저가" if "저가" in df.columns else "Low" if "Low" in df.columns else None
+            high_col = "고가" if "고가" in df.columns else "High" if "High" in df.columns else None
 
             if not close_col:
                 logger.warning("pykrx unexpected columns for %s: %s", ticker, list(df.columns))
@@ -116,6 +121,19 @@ async def _pykrx_features(ticker: str) -> dict:
                 vol_20 = volume.tail(20)
                 cur_vol = volume.iloc[-1]
                 vol_pct = (vol_20 < cur_vol).sum() / len(vol_20) * 100 if len(vol_20) > 0 else None
+
+            support_price_5d = None
+            support_price_20d = None
+            support_reference_px = None
+            if low_col and len(df) >= 2:
+                completed_lows = df[low_col].iloc[:-1]
+                if len(completed_lows) >= 1:
+                    support_price_5d = float(completed_lows.tail(min(5, len(completed_lows))).min())
+                    support_price_20d = float(completed_lows.tail(min(20, len(completed_lows))).min())
+                    support_candidates = [value for value in (support_price_5d, support_price_20d) if value and value > 0]
+                    if support_candidates:
+                        # Use the stronger available floor so noise does not trigger exits too early.
+                        support_reference_px = max(support_candidates)
 
             # RSI-14 — 15거래일 이상 필요
             rsi_14 = None
@@ -161,8 +179,6 @@ async def _pykrx_features(ticker: str) -> dict:
 
             # ATR-14 (Average True Range) — 변동성 지표
             atr_14 = None
-            high_col = "고가" if "고가" in df.columns else "High" if "High" in df.columns else None
-            low_col = "저가" if "저가" in df.columns else "Low" if "Low" in df.columns else None
             if high_col and low_col and len(df) >= 15:
                 high = df[high_col]
                 low = df[low_col]
@@ -187,6 +203,9 @@ async def _pykrx_features(ticker: str) -> dict:
                 "macd_hist": macd_hist,
                 "bb_position": bb_position,
                 "atr_14": atr_14,
+                "support_price_5d": round(support_price_5d, 2) if support_price_5d is not None else None,
+                "support_price_20d": round(support_price_20d, 2) if support_price_20d is not None else None,
+                "support_reference_px": round(support_reference_px, 2) if support_reference_px is not None else None,
             }
         except Exception:
             logger.exception("pykrx fetch failed for %s", ticker)
@@ -268,6 +287,9 @@ async def build_context_card(
         macd_hist=hist.get("macd_hist"),
         bb_position=hist.get("bb_position"),
         atr_14=hist.get("atr_14"),
+        support_price_5d=hist.get("support_price_5d"),
+        support_price_20d=hist.get("support_price_20d"),
+        support_reference_px=hist.get("support_reference_px"),
     )
 
     raw = ContextCardData(
@@ -284,6 +306,9 @@ async def build_context_card(
         quote_risk_state=price_info.risk_state if kis and price_info else None,
         orderbook_snapshot=price_info.orderbook if kis and price_info else None,
         sector=price_info.sector if kis and price_info else "",
+        support_price_5d=hist.get("support_price_5d"),
+        support_price_20d=hist.get("support_price_20d"),
+        support_reference_px=hist.get("support_reference_px"),
     )
     return card, raw
 
@@ -374,6 +399,9 @@ async def append_runtime_context_card(
             "quote_risk_state": _json_safe_value(raw.quote_risk_state),
             "orderbook_snapshot": _json_safe_value(raw.orderbook_snapshot),
             "sector": raw.sector,
+            "support_price_5d": raw.support_price_5d,
+            "support_price_20d": raw.support_price_20d,
+            "support_reference_px": raw.support_reference_px,
         },
         "market_ctx": _json_safe_value(market_ctx),
     }

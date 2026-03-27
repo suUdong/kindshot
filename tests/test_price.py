@@ -861,7 +861,6 @@ async def test_partial_take_profit_realizes_half_and_keeps_position_open():
         paper_stop_loss_pct=-5.0,
         trailing_stop_enabled=True,
         partial_take_profit_enabled=True,
-        partial_take_profit_target_ratio=0.5,
         partial_take_profit_size_pct=50.0,
     )
     fetcher = PriceFetcher(kis=None)
@@ -871,7 +870,7 @@ async def test_partial_take_profit_realizes_half_and_keeps_position_open():
     scheduler = SnapshotScheduler(cfg, fetcher, log, trade_close_callback=close_cb)
     scheduler._fetcher.fetch = AsyncMock(side_effect=[
         PriceInfo(px=10000.0, open_px=10000.0, spread_bps=0.0, cum_value=1_000_000.0, fetch_latency_ms=10),
-        PriceInfo(px=10120.0, open_px=10000.0, spread_bps=0.0, cum_value=1_120_000.0, fetch_latency_ms=10),
+        PriceInfo(px=10200.0, open_px=10000.0, spread_bps=0.0, cum_value=1_200_000.0, fetch_latency_ms=10),
     ])
     scheduler.schedule_t0(
         event_id="evt1",
@@ -905,7 +904,6 @@ async def test_post_partial_trailing_closes_remaining_position():
         trailing_stop_enabled=True,
         trailing_stop_activation_pct=0.3,
         partial_take_profit_enabled=True,
-        partial_take_profit_target_ratio=0.5,
         partial_take_profit_size_pct=50.0,
         trailing_stop_post_partial_early_pct=0.2,
     )
@@ -916,8 +914,8 @@ async def test_post_partial_trailing_closes_remaining_position():
     scheduler = SnapshotScheduler(cfg, fetcher, log, trade_close_callback=close_cb)
     scheduler._fetcher.fetch = AsyncMock(side_effect=[
         PriceInfo(px=10000.0, open_px=10000.0, spread_bps=0.0, cum_value=1_000_000.0, fetch_latency_ms=10),
-        PriceInfo(px=10120.0, open_px=10000.0, spread_bps=0.0, cum_value=1_120_000.0, fetch_latency_ms=10),
-        PriceInfo(px=10080.0, open_px=10000.0, spread_bps=0.0, cum_value=1_080_000.0, fetch_latency_ms=10),
+        PriceInfo(px=10200.0, open_px=10000.0, spread_bps=0.0, cum_value=1_200_000.0, fetch_latency_ms=10),
+        PriceInfo(px=10180.0, open_px=10000.0, spread_bps=0.0, cum_value=1_180_000.0, fetch_latency_ms=10),
     ])
     scheduler.schedule_t0(
         event_id="evt1",
@@ -943,8 +941,87 @@ async def test_post_partial_trailing_closes_remaining_position():
     assert final_kwargs["position_closed"] is True
     assert final_kwargs["exit_type"] == "trailing_stop"
     assert final_kwargs["size_won"] == pytest.approx(2500000.0)
-    assert final_kwargs["cumulative_pnl_won"] == pytest.approx(50000.0)
-    assert final_kwargs["cumulative_ret_pct"] == pytest.approx(1.0)
+    assert final_kwargs["cumulative_pnl_won"] == pytest.approx(95000.0)
+    assert final_kwargs["cumulative_ret_pct"] == pytest.approx(1.9)
+
+
+async def test_force_exit_ticker_closes_open_position_with_news_exit():
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=False,
+        partial_take_profit_enabled=False,
+    )
+    fetcher = PriceFetcher(kis=None)
+    log = MagicMock()
+    log.write = AsyncMock()
+    close_cb = MagicMock()
+    scheduler = SnapshotScheduler(cfg, fetcher, log, trade_close_callback=close_cb)
+    scheduler._fetcher.fetch = AsyncMock(side_effect=[
+        PriceInfo(px=10000.0, open_px=10000.0, spread_bps=0.0, cum_value=1_000_000.0, fetch_latency_ms=10),
+        PriceInfo(px=9900.0, open_px=10000.0, spread_bps=0.0, cum_value=950_000.0, fetch_latency_ms=10),
+    ])
+    scheduler.schedule_t0(
+        event_id="evt1",
+        ticker="005930",
+        t0_basis=T0Basis.DECIDED_AT,
+        t0_ts=datetime.now(timezone.utc),
+        run_id="run1",
+        mode="paper",
+        is_buy_decision=True,
+    )
+
+    t0_snap = [s for s in scheduler._heap if s.horizon == "t0"][0]
+    await scheduler._fire(t0_snap)
+
+    closed = await scheduler.force_exit_ticker("005930", exit_type="news_exit", horizon="news")
+
+    assert closed == 1
+    close_cb.assert_called_once()
+    kwargs = close_cb.call_args.kwargs
+    assert kwargs["exit_type"] == "news_exit"
+    assert kwargs["horizon"] == "news"
+    assert kwargs["position_closed"] is True
+    assert scheduler.has_open_position("005930") is False
+
+
+async def test_support_breach_triggers_exit():
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=False,
+        partial_take_profit_enabled=False,
+        support_exit_enabled=True,
+        support_exit_buffer_pct=0.2,
+    )
+    fetcher = PriceFetcher(kis=None)
+    log = MagicMock()
+    log.write = AsyncMock()
+    close_cb = MagicMock()
+    scheduler = SnapshotScheduler(cfg, fetcher, log, trade_close_callback=close_cb)
+    scheduler._fetcher.fetch = AsyncMock(side_effect=[
+        PriceInfo(px=10000.0, open_px=10000.0, spread_bps=0.0, cum_value=1_000_000.0, fetch_latency_ms=10),
+        PriceInfo(px=9920.0, open_px=10000.0, spread_bps=0.0, cum_value=950_000.0, fetch_latency_ms=10),
+    ])
+    scheduler.schedule_t0(
+        event_id="evt1",
+        ticker="005930",
+        t0_basis=T0Basis.DECIDED_AT,
+        t0_ts=datetime.now(timezone.utc),
+        run_id="run1",
+        mode="paper",
+        is_buy_decision=True,
+        support_reference_px=9950.0,
+    )
+
+    snaps = {snap.horizon: snap for snap in scheduler._heap if snap.horizon in {"t0", "t+1m"}}
+    await scheduler._fire(snaps["t0"])
+    await scheduler._fire(snaps["t+1m"])
+
+    close_cb.assert_called_once()
+    kwargs = close_cb.call_args.kwargs
+    assert kwargs["exit_type"] == "support_breach"
+    assert kwargs["position_closed"] is True
 
 
 async def test_flush_ready_on_shutdown_fires_due_snapshots_only():
