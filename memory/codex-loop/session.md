@@ -3,10 +3,10 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `Historical Collection Foundation`
-- Focus: surface persisted backfill report artifact paths directly in operator notifications so Telegram/stdout alerts point at the exact JSON evidence files they summarize.
-- Active hypothesis: if `format_backfill_notification()` includes `backfill_report` and `auto_report` paths, operators can reopen `latest.json` and `auto_latest.json` directly from the alert without searching code/config.
-- Blocker: none for this notification-path slice; real-environment validation still requires the next live/paper session.
+- Phase: `News Signal Accuracy Hardening`
+- Focus: harden article-style contract/news parsing so KIS commentary titles stop leaking weak `수주` / `공급계약` signals into the positive decision path.
+- Active hypothesis: raw-title bucket IGNORE protections should stay intact, while a source-aware downstream analysis headline parser should tighten contract/article preflight and quality handling.
+- Blocker: none.
 
 ## Environment
 
@@ -15,21 +15,22 @@
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
   - `python3 -m compileall src/kindshot tests scripts` passed
-  - `.venv/bin/python -m pytest tests/test_telegram_ops.py -q` passed (`4 passed`)
-  - `.venv/bin/python -m pytest -q` passed (`781 passed, 1 warning`)
+  - `.venv/bin/python -m pytest tests/test_headline_parser.py tests/test_bucket.py tests/test_decision.py tests/test_guardrails.py tests/test_pipeline.py -q` passed (`342 passed, 1 skipped`)
+  - `.venv/bin/python -m pytest tests/test_price.py tests/test_strategy_observability.py -q` passed (`32 passed, 1 skipped`)
+  - `.venv/bin/python -m pytest -q` passed (`806 passed, 2 skipped, 1 warning`)
 
 ## Last Completed Step
 
-- Added optional report-path lines to `format_backfill_notification()` and wired both notify/auto scripts to expose the persisted backfill artifacts they write.
-- `collect_backfill_notify.py` now emits `backfill_report=...`; `collect_backfill_auto.py` now emits `backfill_report=...` and `auto_report=...` when available.
-- Re-ran targeted Telegram notification tests and the full suite; the repository is green (`781 passed, 1 warning`).
+- Added `headline_parser.py` and wired normalized analysis headlines into decision/preflight/penalty/hold-profile paths.
+- Preserved raw-title bucketing so existing IGNORE override protections for broker/article prefixes remain active.
+- Added parser/decision/pipeline regression tests and fixed two unrelated full-suite validation gaps discovered during verification (`price.py` entry-time determinism and strategy observability config alignment).
 
 ## Next Intended Step
 
-- Resume the roadmap-backed Phase 6 real-environment validation slice: verify KIS historical-news coverage/pagination on actual dates and confirm collector notifications plus both default-persisted backfill artifacts (`latest.json`, `auto_latest.json`) against a real partial/error/noop collector run, now with artifact paths visible in the notification itself.
-- Keep the blocked ops-backlog `P0` item open until the next live/paper session provides post-fix decision-record evidence.
+- Monitor fresh paper logs to confirm weak KIS article-style contract flow shrinks without suppressing direct disclosure-style catalysts.
+- After collecting that evidence, resume the roadmap-backed historical collection / real-environment validation slice.
 
 ## Notes
 
-- This slice changes notification text and run summaries only; no collector write semantics, production strategy behavior, runtime ingest, or deployment path changed.
+- This slice changes analysis-time parsing and report reconstruction only; raw logging, deploy paths, secrets, and live-order behavior remain unchanged.
 - Full-suite warning remains in `tests/test_health.py` as `NotAppKeyWarning`; no new warnings were introduced by this slice.
