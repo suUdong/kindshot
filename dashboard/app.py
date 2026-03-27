@@ -97,19 +97,26 @@ with tab1:
     else:
         # KPI 카드
         total = len(events_df)
-        buy_count = len(events_df[events_df["decision_action"] == "BUY"])
+        has_effective = "effective_action" in events_df.columns
+        if has_effective:
+            buy_count = len(events_df[events_df["effective_action"] == "BUY"])
+            guardrail_blocked = len(events_df[events_df["effective_action"] == "GUARDRAIL_BLOCKED"])
+        else:
+            buy_count = len(events_df[events_df["decision_action"] == "BUY"])
+            guardrail_blocked = 0
         skip_count = len(events_df[events_df["decision_action"] == "SKIP"])
         bucket_skip = len(events_df[events_df["skip_stage"] == "BUCKET"])
         quant_skip = len(events_df[events_df["skip_stage"] == "QUANT"])
         dup_skip = len(events_df[events_df["skip_stage"] == "DUPLICATE"])
 
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
         c1.metric("전체 이벤트", total)
-        c2.metric("BUY", buy_count, delta=f"{buy_count/total*100:.1f}%" if total else "0%")
-        c3.metric("LLM SKIP", skip_count)
-        c4.metric("버킷 필터", bucket_skip)
-        c5.metric("퀀트 필터", quant_skip)
-        c6.metric("중복 제거", dup_skip)
+        c2.metric("BUY (실행)", buy_count, delta=f"{buy_count/total*100:.1f}%" if total else "0%")
+        c3.metric("BUY (차단)", guardrail_blocked)
+        c4.metric("LLM SKIP", skip_count)
+        c5.metric("버킷 필터", bucket_skip)
+        c6.metric("퀀트 필터", quant_skip)
+        c7.metric("중복 제거", dup_skip)
 
         st.divider()
 
@@ -176,21 +183,24 @@ with tab1:
         # 파이프라인 퍼널
         st.subheader("파이프라인 퍼널")
         llm_reached = len(events_df[events_df["decision_action"].notna()])
+        guardrail_skip = len(events_df[events_df["skip_stage"] == "GUARDRAIL"])
         funnel_data = pd.DataFrame({
-            "단계": ["전체 이벤트", "중복 제거 통과", "버킷 필터 통과", "퀀트 필터 통과", "LLM 판단", "BUY 결정"],
+            "단계": ["전체 이벤트", "중복 제거 통과", "버킷 필터 통과", "퀀트 필터 통과",
+                    "LLM 판단", "Guardrail 통과", "BUY 실행"],
             "건수": [
                 total,
                 total - dup_skip,
                 total - dup_skip - bucket_skip,
                 total - dup_skip - bucket_skip - quant_skip,
                 llm_reached,
+                llm_reached - guardrail_skip,
                 buy_count,
             ],
         })
         fig_funnel = go.Figure(go.Funnel(
             y=funnel_data["단계"], x=funnel_data["건수"],
             textinfo="value+percent initial",
-            marker=dict(color=["#3498db", "#2980b9", "#1abc9c", "#16a085", "#f39c12", "#2ecc71"]),
+            marker=dict(color=["#3498db", "#2980b9", "#1abc9c", "#16a085", "#f39c12", "#27ae60", "#2ecc71"]),
         ))
         fig_funnel.update_layout(height=350)
         st.plotly_chart(fig_funnel, use_container_width=True)

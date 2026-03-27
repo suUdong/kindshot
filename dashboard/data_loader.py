@@ -74,6 +74,15 @@ def load_events(date_str: str) -> pd.DataFrame:
     df = pd.DataFrame(events)
     if "detected_at" in df.columns:
         df["detected_at"] = pd.to_datetime(df["detected_at"], errors="coerce")
+    # guardrail 차단된 BUY는 실제 매매 아님 → 구분 컬럼 추가
+    if "decision_action" in df.columns and "guardrail_result" in df.columns:
+        df["effective_action"] = df.apply(
+            lambda r: "GUARDRAIL_BLOCKED" if r.get("decision_action") == "BUY"
+            and r.get("guardrail_result") not in (None, "", "PASS")
+            and r.get("skip_stage") == "GUARDRAIL"
+            else r.get("decision_action"),
+            axis=1,
+        )
     return df
 
 
