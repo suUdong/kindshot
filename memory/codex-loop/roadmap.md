@@ -15,10 +15,10 @@
 
 ## Current Focus
 
-- Track: User-Directed Exit Strategy Optimization
-- Phase: Multi-Trigger Exit Upgrade
+- Track: User-Directed Entry Strategy Optimization
+- Phase: Entry Filter Hardening
 - Status: In Progress (user override)
-- Reason: The user explicitly redirected the loop to improve liquidation behavior beyond trailing-stop plus time-based exits. The latest slice added bad-news forced liquidation, support-breach liquidation, corrected target-hit 50% partial take profit semantics, then followed with a truthfulness fix for the support composite and partial-target config knob, pushed `8492d13` and `f1f583d`, and deployed both to `kindshot-server`.
+- Reason: The user explicitly redirected the loop to improve entry quality after the exit-strategy work. The latest slice added a 60-second stale-entry block, aggregate orderbook bid/ask imbalance filtering, a stronger participation floor, and a late-morning prior-volume gate, then pushed `3422df4` and the helper follow-up `95c740d` and deployed both to `kindshot-server`.
 
 ## Phases
 
@@ -92,9 +92,9 @@
 
 ## Next Run Candidates
 
-1. Observe the next live paper session and confirm the new exit reasons (`news_exit`, `correction_exit`, `support_breach`, corrected `partial_take_profit`) appear coherently in runtime logs and Telegram/operator surfaces.
-2. Decide whether the support anchor should stay as the stronger completed-day 5d/20d floor or be tightened/loosened with one narrow follow-up hypothesis based on live behavior.
-3. Restore real quote keys on `kindshot-server` if support/trailing/T5M behavior needs market-grade validation instead of VTS-mode smoke coverage.
+1. Observe the next live paper session and confirm the new BUY filter reasons (`ENTRY_DELAY_TOO_LATE`, `ORDERBOOK_IMBALANCE`, `INTRADAY_VALUE_TOO_THIN`, `PRIOR_VOLUME_TOO_THIN`) appear coherently in runtime logs and operator surfaces.
+2. Restore real quote keys on `kindshot-server` if orderbook/prior-volume behavior needs market-grade validation instead of VTS-mode smoke coverage.
+3. Revisit exactly one entry threshold after live evidence accumulates: `max_entry_delay_ms`, `orderbook_bid_ask_ratio_min`, or `min_intraday_value_vs_adv20d`.
 
 ## Deferred
 

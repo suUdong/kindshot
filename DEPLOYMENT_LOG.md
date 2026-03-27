@@ -28,6 +28,39 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 03:52 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `3422df4`, `95c740d`
+- Deployer: Codex clean-export `git archive HEAD` + `rsync --relative`
+- Summary:
+  1. **stale-entry cutoff** — deployed the new `ENTRY_DELAY_TOO_LATE` guardrail with `MAX_ENTRY_DELAY_MS=60000` so stale BUY setups stop before paper execution
+  2. **depth/liquidity hardening** — deployed `ORDERBOOK_IMBALANCE`, the stronger `MIN_INTRADAY_VALUE_VS_ADV20D=0.15` floor, and the post-10:00 `PRIOR_VOLUME_TOO_THIN` gate
+  3. **runtime helper hotfix** — followed the main entry-filter rollout with `95c740d` to ship `src/kindshot/entry_filter_analysis.py` after the first remote restart exposed the missing helper import
+- Validation:
+  - local `python3 -m compileall src scripts tests`
+  - local `.venv/bin/python -m pytest tests/test_guardrails.py tests/test_context_card.py tests/test_pipeline.py tests/test_entry_filter_analysis.py -q` → `213 passed`
+  - local `.venv/bin/python scripts/entry_filter_analysis.py` → delay kept `12 / 14` at avg `-0.073%`, delay late `2 / 14` at avg `-0.602%`; liquidity kept `5 / 14` at avg `+0.071%`; orderbook runtime coverage still sparse
+  - local `.venv/bin/python -m pytest -q` → `988 passed, 1 skipped, 1 warning`
+  - diagnostics `lsp_diagnostics_directory` → `0 errors`, `0 warnings`
+  - `git push origin main` → `Everything up-to-date`
+  - remote `./.venv/bin/python -m compileall src/kindshot scripts/entry_filter_analysis.py`
+  - remote `./.venv/bin/python -m pip install -e . --quiet`
+  - remote `systemctl is-active kindshot` → `active`
+  - remote `systemctl is-active kindshot-dashboard` → `active`
+  - remote `systemctl status kindshot --no-pager -l` → active since `2026-03-28 03:52:08 KST`, `ExecStart=/opt/kindshot/.venv/bin/python -m kindshot --paper`
+  - remote `journalctl -u kindshot -n 20 --no-pager` showed:
+    - `kindshot 0.1.3 starting`
+    - `RecentPatternProfile loaded: dates=20260319,20260320,20260327 trades=14 boost=1 loss=2`
+    - `Health server started on 127.0.0.1:8080`
+  - remote `curl -fsS http://127.0.0.1:8080/health` → `status=healthy`, `started_at=2026-03-28T03:52:10.362041+09:00`, `configured_max_positions=4`, `position_count=0`
+- Rollback: re-sync the prior known-good `src/kindshot/{config.py,guardrails.py,pipeline.py,entry_filter_analysis.py}` plus `scripts/entry_filter_analysis.py` to `/opt/kindshot`, reinstall with the remote venv, and restart `kindshot`
+- Result: 성공
+- Notes: 재시작 직후 첫 `/health` 호출은 포트 warm-up 전에 `connection refused` 였지만, 3초 후 재시도에서 정상 `healthy` 로 수렴
+
+---
+
 ### 2026-03-28 03:38 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)

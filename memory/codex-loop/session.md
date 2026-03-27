@@ -3,38 +3,40 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `Exit Strategy Optimization`
-- Focus: the requested exit-strategy upgrade was implemented and deployed: bad-news immediate exits, support-breach exits, and target-hit 50% partial take profit with trailing remainder.
-- Active hypothesis: if the new multi-trigger exit path is now live on `kindshot-server`, then the paper runtime should stay healthy after restart while being ready to emit `news_exit`, `correction_exit`, `support_breach`, and corrected `partial_take_profit` / trailing behavior on the next market session.
-- Blocker: it is `2026-03-28` (Saturday, KST) and the server is still in VTS quote mode, so same-session live market validation of the new exit reasons is not possible yet.
+- Phase: `Entry Strategy Optimization`
+- Focus: the requested entry-filter upgrade was implemented and deployed: stale-entry blocking, aggregate orderbook imbalance filtering, and stronger liquidity / prior-volume skips.
+- Active hypothesis: if the new entry-quality guardrails are now live on `kindshot-server`, then the paper runtime should reject stale and thin BUY setups before execution while keeping the service healthy after restart.
+- Blocker: it is `2026-03-28` (Saturday, KST) and the server is still in VTS quote mode, so same-session live market validation of the new BUY filter reasons is not possible yet.
 
 ## Environment
 
 - Host: local workspace
 - Runtime target: AWS Lightsail `kindshot-server` (`/opt/kindshot`, paper mode)
 - Validation status:
-  - local `python3 -m compileall src tests` passed
-  - local targeted pytest passed: `130 passed, 1 skipped`
-  - local full pytest passed: `981 passed, 1 skipped, 1 warning`
+  - local `python3 -m compileall src scripts tests` passed
+  - local targeted pytest passed: `213 passed`
+  - local full pytest passed: `988 passed, 1 skipped, 1 warning`
   - diagnostics returned `0 errors`, `0 warnings`
   - remote `systemctl is-active kindshot` returned `active`
-  - remote `systemctl status kindshot --no-pager -l` showed active since `2026-03-28 03:37:57 KST`
+  - remote `systemctl is-active kindshot-dashboard` returned `active`
+  - remote `systemctl status kindshot --no-pager -l` showed active since `2026-03-28 03:52:08 KST`
   - remote `curl -fsS http://127.0.0.1:8080/health` returned `status=healthy`, `configured_max_positions=4`, `position_count=0`
   - remote journal on `2026-03-28` showed `kindshot 0.1.3 starting`, `RecentPatternProfile loaded`, and `Health server started on 127.0.0.1:8080`
-  - remote deploy used `rsync` to refresh `config.py`, `context_card.py`, `models.py`, `pipeline.py`, and `price.py`, then a follow-up `rsync` refreshed `config.py`, `context_card.py`, and `price.py` for the config/support truthfulness fix
+  - local analysis artifact `logs/daily_analysis/entry_filter_analysis_20260328.{txt,json}` recorded the `60s` stale-entry cutoff and `0.15` participation threshold evidence
+  - remote deploy used clean-export `rsync` to refresh `config.py`, `guardrails.py`, `pipeline.py`, `entry_filter_analysis.py`, and `scripts/entry_filter_analysis.py`
 
 ## Last Completed Step
 
-- Implemented, tested, committed (`8492d13`, `f1f583d`), pushed, and deployed the exit-strategy upgrade in Ralph mode, then re-verified remote service health after restart.
+- Implemented, tested, committed (`3422df4`, `95c740d`), pushed, and deployed the entry-filter upgrade in Ralph mode, then re-verified remote service health after restart.
 
 ## Next Intended Step
 
-- On the next Korean market session, confirm that fresh runtime events can actually produce `news_exit`, `correction_exit`, `support_breach`, and the corrected `partial_take_profit` flow under market data rather than only test fixtures.
-- Decide whether real quote keys should be restored on `kindshot-server` so support/trailing/T5M behavior can be validated without VTS stale-price constraints.
-- If exit behavior is too sensitive or too loose in practice, tune the support buffer or support anchor selection with a single narrow follow-up hypothesis.
+- On the next Korean market session, confirm that fresh runtime events actually emit the new BUY filter reasons (`ENTRY_DELAY_TOO_LATE`, `ORDERBOOK_IMBALANCE`, `INTRADAY_VALUE_TOO_THIN`, `PRIOR_VOLUME_TOO_THIN`) under market data rather than only offline evidence.
+- Decide whether real quote keys should be restored on `kindshot-server` so orderbook-depth and prior-volume behavior can be validated without VTS stale-price constraints.
+- If the new BUY filter stack is too strict or too loose in practice, tune only one narrow threshold next: delay cutoff, orderbook ratio floor, or participation floor.
 
 ## Notes
 
-- `2026-03-28` is a Saturday in KST, so this run could validate deployment health and test coverage but not live same-session market exits.
+- `2026-03-28` is a Saturday in KST, so this run could validate deployment health, offline entry-filter evidence, and test coverage but not live same-session BUY filtering.
 - This run did not alter `deploy/`, secrets, `.env`, or live-order enablement.
-- Partial take profit remains paper-safe; true live partial sells were intentionally left out because the sell executor has no fraction-aware interface.
+- The first remote `/health` probe failed during startup warm-up, but the service converged to `healthy` within a few seconds without further code changes.
