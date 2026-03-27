@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import os
 from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import timedelta
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from kindshot.collector import (
+    BackfillResult,
+    CollectorState,
     _format_yyyymmdd,
     _parse_yyyymmdd,
     compute_finalized_date,
@@ -31,6 +34,12 @@ class AutoBackfillPlan:
 
 def default_lock_path(config: Config) -> Path:
     return config.data_dir / "collector" / "backfill_auto.lock"
+
+
+def _auto_report_output_path(config: Config, explicit_path: str = "") -> Path:
+    if explicit_path:
+        return Path(explicit_path)
+    return config.collector_backfill_auto_report_path
 
 
 def compute_auto_backfill_plan(
@@ -80,6 +89,117 @@ def format_auto_noop_message(plan: AutoBackfillPlan | None, *, cursor_date: str,
             f"planned={'-' if plan is None else f'{plan.requested_from}->{plan.requested_to}'}",
         ]
     )
+
+
+def build_auto_backfill_round_report(round_number: int, plan: AutoBackfillPlan, result: BackfillResult) -> dict[str, Any]:
+    return {
+        "round": round_number,
+        "requested_from": plan.requested_from,
+        "requested_to": plan.requested_to,
+        "finalized_date": result.finalized_date,
+        "processed_dates": list(result.processed_dates),
+        "completed_dates": list(result.completed_dates),
+        "partial_dates": list(result.partial_dates),
+        "skipped_dates": list(result.skipped_dates),
+        "news_counts": dict(result.news_counts),
+        "classification_counts": dict(result.classification_counts),
+        "price_counts": dict(result.price_counts),
+        "index_counts": dict(result.index_counts),
+    }
+
+
+def build_auto_backfill_report(
+    *,
+    max_days: int,
+    max_rounds: int,
+    stop_hour: int,
+    oldest_date: str,
+    notify_noop: bool,
+    stop_reason: str,
+    rounds: list[dict[str, Any]],
+    state: CollectorState,
+    status_report: dict[str, Any],
+    latest_backfill_report_path: str = "",
+    error: Exception | None = None,
+) -> dict[str, Any]:
+    total_processed_dates = sum(len(row.get("processed_dates", [])) for row in rounds)
+    total_completed_dates = sum(len(row.get("completed_dates", [])) for row in rounds)
+    total_partial_dates = sum(len(row.get("partial_dates", [])) for row in rounds)
+    total_skipped_dates = sum(len(row.get("skipped_dates", [])) for row in rounds)
+    status = "success"
+    if error is not None:
+        status = "error"
+    elif not rounds and stop_reason == "backfill_floor_reached":
+        status = "noop"
+    elif stop_reason in {"stop_hour_reached", "max_rounds_reached"}:
+        status = "stopped"
+    return {
+        "source": "collect_backfill_auto",
+        "generated_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
+        "request": {
+            "max_days": max_days,
+            "max_rounds": max_rounds,
+            "stop_hour_kst": stop_hour,
+            "oldest_date": oldest_date,
+            "notify_noop": notify_noop,
+        },
+        "result": {
+            "status": status,
+            "stop_reason": stop_reason,
+            "round_count": len(rounds),
+            "total_processed_dates": total_processed_dates,
+            "total_completed_dates": total_completed_dates,
+            "total_partial_dates": total_partial_dates,
+            "total_skipped_dates": total_skipped_dates,
+            "latest_backfill_report_path": latest_backfill_report_path,
+        },
+        "rounds": rounds,
+        "collector_state": asdict(state),
+        "collector_status": status_report,
+        "error": (
+            {
+                "type": type(error).__name__,
+                "message": str(error),
+            }
+            if error is not None
+            else None
+        ),
+    }
+
+
+def write_auto_backfill_report(
+    config: Config,
+    *,
+    max_days: int,
+    max_rounds: int,
+    stop_hour: int,
+    oldest_date: str,
+    notify_noop: bool,
+    stop_reason: str,
+    rounds: list[dict[str, Any]],
+    state: CollectorState,
+    status_report: dict[str, Any],
+    latest_backfill_report_path: str = "",
+    error: Exception | None = None,
+    output_path: str = "",
+) -> tuple[dict[str, Any], Path]:
+    report = build_auto_backfill_report(
+        max_days=max_days,
+        max_rounds=max_rounds,
+        stop_hour=stop_hour,
+        oldest_date=oldest_date,
+        notify_noop=notify_noop,
+        stop_reason=stop_reason,
+        rounds=rounds,
+        state=state,
+        status_report=status_report,
+        latest_backfill_report_path=latest_backfill_report_path,
+        error=error,
+    )
+    path = _auto_report_output_path(config, output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return report, path
 
 
 @contextmanager

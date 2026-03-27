@@ -153,6 +153,7 @@ class Config:
     collector_log_path: Path = field(default_factory=lambda: Path(_env("COLLECTOR_LOG_PATH", "data/collector/collection_log.jsonl")))
     collector_state_path: Path = field(default_factory=lambda: Path(_env("COLLECTOR_STATE_PATH", "data/collector_state.json")))
     collector_backfill_report_path: Path = field(default_factory=lambda: Path(_env("COLLECTOR_BACKFILL_REPORT_PATH", "data/collector/backfill/latest.json")))
+    collector_backfill_auto_report_path: Path = field(default_factory=lambda: Path(_env("COLLECTOR_BACKFILL_AUTO_REPORT_PATH", "data/collector/backfill/auto_latest.json")))
     runtime_price_snapshots_dir: Path = field(default_factory=lambda: Path(_env("RUNTIME_PRICE_SNAPSHOTS_DIR", "data/runtime/price_snapshots")))
     runtime_market_context_dir: Path = field(default_factory=lambda: Path(_env("RUNTIME_MARKET_CONTEXT_DIR", "data/runtime/market_context")))
     runtime_context_cards_dir: Path = field(default_factory=lambda: Path(_env("RUNTIME_CONTEXT_CARDS_DIR", "data/runtime/context_cards")))

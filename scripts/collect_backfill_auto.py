@@ -13,13 +13,21 @@ import os
 import sys
 from datetime import datetime, timezone, timedelta
 
-from kindshot.backfill_auto import backfill_lock, compute_auto_backfill_plan, default_lock_path, format_auto_noop_message
+from kindshot.backfill_auto import (
+    backfill_lock,
+    build_auto_backfill_round_report,
+    compute_auto_backfill_plan,
+    default_lock_path,
+    format_auto_noop_message,
+    write_auto_backfill_report,
+)
 from kindshot.collector import (
     compute_finalized_date,
     load_collection_log_summary,
     load_collection_status_report,
     load_collector_state,
     run_backfill,
+    write_collection_backfill_report,
 )
 from kindshot.config import load_config
 from kindshot.telegram_ops import format_backfill_notification, send_telegram_message
@@ -62,23 +70,29 @@ async def _main() -> int:
 
     round_num = 0
     total_processed = 0
+    rounds: list[dict[str, object]] = []
+    stop_reason = "caught_up"
+    latest_backfill_report_path = ""
 
     try:
         with backfill_lock(default_lock_path(config)):
             while True:
                 # 시간 제한 체크 (새벽 작업 → 오전 뉴스 시작 전 중단)
                 if _past_stop_hour(args.stop_hour):
+                    stop_reason = "stop_hour_reached"
                     print(f"[info] KST {args.stop_hour}시 이후, 백필 중단 (rounds={round_num}, processed={total_processed})")
                     break
 
                 # 라운드 제한 체크
                 if args.max_rounds > 0 and round_num >= args.max_rounds:
+                    stop_reason = "max_rounds_reached"
                     print(f"[info] max rounds ({args.max_rounds}) reached, stopping")
                     break
 
                 plan = compute_auto_backfill_plan(config, max_days=args.max_days, oldest_date=args.oldest_date)
                 if plan is None:
                     if round_num == 0:
+                        stop_reason = "backfill_floor_reached"
                         state = load_collector_state(config.collector_state_path)
                         finalized_date = compute_finalized_date(
                             cutoff_hour=config.finalize_cutoff_hour_kst,
@@ -94,6 +108,7 @@ async def _main() -> int:
                         if args.notify_noop:
                             _send_if_configured(noop_message, notify_required=False)
                     else:
+                        stop_reason = "caught_up"
                         print(f"[info] backfill caught up after {round_num} rounds, {total_processed} dates total")
                     break
 
@@ -106,15 +121,39 @@ async def _main() -> int:
                     to_date=plan.requested_to,
                 )
                 total_processed += len(result.processed_dates) if result else 0
+                rounds.append(build_auto_backfill_round_report(round_num, plan, result))
+                _, latest_report_path = write_collection_backfill_report(
+                    config,
+                    from_date=plan.requested_from,
+                    to_date=plan.requested_to,
+                    result=result,
+                )
+                latest_backfill_report_path = str(latest_report_path)
 
     except FileExistsError:
         print(f"Kindshot Backfill AUTO LOCKED\nlock={default_lock_path(config)}", file=sys.stderr)
         return 4
-    except Exception:
+    except Exception as exc:
         summary = load_collection_log_summary(config.collector_log_path)
         state = load_collector_state(config.collector_state_path)
         status_report = load_collection_status_report(config, backlog_limit=5, state=state, summary=summary)
-        message = format_backfill_notification(None, state, summary, error=sys.exc_info()[1], status_report=status_report)
+        _, latest_report_path = write_collection_backfill_report(config, error=exc, state=state, summary=summary)
+        latest_backfill_report_path = str(latest_report_path)
+        write_auto_backfill_report(
+            config,
+            max_days=args.max_days,
+            max_rounds=args.max_rounds,
+            stop_hour=args.stop_hour,
+            oldest_date=args.oldest_date,
+            notify_noop=args.notify_noop,
+            stop_reason="error",
+            rounds=rounds,
+            state=state,
+            status_report=status_report,
+            latest_backfill_report_path=latest_backfill_report_path,
+            error=exc,
+        )
+        message = format_backfill_notification(None, state, summary, error=exc, status_report=status_report)
         print(message)
         _send_if_configured(message, notify_required=False)
         raise
@@ -123,6 +162,19 @@ async def _main() -> int:
     summary = load_collection_log_summary(config.collector_log_path)
     state = load_collector_state(config.collector_state_path)
     status_report = load_collection_status_report(config, backlog_limit=5, state=state, summary=summary)
+    write_auto_backfill_report(
+        config,
+        max_days=args.max_days,
+        max_rounds=args.max_rounds,
+        stop_hour=args.stop_hour,
+        oldest_date=args.oldest_date,
+        notify_noop=args.notify_noop,
+        stop_reason=stop_reason,
+        rounds=rounds,
+        state=state,
+        status_report=status_report,
+        latest_backfill_report_path=latest_backfill_report_path,
+    )
     message = format_backfill_notification(None, state, summary, status_report=status_report)
     if total_processed > 0:
         message = f"Kindshot Backfill AUTO DONE\nrounds={round_num} total_processed={total_processed}\n{message}"
