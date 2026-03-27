@@ -28,6 +28,43 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 01:33 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `839ffdc`
+- Deployer: Codex manual SSH + `rsync` (`src/`, `tests/`) + remote venv reinstall
+- Summary:
+  1. **recent win-rate based daily loss tightening** — `GuardrailState` now persists same-day closed-trade outcomes and `resolve_daily_loss_budget()` tightens the effective floor when recent win rate deteriorates, without expanding above the configured base limit
+  2. **runtime-effective sector concentration** — KIS quote context now carries sector metadata (`bstp_kor_isnm`), pipeline BUY bookkeeping records sector state, and SELL bookkeeping recovers persisted ticker→sector mappings so sector counts survive final close and restarts
+  3. **risk observability** — `/health.guardrail_state` now exposes recent closed-trade count, recent win rate, recent win-rate multiplier, sector positions, and the configured consecutive-loss halt threshold
+- Validation:
+  - local `python3 -m compileall src scripts tests dashboard`
+  - local `.venv/bin/python -m pytest tests/test_guardrails.py tests/test_pipeline.py tests/test_health.py tests/test_config.py -q` → `213 passed, 1 warning`
+  - local `.venv/bin/python -m pytest -q` → `971 passed, 1 skipped, 1 warning`
+  - local affected-file diagnostics → `0 errors`, `0 warnings`
+  - remote `python3 -m compileall src/kindshot scripts tests dashboard`
+  - remote `.venv/bin/python -m pip install . --quiet`
+  - remote `sudo systemctl restart kindshot kindshot-dashboard`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote health summary returned:
+    - `status: "healthy"`
+    - `guardrail_state.dynamic_daily_loss_floor_won: -3000000.0`
+    - `guardrail_state.recent_closed_trades: 0`
+    - `guardrail_state.recent_win_rate_multiplier: 1.0`
+    - `guardrail_state.consecutive_loss_halt_threshold: 3`
+    - `guardrail_state.sector_positions: {}`
+  - remote `curl -I http://127.0.0.1:8501` → `HTTP/1.1 200 OK`
+  - remote journal after restart showed:
+    - `kindshot 0.1.3 starting`
+    - `RecentPatternProfile loaded: dates=20260319,20260320,20260327 trades=14 boost=1 loss=2`
+    - `Health server started on 127.0.0.1:8080`
+- Rollback: re-sync the prior known-good tree to `/opt/kindshot`, reinstall with the remote venv, and restart `kindshot` + `kindshot-dashboard`
+- Result: 성공
+- Notes: first remote install attempt used `python -m pip` and failed because `python` was not on the service shell `PATH`; retrying with `.venv/bin/python -m pip` succeeded without further changes
+
+---
+
 ### 2026-03-28 01:08 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)

@@ -15,10 +15,10 @@
 
 ## Current Focus
 
-- Track: User-Directed Pattern Profitability Profiles
-- Phase: v70 Recent Pattern Profile Alignment
+- Track: User-Directed Risk Management
+- Phase: Risk Management v2
 - Status: Completed (user override)
-- Reason: The user explicitly redirected the loop to extract recent profitable/losing trade patterns, wire them into runtime confidence/guardrails, and deploy the result. The runtime feature already existed on `main`, so this slice aligned the runtime profile builder with `backtest_analysis`, widened the default recent window to seven log days, pushed `c0c42e2`, and deployed it to `kindshot-server`.
+- Reason: The user explicitly redirected the loop to strengthen runtime drawdown control after the v70 deploy. This slice made recent win-rate based daily-loss tightening restart-safe, made sector concentration runtime-effective by wiring KIS sector metadata into buy/sell bookkeeping, pushed `839ffdc`, and deployed it to `kindshot-server`.
 
 ## Phases
 
@@ -92,8 +92,8 @@
 
 ## Next Run Candidates
 
-1. Observe one or more live paper sessions to confirm whether the deployed recent-pattern profile remains loss-only (`boost=0`, `loss=2`) or starts emitting a stable winner cohort.
-2. Decide whether `recent_pattern_profit_min_*` thresholds or `recent_pattern_lookback_days` should be widened if the runtime keeps missing conservative boost opportunities.
+1. Observe the next paper session to confirm the recent win-rate multiplier activates after same-day closed trades and does not mis-tighten on partial/noise cases.
+2. Verify on real paper BUY attempts that KIS `bstp_kor_isnm` is stable enough for sector concentration; add a fallback only if field quality is insufficient.
 3. Clean or re-clone the remote `/opt/kindshot/.git` metadata so future deployments can rely on git provenance instead of clean-export hash checks.
 
 ## Deferred
