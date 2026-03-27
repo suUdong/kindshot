@@ -825,6 +825,12 @@ async def execute_bucket_path(
             logger.info("News category adj [%s]: %d → %d (category=%s)",
                         raw.ticker, before, decision.confidence, news_cat)
 
+        # v72: POS_WEAK bucket 페널티 — 실전 0%승률, -2.28% (전량 손실)
+        if bucket == Bucket.POS_WEAK:
+            before = decision.confidence
+            decision.confidence = max(0, decision.confidence - 8)
+            logger.info("POS_WEAK penalty [%s]: %d → %d", raw.ticker, before, decision.confidence)
+
         if news_signal is not None and news_signal.impact_score is not None:
             before = decision.confidence
             decision.confidence = apply_impact_score_confidence_adjustment(

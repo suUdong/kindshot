@@ -1425,20 +1425,20 @@ def test_time_premarket_after_0830_no_boost():
 
 
 def test_time_midday_penalty():
-    """v66: 11시 +2 부스트 (승률 100%), 12시 -3 (비유동)."""
+    """v71: midday PF=2.25 부스트. 11시 +3, 12시 +2."""
     from kindshot.tz import KST
     t1130 = datetime(2026, 3, 27, 11, 30, tzinfo=KST)
     t1200 = datetime(2026, 3, 27, 12, 0, tzinfo=KST)
-    assert apply_time_session_confidence_adjustment(80, t1130) == 82  # v66: 11시대 부스트
-    assert apply_time_session_confidence_adjustment(80, t1200) == 77  # 12시대 유지
+    assert apply_time_session_confidence_adjustment(80, t1130) == 83  # v71: 11시대 +3
+    assert apply_time_session_confidence_adjustment(80, t1200) == 82  # v71: 12시대 +2
 
 
 def test_time_normal_no_adjustment():
-    """일반 시간대 → 조정 없음."""
+    """v72: 10시대 -2 페널티, 14시 조정 없음."""
     from kindshot.tz import KST
     t1000 = datetime(2026, 3, 27, 10, 0, tzinfo=KST)
     t1400 = datetime(2026, 3, 27, 14, 0, tzinfo=KST)
-    assert apply_time_session_confidence_adjustment(80, t1000) == 80
+    assert apply_time_session_confidence_adjustment(80, t1000) == 78  # v72: 10시대 -2
     assert apply_time_session_confidence_adjustment(80, t1400) == 80
 
 

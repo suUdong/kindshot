@@ -161,14 +161,15 @@ class Config:
     # Trailing stop + 30분 룰
     trailing_stop_enabled: bool = field(default_factory=lambda: _env_bool("TRAILING_STOP_ENABLED", True))
     trailing_stop_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_PCT", 1.0))  # v70: 0.8→1.0% (3/27: 조기 trailing→종가 수익 유실 방지)
-    trailing_stop_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_ACTIVATION_PCT", 0.5))  # v65: 0.3→0.5% 이상 수익 시 trailing 활성화 (노이즈 필터링)
+    trailing_stop_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_ACTIVATION_PCT", 0.3))  # v71: 0.5→0.3% (효성중공업 peak +0.51%에서 trailing 미활성→-1.1% 하락 방지)
     # 시간대별 trailing stop 폭 (진입 후 경과 시간 기준) — v65: 전체 완화
-    trailing_stop_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_EARLY_PCT", 0.5))  # 0~5분: v65 0.3→0.5 (초기 노이즈 허용)
+    trailing_stop_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_EARLY_PCT", 0.4))  # v71: 0.5→0.4 (activation 0.3%와 조합, 초기 수익 보호 강화)
     trailing_stop_mid_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_MID_PCT", 0.8))  # 5~30분: v65 0.5→0.8 (추세 유지)
     trailing_stop_late_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_LATE_PCT", 1.0))  # 30분+: v65 0.7→1.0 (장기 홀드 여유)
     max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 20))  # v70: 15→20분 (3/27: TIMEOUT→종가 +0.35% 개선, 18건 중 10건 종가가 높음)
     # t+5m 체크포인트 청산: 5분 경과 시 손실이면 즉시 청산, 수익이면 타이트 trailing
     t5m_loss_exit_enabled: bool = field(default_factory=lambda: _env_bool("T5M_LOSS_EXIT_ENABLED", True))
+    t5m_loss_exit_threshold_pct: float = field(default_factory=lambda: _env_float("T5M_LOSS_EXIT_THRESHOLD_PCT", -0.3))  # v71: 0→-0.3% (금호건설 +2.2% peak→0% exit 방지, 미미한 손실은 홀드)
     t5m_profit_trailing_pct: float = field(default_factory=lambda: _env_float("T5M_PROFIT_TRAILING_PCT", 0.5))  # v65: 0.2→0.5% t+5m 이후 수익 포지션 trailing (기존 너무 타이트)
     partial_take_profit_enabled: bool = field(default_factory=lambda: _env_bool("PARTIAL_TAKE_PROFIT_ENABLED", True))
     partial_take_profit_target_ratio: float = field(default_factory=lambda: _env_float("PARTIAL_TAKE_PROFIT_TARGET_RATIO", 1.0))
@@ -219,7 +220,7 @@ class Config:
     # 마이크로 라이브: 1건당 주문 금액 상한 (안전장치)
     micro_live_max_order_won: float = field(default_factory=lambda: _env_float("MICRO_LIVE_MAX_ORDER_WON", 1_000_000))
     # 시간대별 confidence 문턱
-    opening_min_confidence: int = field(default_factory=lambda: _env_int("OPENING_MIN_CONFIDENCE", 82))  # v66: 80→82 (09시대 승률 0%, 높은 확신만 진입)
+    opening_min_confidence: int = field(default_factory=lambda: _env_int("OPENING_MIN_CONFIDENCE", 85))  # v71: 82→85 (09시대 전체 손실 87%, PF 0.08 — 높은 확신만 진입)
     afternoon_min_confidence: int = field(default_factory=lambda: _env_int("AFTERNOON_MIN_CONFIDENCE", 80))  # 13:00-14:30 BUY 최소 confidence (오후 승률 저조)
     closing_min_confidence: int = field(default_factory=lambda: _env_int("CLOSING_MIN_CONFIDENCE", 85))  # 14:30-15:00 BUY 최소 confidence
     fast_profile_hold_minutes: int = field(default_factory=lambda: _env_int("FAST_PROFILE_HOLD_MINUTES", 20))  # fast-decay hold profile 기준값 (수주/공급계약)
@@ -313,8 +314,8 @@ class Config:
     recent_pattern_profit_min_total_pnl_pct: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_PROFIT_MIN_TOTAL_PNL_PCT", 0.15))
     recent_pattern_loss_max_win_rate: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_LOSS_MAX_WIN_RATE", 0.25))
     recent_pattern_loss_max_total_pnl_pct: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_LOSS_MAX_TOTAL_PNL_PCT", -0.5))
-    recent_pattern_max_profit_patterns: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MAX_PROFIT_PATTERNS", 2))
-    recent_pattern_max_loss_patterns: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MAX_LOSS_PATTERNS", 2))
+    recent_pattern_max_profit_patterns: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MAX_PROFIT_PATTERNS", 5))  # v72: 2→5 (수익 패턴 더 많이 캡처)
+    recent_pattern_max_loss_patterns: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MAX_LOSS_PATTERNS", 5))  # v72: 2→5 (손실 패턴 더 많이 캡처)
 
     # --- Pipeline ---
     pipeline_workers: int = field(default_factory=lambda: _env_int("PIPELINE_WORKERS", 4))

@@ -67,14 +67,14 @@ def classify_news_type(headline: str, keyword_hits: list[str] | None = None) -> 
 #   - product_technology: 개발/출시 — 모멘텀 약함
 #   - policy_funding: 정책/MOU — 모멘텀 약함, 단기 효과 미미
 CATEGORY_CONFIDENCE_ADJUSTMENTS: dict[str, int] = {
-    "shareholder_return": 3,     # 자사주소각/공개매수: 강력한 주가 촉매
-    "clinical_regulatory": 2,    # FDA/임상: 확실한 촉매 but 변동성
-    "mna": 1,                    # M&A: 강력하나 루머 혼재
-    "contract": 0,               # 수주: 베이스라인 (가장 빈번)
-    "earnings_turnaround": -1,   # 실적: 이미 반영 가능성
+    "shareholder_return": 2,     # v71: 3→2 (자사주매입 -0.528%, 실전 데이터 반영)
+    "clinical_regulatory": 0,    # v71: 2→0 (실전 25%승률, -0.646% — 대형 바이오 손실)
+    "mna": 5,                    # v71: 1→5 (실전 100%승률, 유일한 수익원 — 강력 부스트)
+    "contract": -2,              # v72: -5→-2 (금호건설 공급계약 TP+2.2% — 공시 자체는 유효, 시간대 가드레일이 09시 손실 차단)
+    "earnings_turnaround": -1,   # v72: -3→-1 (삼성증권 close+0.94%, 흑자전환 중립 — 과도한 페널티 완화)
     "product_technology": -2,    # 개발/출시: 단기 모멘텀 약함
     "policy_funding": -2,        # 정책/MOU: 단기 효과 미미
-    "other": 0,                  # 미분류: 조정 없음
+    "other": 2,                  # v71: 0→2 (실전 other_positive 100%승률 +0.314%)
 }
 
 

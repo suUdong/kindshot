@@ -45,10 +45,13 @@ class TestClassifyNewsType:
 
 class TestCategoryConfidenceAdjustment:
     def test_shareholder_return_boost(self):
-        assert get_category_confidence_adjustment("shareholder_return") == 3
+        assert get_category_confidence_adjustment("shareholder_return") == 2  # v71: 3→2
 
-    def test_contract_neutral(self):
-        assert get_category_confidence_adjustment("contract") == 0
+    def test_contract_penalty(self):
+        assert get_category_confidence_adjustment("contract") == -2  # v72: -5→-2
+
+    def test_mna_strong_boost(self):
+        assert get_category_confidence_adjustment("mna") == 5  # v71: 1→5
 
     def test_policy_funding_penalty(self):
         assert get_category_confidence_adjustment("policy_funding") == -2
@@ -56,5 +59,5 @@ class TestCategoryConfidenceAdjustment:
     def test_unknown_category(self):
         assert get_category_confidence_adjustment("nonexistent") == 0
 
-    def test_other_neutral(self):
-        assert get_category_confidence_adjustment("other") == 0
+    def test_other_boost(self):
+        assert get_category_confidence_adjustment("other") == 2  # v71: 0→2

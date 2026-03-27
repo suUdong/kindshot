@@ -836,7 +836,7 @@ async def test_recent_pattern_profile_boosts_matching_buy_confidence(tmp_path):
 
     decision_records = [r for r in records if r.get("type") == "decision"]
     assert len(decision_records) == 1
-    assert decision_records[0]["confidence"] == 92
+    assert decision_records[0]["confidence"] == 91  # v71: clinical 0(was+2), 11시 +3(was+2) → net -1
 
 
 async def test_recent_pattern_profile_blocks_matching_loss_cohort(tmp_path):

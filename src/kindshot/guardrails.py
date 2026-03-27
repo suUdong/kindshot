@@ -889,12 +889,20 @@ def apply_time_session_confidence_adjustment(confidence: int, decision_time_kst:
     # 08:30~09:00: 장 직전 — 변동성 커짐, 부스트 없음
     if h == 8 and m >= 30:
         return confidence
-    # v66: 11시대 승률 100% (3건/3건) — 부스트 +2 (기존 -3에서 반전)
-    if h == 11:
-        return min(confidence + 2, 100)
-    # 비유동 시간대 (12:00~13:00): 승률 저조 — v66: 11시 제외
-    if h == 12:
+    # v71: 09시대 open = 전체 손실 87%, PF 0.08 — 페널티 -3
+    if h == 9:
         return max(0, confidence - 3)
+    # v72: 10시대 mid_morning = 0%승률, avg -0.21% — 페널티 -2
+    if h == 10:
+        return max(0, confidence - 2)
+    # v71: midday(11~13시) PF=2.25, 유일한 수익 시간대 — 부스트 +3/+2/+2
+    if h == 11:
+        return min(confidence + 3, 100)
+    if h == 12:
+        return min(confidence + 2, 100)
+    # v72: 13시 100%승률 (1건, avg +0.20%) — 부스트 +2
+    if h == 13:
+        return min(confidence + 2, 100)
     return confidence
 
 

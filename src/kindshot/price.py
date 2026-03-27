@@ -564,8 +564,8 @@ class SnapshotScheduler:
 
             is_past_5m = elapsed_s >= 300
             if self._config.t5m_loss_exit_enabled and is_past_5m and snap.event_id not in self._t5m_profitable:
-                # 첫 번째 5분+ 스냅샷에서 체크포인트 판정
-                self._t5m_profitable[snap.event_id] = ret_pct > 0
+                # v71: threshold 도입 — 미미한 손실(-0.3% 이내)은 수익으로 간주하여 홀드
+                self._t5m_profitable[snap.event_id] = ret_pct > self._config.t5m_loss_exit_threshold_pct
 
             remaining_position_pct = self._remaining_position_pct.get(snap.event_id, 1.0)
             partial_target_pct = effective_tp * self._config.partial_take_profit_target_ratio if tp_active else 0.0
@@ -647,7 +647,7 @@ class SnapshotScheduler:
                 and not self._using_vts  # VTS 스테일 가격에서는 T5M 비활성화
                 and is_past_5m
                 and self._t5m_profitable.get(snap.event_id) is False
-                and ret_pct <= 0
+                and ret_pct <= self._config.t5m_loss_exit_threshold_pct
                 and evt_hold != 0  # EOD hold 제외
             ):
                 # t+5m 체크포인트: 손실 포지션 즉시 청산

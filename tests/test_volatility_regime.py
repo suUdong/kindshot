@@ -59,19 +59,22 @@ class TestApplyVolatilityConfidenceAdjustment:
 
 class TestApplyNewsCategoryConfidenceAdjustment:
     def test_shareholder_boost(self):
-        assert apply_news_category_confidence_adjustment(80, "shareholder_return") == 83
+        assert apply_news_category_confidence_adjustment(80, "shareholder_return") == 82  # v71: +2
 
-    def test_contract_neutral(self):
-        assert apply_news_category_confidence_adjustment(80, "contract") == 80
+    def test_contract_penalty(self):
+        assert apply_news_category_confidence_adjustment(80, "contract") == 78  # v72: -2
 
     def test_policy_penalty(self):
         assert apply_news_category_confidence_adjustment(80, "policy_funding") == 78
 
-    def test_other_neutral(self):
-        assert apply_news_category_confidence_adjustment(80, "other") == 80
+    def test_other_boost(self):
+        assert apply_news_category_confidence_adjustment(80, "other") == 82  # v71: +2
 
-    def test_clinical_boost(self):
-        assert apply_news_category_confidence_adjustment(80, "clinical_regulatory") == 82
+    def test_clinical_neutral(self):
+        assert apply_news_category_confidence_adjustment(80, "clinical_regulatory") == 80  # v71: 0
+
+    def test_mna_strong_boost(self):
+        assert apply_news_category_confidence_adjustment(80, "mna") == 85  # v71: +5
 
     def test_cap_at_100(self):
         assert apply_news_category_confidence_adjustment(99, "shareholder_return") == 100

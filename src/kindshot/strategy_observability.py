@@ -29,8 +29,8 @@ class StrategyReportConfig:
     paper_take_profit_pct: float = 2.0   # v65: 1.0→2.0
     paper_stop_loss_pct: float = -1.5
     trailing_stop_enabled: bool = True
-    trailing_stop_activation_pct: float = 0.5  # v65: 0.3→0.5
-    trailing_stop_early_pct: float = 0.5  # v65: 0.3→0.5
+    trailing_stop_activation_pct: float = 0.3  # v71: 0.5→0.3
+    trailing_stop_early_pct: float = 0.4  # v71: 0.5→0.4
     trailing_stop_mid_pct: float = 0.8   # v65: 0.5→0.8
     trailing_stop_late_pct: float = 1.0  # v65: 0.7→1.0
     max_hold_minutes: int = field(default_factory=lambda: Config().max_hold_minutes)
