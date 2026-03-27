@@ -171,6 +171,28 @@ with tab1:
         else:
             st.info("Confidence 데이터 없음")
 
+        # 파이프라인 퍼널
+        st.subheader("파이프라인 퍼널")
+        llm_reached = len(events_df[events_df["decision_action"].notna()])
+        funnel_data = pd.DataFrame({
+            "단계": ["전체 이벤트", "중복 제거 통과", "버킷 필터 통과", "퀀트 필터 통과", "LLM 판단", "BUY 결정"],
+            "건수": [
+                total,
+                total - dup_skip,
+                total - dup_skip - bucket_skip,
+                total - dup_skip - bucket_skip - quant_skip,
+                llm_reached,
+                buy_count,
+            ],
+        })
+        fig_funnel = go.Figure(go.Funnel(
+            y=funnel_data["단계"], x=funnel_data["건수"],
+            textinfo="value+percent initial",
+            marker=dict(color=["#3498db", "#2980b9", "#1abc9c", "#16a085", "#f39c12", "#2ecc71"]),
+        ))
+        fig_funnel.update_layout(height=350)
+        st.plotly_chart(fig_funnel, use_container_width=True)
+
         # Skip 사유 분석
         st.subheader("Skip 사유 분석")
         skip_events = events_df[events_df["skip_stage"].notna()]
@@ -330,6 +352,49 @@ with tab2:
                     size_stats["평균수익률(%)"] = size_stats["평균수익률(%)"].round(2)
                     size_stats["승률(%)"] = size_stats["승률(%)"].round(1)
                     st.dataframe(size_stats, use_container_width=True, hide_index=True)
+
+            # 키워드별 성과 분석
+            if "keyword_hits" in events_df.columns:
+                buy_kw = events_df[events_df["decision_action"] == "BUY"].copy()
+                buy_kw = buy_kw.merge(
+                    valid_pnl[["event_id", "final_ret_pct"]], on="event_id", how="inner"
+                )
+                kw_rows = []
+                for _, row in buy_kw.iterrows():
+                    hits = row.get("keyword_hits")
+                    if isinstance(hits, list):
+                        for kw in hits:
+                            kw_rows.append({"keyword": kw, "ret": row["final_ret_pct"]})
+                if kw_rows:
+                    kw_df = pd.DataFrame(kw_rows)
+                    kw_stats = kw_df.groupby("keyword").agg(
+                        trades=("ret", "count"),
+                        avg_ret=("ret", "mean"),
+                        win_rate=("ret", lambda x: (x > 0).mean() * 100),
+                        total_ret=("ret", "sum"),
+                    ).reset_index().sort_values("total_ret", ascending=False)
+
+                    st.subheader("키워드별 성과")
+                    col_kw1, col_kw2 = st.columns(2)
+                    with col_kw1:
+                        top_kw = kw_stats.head(15)
+                        fig_kw = px.bar(
+                            top_kw, x="keyword", y="total_ret",
+                            color="avg_ret",
+                            color_continuous_scale=["#e74c3c", "#f39c12", "#2ecc71"],
+                            hover_data=["trades", "win_rate"],
+                            title="키워드별 총 수익률 (Top 15)",
+                            labels={"total_ret": "총 수익률 (%)", "keyword": "키워드"},
+                        )
+                        fig_kw.update_layout(height=400)
+                        st.plotly_chart(fig_kw, use_container_width=True)
+
+                    with col_kw2:
+                        kw_display = kw_stats.copy()
+                        kw_display.columns = ["키워드", "매매수", "평균수익률(%)", "승률(%)", "총수익률(%)"]
+                        for c in ["평균수익률(%)", "승률(%)", "총수익률(%)"]:
+                            kw_display[c] = kw_display[c].round(2)
+                        st.dataframe(kw_display, use_container_width=True, hide_index=True)
 
     # 멀티데이 성과 추이
     st.divider()
