@@ -15,15 +15,15 @@
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
   - `python3 -m compileall src/kindshot tests scripts` passed
-  - `.venv/bin/python -m pytest tests/test_headline_parser.py tests/test_bucket.py tests/test_decision.py tests/test_guardrails.py tests/test_pipeline.py -q` passed (`342 passed, 1 skipped`)
+  - `.venv/bin/python -m pytest tests/test_headline_parser.py tests/test_bucket.py tests/test_decision.py tests/test_guardrails.py tests/test_pipeline.py -q` passed (`347 passed`)
   - `.venv/bin/python -m pytest tests/test_price.py tests/test_strategy_observability.py -q` passed (`32 passed, 1 skipped`)
-  - `.venv/bin/python -m pytest -q` passed (`806 passed, 2 skipped, 1 warning`)
+  - `.venv/bin/python -m pytest -q` passed (`811 passed, 1 skipped, 1 warning`)
 
 ## Last Completed Step
 
 - Added `headline_parser.py` and wired normalized analysis headlines into decision/preflight/penalty/hold-profile paths.
 - Preserved raw-title bucketing so existing IGNORE override protections for broker/article prefixes remain active.
-- Added parser/decision/pipeline regression tests and fixed two unrelated full-suite validation gaps discovered during verification (`price.py` entry-time determinism and strategy observability config alignment).
+- Added parser/decision/pipeline regression tests, resolved architect-raised regressions around disclosure-source `dorg` detection and fallback raw-headline handling, and fixed two unrelated full-suite validation gaps discovered during verification (`price.py` entry-time determinism and strategy observability config alignment).
 
 ## Next Intended Step
 

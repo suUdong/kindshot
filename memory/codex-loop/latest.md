@@ -30,10 +30,11 @@ Validation:
 - Fixed deterministic validation gaps uncovered by the full suite:
   - `price.py` now records entry KST from `t0_ts` instead of wall-clock now
   - strategy observability defaults/tests align with current runtime config
+- Architect verification passed after follow-up fixes for disclosure-source `dorg` handling, fallback raw-headline article detection, and enabled pipeline propagation coverage.
 - `python3 -m compileall src/kindshot tests scripts` passed
-- `.venv/bin/python -m pytest tests/test_headline_parser.py tests/test_bucket.py tests/test_decision.py tests/test_guardrails.py tests/test_pipeline.py -q` passed (`342 passed, 1 skipped`)
+- `.venv/bin/python -m pytest tests/test_headline_parser.py tests/test_bucket.py tests/test_decision.py tests/test_guardrails.py tests/test_pipeline.py -q` passed (`347 passed`)
 - `.venv/bin/python -m pytest tests/test_price.py tests/test_strategy_observability.py -q` passed (`32 passed, 1 skipped`)
-- `.venv/bin/python -m pytest -q` passed (`806 passed, 2 skipped, 1 warning`)
+- `.venv/bin/python -m pytest -q` passed (`811 passed, 1 skipped, 1 warning`)
 
 Risk and rollback note:
 - Main residual risk is heuristic over-suppression: some non-disclosure KIS article titles with contract language may now be skipped earlier. This is intentional, but should be verified against fresh paper logs.
