@@ -240,6 +240,97 @@ with tab2:
             use_container_width=True, hide_index=True,
         )
 
+        # ── 수익성 심층 분석 ──
+        st.divider()
+        st.subheader("수익성 심층 분석")
+
+        valid_pnl = pnl_df.dropna(subset=["final_ret_pct"])
+        if not valid_pnl.empty:
+            col_a, col_b = st.columns(2)
+
+            # Confidence vs 실제 수익률 scatter (캘리브레이션)
+            with col_a:
+                conf_vals = pd.to_numeric(valid_pnl["confidence"], errors="coerce")
+                fig_cal = px.scatter(
+                    valid_pnl, x=conf_vals, y="final_ret_pct",
+                    color="bucket",
+                    hover_data=["ticker", "corp_name"],
+                    title="Confidence vs 실제 수익률 (캘리브레이션)",
+                    labels={"x": "Confidence", "final_ret_pct": "수익률 (%)"},
+                    trendline="ols",
+                )
+                fig_cal.add_hline(y=0, line_dash="dash", line_color="gray")
+                fig_cal.update_layout(height=400)
+                st.plotly_chart(fig_cal, use_container_width=True)
+
+            # 버킷별 성과 박스플롯
+            with col_b:
+                fig_bucket_perf = px.box(
+                    valid_pnl, x="bucket", y="final_ret_pct",
+                    color="bucket",
+                    title="버킷별 수익률 분포",
+                    labels={"final_ret_pct": "수익률 (%)", "bucket": "버킷"},
+                    points="all",
+                )
+                fig_bucket_perf.add_hline(y=0, line_dash="dash", line_color="gray")
+                fig_bucket_perf.update_layout(height=400, showlegend=False)
+                st.plotly_chart(fig_bucket_perf, use_container_width=True)
+
+            # 시간대별 분석 (detected_at 기반)
+            if "detected_at" in events_df.columns:
+                buy_with_time = events_df[events_df["decision_action"] == "BUY"].copy()
+                buy_with_time = buy_with_time.merge(
+                    valid_pnl[["event_id", "final_ret_pct"]], on="event_id", how="inner"
+                )
+                if not buy_with_time.empty and buy_with_time["detected_at"].notna().any():
+                    buy_with_time["hour"] = buy_with_time["detected_at"].dt.hour
+                    hourly = buy_with_time.groupby("hour").agg(
+                        trades=("final_ret_pct", "count"),
+                        avg_ret=("final_ret_pct", "mean"),
+                        win_rate=("final_ret_pct", lambda x: (x > 0).mean() * 100),
+                    ).reset_index()
+
+                    col_t1, col_t2 = st.columns(2)
+                    with col_t1:
+                        fig_hour_ret = px.bar(
+                            hourly, x="hour", y="avg_ret",
+                            text=[f"{v:.2f}%" for v in hourly["avg_ret"]],
+                            title="시간대별 평균 수익률",
+                            labels={"hour": "시간 (KST)", "avg_ret": "평균 수익률 (%)"},
+                            color="avg_ret",
+                            color_continuous_scale=["#e74c3c", "#f39c12", "#2ecc71"],
+                        )
+                        fig_hour_ret.update_layout(height=350)
+                        st.plotly_chart(fig_hour_ret, use_container_width=True)
+
+                    with col_t2:
+                        fig_hour_wr = px.bar(
+                            hourly, x="hour", y="win_rate",
+                            text=[f"{v:.0f}%" for v in hourly["win_rate"]],
+                            title="시간대별 승률",
+                            labels={"hour": "시간 (KST)", "win_rate": "승률 (%)"},
+                            color="win_rate",
+                            color_continuous_scale=["#e74c3c", "#f39c12", "#2ecc71"],
+                            range_color=[0, 100],
+                        )
+                        fig_hour_wr.add_hline(y=50, line_dash="dash", line_color="orange")
+                        fig_hour_wr.update_layout(height=350)
+                        st.plotly_chart(fig_hour_wr, use_container_width=True)
+
+            # Size Hint 효과 분석
+            if "size_hint" in valid_pnl.columns:
+                size_stats = valid_pnl.groupby("size_hint").agg(
+                    trades=("final_ret_pct", "count"),
+                    avg_ret=("final_ret_pct", "mean"),
+                    win_rate=("final_ret_pct", lambda x: (x > 0).mean() * 100),
+                ).reset_index()
+                if not size_stats.empty:
+                    st.subheader("Size Hint별 성과")
+                    size_stats.columns = ["Size", "매매수", "평균수익률(%)", "승률(%)"]
+                    size_stats["평균수익률(%)"] = size_stats["평균수익률(%)"].round(2)
+                    size_stats["승률(%)"] = size_stats["승률(%)"].round(1)
+                    st.dataframe(size_stats, use_container_width=True, hide_index=True)
+
     # 멀티데이 성과 추이
     st.divider()
     st.subheader(f"최근 {multi_day_n}일 추이")
