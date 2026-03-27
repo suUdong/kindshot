@@ -318,7 +318,7 @@ async def execute_bucket_path(
         and market_snapshot.kosdaq_breadth_ratio < config.min_market_breadth_ratio
     ):
         # 고확신 촉매(conf>=82 키워드)는 하락장에서도 LLM 판단 허용
-        if has_high_conviction_keyword(raw.title, keyword_hits, min_conf=82):
+        if has_high_conviction_keyword(raw.title, keyword_hits, min_conf=86):
             logger.info(
                 "MARKET_BREADTH_RISK_OFF bypassed for high-conviction catalyst [%s]: %s",
                 raw.ticker, raw.title[:80],
@@ -416,7 +416,13 @@ async def execute_bucket_path(
     # llm_original_conf를 모든 감점 전에 캡처해야 article(-10) + pipeline(-10) = -20 방지
     if decision.action == Action.BUY:
         llm_original_conf = decision.confidence
-        _MAX_TOTAL_PENALTY = 10
+        # graduated cap: 강한 시그널(88+)은 보호, 약한 시그널(~84)은 감점 허용
+        if llm_original_conf >= 88:
+            _MAX_TOTAL_PENALTY = 8
+        elif llm_original_conf >= 83:
+            _MAX_TOTAL_PENALTY = 10
+        else:
+            _MAX_TOTAL_PENALTY = 15
 
         # 0. Post-LLM 기사/미확정 패턴 감점: LLM이 기사 헤드라인에 BUY를 줄 때 conf -10
         if decision.decision_source == "LLM" and has_article_pattern(raw.title):
@@ -474,7 +480,7 @@ async def execute_bucket_path(
         if ctx and (ctx.rsi_14 is not None or ctx.macd_hist is not None
                     or ctx.bb_position is not None or ctx.atr_14 is not None):
             before = decision.confidence
-            has_catalyst = has_high_conviction_keyword(raw.title, keyword_hits, min_conf=79)
+            has_catalyst = has_high_conviction_keyword(raw.title, keyword_hits, min_conf=83)
             decision.confidence = apply_technical_confidence_adjustment(
                 decision.confidence, ctx.rsi_14, ctx.macd_hist,
                 has_catalyst=has_catalyst,
@@ -534,26 +540,18 @@ async def execute_bucket_path(
                         raw.ticker, before, decision.confidence, best, worst,
                         f"{_br:.2f}" if _br is not None else "N/A")
 
-        # 총 감점 상한 적용: LLM 원본 - 10 이상 감점 방지 (과다 감점 = 진짜 촉매 놓침)
+        # graduated penalty cap: 강한 시그널은 보호, 약한 시그널은 감점 허용
+        # LLM 88+ (대형촉매): cap 8 → 최악 80 (BUY 유지)
+        # LLM 83-87 (강한촉매): cap 10 → 최악 73-77 (경계선)
+        # LLM <83 (보통촉매): cap 15 → 최악 65-67 (SKIP 가능)
         total_delta = decision.confidence - llm_original_conf
         if total_delta < -_MAX_TOTAL_PENALTY:
             floored = llm_original_conf - _MAX_TOTAL_PENALTY
-            if llm_original_conf >= config.min_buy_confidence:
-                floored = max(floored, config.min_buy_confidence)
             logger.warning(
-                "Confidence adj floor [%s]: %d → %d (total_delta=%d exceeded -%d cap, llm=%d)",
+                "Confidence graduated cap [%s]: %d → %d (total_delta=%d exceeded -%d cap, llm=%d)",
                 raw.ticker, decision.confidence, floored, total_delta, _MAX_TOTAL_PENALTY, llm_original_conf,
             )
             decision.confidence = floored
-
-        # min_buy_confidence floor: 원본이 threshold 이상이면 감점으로 아래로 떨어지지 않게
-        # 예: fallback hybrid가 자사주 소각=82 줬는데 market adj로 73까지 떨어지는 것 방지
-        if llm_original_conf >= config.min_buy_confidence and decision.confidence < config.min_buy_confidence:
-            logger.info(
-                "Min-confidence floor [%s]: %d → %d (llm_original=%d, preserving min_buy_confidence)",
-                raw.ticker, decision.confidence, config.min_buy_confidence, llm_original_conf,
-            )
-            decision.confidence = config.min_buy_confidence
 
     # 킬 스위치: 연패 시 size_hint 다운그레이드
     if decision.action == Action.BUY and guardrail_state is not None:
