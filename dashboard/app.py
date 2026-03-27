@@ -41,12 +41,18 @@ selected_date = st.sidebar.selectbox(
 )
 multi_day_n = st.sidebar.slider("멀티데이 분석 (일수)", 1, min(14, len(dates)), min(7, len(dates)))
 
-# 자동 새로고침
-auto_refresh = st.sidebar.checkbox("자동 새로고침 (30초)", value=False)
+# 새로고침
+if st.sidebar.button("🔄 데이터 새로고침"):
+    st.cache_data.clear()
+    st.rerun()
+
+auto_refresh = st.sidebar.checkbox("자동 새로고침 (60초)", value=False)
 if auto_refresh:
-    st.sidebar.caption("30초마다 데이터를 갱신합니다.")
-    import time
-    time.sleep(30)
+    import time as _time
+    _refresh_key = f"auto_refresh_{int(_time.time()) // 60}"
+    st.sidebar.caption(f"다음 갱신까지 ~60초")
+    _time.sleep(60)
+    st.cache_data.clear()
     st.rerun()
 
 # ── 데이터 로드 ──────────────────────────────────────
