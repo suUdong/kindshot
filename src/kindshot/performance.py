@@ -56,47 +56,19 @@ class PerformanceTracker:
         self._trades: list[TradeRecord] = []
         self._current_date: str = datetime.now(_KST).strftime("%Y-%m-%d")
 
-    def record_trade(
-        self,
-        ticker: str,
-        entry_px: float,
-        exit_px: float,
-        pnl_pct: float,
-        *,
-        size_won: float = 0.0,
-        hold_seconds: int = 0,
-        exit_type: str = "",
-        confidence: int = 0,
-        bucket: str = "",
-    ) -> TradeRecord:
-        """거래 결과 기록."""
+    def _sync_current_date(self) -> None:
         today = datetime.now(_KST).strftime("%Y-%m-%d")
-        if today != self._current_date:
+        if today == self._current_date:
+            return
+        if self._trades:
             self._flush_daily()
-            self._current_date = today
+        self._current_date = today
 
-        pnl_won = size_won * (pnl_pct / 100) if size_won > 0 else 0.0
-        record = TradeRecord(
-            ticker=ticker,
-            entry_px=entry_px,
-            exit_px=exit_px,
-            pnl_pct=pnl_pct,
-            size_won=size_won,
-            pnl_won=pnl_won,
-            hold_seconds=hold_seconds,
-            exit_type=exit_type,
-            confidence=confidence,
-            bucket=bucket,
-            timestamp=datetime.now(_KST).isoformat(),
-        )
-        self._trades.append(record)
+    def summary_path(self) -> Path:
+        self._sync_current_date()
+        return self._data_dir / f"{self._current_date}_summary.json"
 
-        # Append to daily JSONL immediately
-        self._append_trade_log(record)
-        return record
-
-    def daily_summary(self) -> DailySummary:
-        """현재 일일 요약 계산."""
+    def _build_daily_summary(self) -> DailySummary:
         trades = self._trades
         total = len(trades)
         if total == 0:
@@ -134,16 +106,58 @@ class PerformanceTracker:
             trades=list(trades),
         )
 
+    def record_trade(
+        self,
+        ticker: str,
+        entry_px: float,
+        exit_px: float,
+        pnl_pct: float,
+        *,
+        size_won: float = 0.0,
+        hold_seconds: int = 0,
+        exit_type: str = "",
+        confidence: int = 0,
+        bucket: str = "",
+    ) -> TradeRecord:
+        """거래 결과 기록."""
+        self._sync_current_date()
+
+        pnl_won = size_won * (pnl_pct / 100) if size_won > 0 else 0.0
+        record = TradeRecord(
+            ticker=ticker,
+            entry_px=entry_px,
+            exit_px=exit_px,
+            pnl_pct=pnl_pct,
+            size_won=size_won,
+            pnl_won=pnl_won,
+            hold_seconds=hold_seconds,
+            exit_type=exit_type,
+            confidence=confidence,
+            bucket=bucket,
+            timestamp=datetime.now(_KST).isoformat(),
+        )
+        self._trades.append(record)
+
+        # Append to daily JSONL immediately
+        self._append_trade_log(record)
+        return record
+
+    def daily_summary(self) -> DailySummary:
+        """현재 일일 요약 계산."""
+        self._sync_current_date()
+        return self._build_daily_summary()
+
     def flush(self) -> Optional[Path]:
         """현재 일일 요약을 파일로 저장."""
+        self._sync_current_date()
         return self._flush_daily()
 
     def _flush_daily(self) -> Optional[Path]:
         """일일 요약 저장 후 trades 초기화."""
         if not self._trades:
             return None
-        summary = self.daily_summary()
-        path = self._data_dir / f"{self._current_date}_summary.json"
+        summary = self._build_daily_summary()
+        path = self._data_dir / f"{summary.date}_summary.json"
         try:
             path.write_text(
                 json.dumps(asdict(summary), ensure_ascii=False, indent=2, default=str),

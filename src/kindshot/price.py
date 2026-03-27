@@ -81,6 +81,7 @@ class SnapshotScheduler:
         *,
         stop_event: Optional[asyncio.Event] = None,
         pnl_callback: Optional[object] = None,
+        trade_close_callback: Optional[object] = None,
         order_executor: Optional[object] = None,
     ) -> None:
         self._config = config
@@ -89,6 +90,7 @@ class SnapshotScheduler:
         self._heap: list[ScheduledSnapshot] = []
         self._stop_event = stop_event or asyncio.Event()
         self._pnl_callback = pnl_callback  # callable(ticker, pnl_won) for guardrail state
+        self._trade_close_callback = trade_close_callback
         self._order_executor = order_executor  # OrderExecutor for live sell
         # Track effective t0 prices per event_id for return calculation
         self._t0_prices: dict[str, tuple[Optional[float], Optional[float]]] = {}
@@ -96,6 +98,7 @@ class SnapshotScheduler:
         self._event_tickers: dict[str, str] = {}
         # 가상 익절/손절 추적 (event_id → exit horizon)
         self._virtual_exits: dict[str, str] = {}
+        self._virtual_exit_reasons: dict[str, str] = {}
         # Trailing stop peak 추적 (event_id → peak return %)
         self._peak_returns: dict[str, float] = {}
         # 진입 시각 추적 (event_id → monotonic time at t0 fire)
@@ -264,6 +267,57 @@ class SnapshotScheduler:
             is_buy_decision=is_buy_decision,
         ))
 
+    def _emit_trade_close(
+        self,
+        *,
+        snap: ScheduledSnapshot,
+        exit_px: float,
+        ret_long: float,
+        exit_type: str,
+        horizon: str,
+    ) -> None:
+        if snap.event_id in self._sell_triggered:
+            return
+        actual_size = self._event_order_size.get(snap.event_id, self._config.order_size)
+        pnl_won = ret_long * actual_size
+        entry_px = self._t0_prices.get(snap.event_id, (None, None))[0]
+        hold_seconds = 0
+        entry_time = self._entry_times.get(snap.event_id)
+        if entry_time is not None:
+            hold_seconds = max(0, int(time.monotonic() - entry_time))
+        self._sell_triggered.add(snap.event_id)
+        if self._pnl_callback:
+            self._pnl_callback(snap.ticker, pnl_won)
+        if self._trade_close_callback and entry_px is not None:
+            self._trade_close_callback(
+                event_id=snap.event_id,
+                ticker=snap.ticker,
+                entry_px=entry_px,
+                exit_px=exit_px,
+                ret_pct=ret_long * 100,
+                pnl_won=pnl_won,
+                exit_type=exit_type,
+                horizon=horizon,
+                hold_seconds=hold_seconds,
+                size_won=actual_size,
+                confidence=self._event_confidence.get(snap.event_id, 0),
+                mode=snap.mode,
+            )
+
+    def _cleanup_event_tracking(self, event_id: str) -> None:
+        self._t0_prices.pop(event_id, None)
+        self._event_tickers.pop(event_id, None)
+        self._entry_times.pop(event_id, None)
+        self._entry_times_kst.pop(event_id, None)
+        self._t5m_profitable.pop(event_id, None)
+        self._max_hold_minutes.pop(event_id, None)
+        self._event_confidence.pop(event_id, None)
+        self._event_order_size.pop(event_id, None)
+        self._peak_returns.pop(event_id, None)
+        self._virtual_exits.pop(event_id, None)
+        self._virtual_exit_reasons.pop(event_id, None)
+        self._sell_triggered.discard(event_id)
+
     async def _fire(self, snap: ScheduledSnapshot) -> None:
         """Execute a single snapshot fetch and log."""
         price = await self._fetcher.fetch(snap.ticker)
@@ -310,21 +364,6 @@ class SnapshotScheduler:
                 ret_short = -ret_long
                 if cum_value is not None and t0_cum is not None:
                     value_since = cum_value - t0_cum
-            # Clean up t0 reference after final snapshot + report P&L
-            if snap.horizon == "close":
-                self._t0_prices.pop(snap.event_id, None)
-                self._event_tickers.pop(snap.event_id, None)
-                self._entry_times.pop(snap.event_id, None)
-                self._entry_times_kst.pop(snap.event_id, None)
-                self._t5m_profitable.pop(snap.event_id, None)
-                self._max_hold_minutes.pop(snap.event_id, None)
-                self._event_confidence.pop(snap.event_id, None)
-                # Report close P&L to guardrail state (BUY decisions only)
-                if snap.is_buy_decision and ret_long is not None and self._pnl_callback and t0_px and snap.event_id not in self._sell_triggered:
-                    actual_size = self._event_order_size.get(snap.event_id, self._config.order_size)
-                    pnl_won = ret_long * actual_size
-                    self._pnl_callback(snap.ticker, pnl_won)
-                self._event_order_size.pop(snap.event_id, None)
 
         record = PriceSnapshot(
             mode=snap.mode,
@@ -386,6 +425,7 @@ class SnapshotScheduler:
 
             if tp_active and ret_pct >= effective_tp:
                 self._virtual_exits[snap.event_id] = snap.horizon
+                self._virtual_exit_reasons[snap.event_id] = "take_profit"
                 logger.info(
                     "PAPER TP hit [%s] %s: +%.2f%% at %s (target %.1f%%, conf=%d)",
                     snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
@@ -393,6 +433,7 @@ class SnapshotScheduler:
                 )
             elif sl_active and ret_pct <= effective_sl:
                 self._virtual_exits[snap.event_id] = snap.horizon
+                self._virtual_exit_reasons[snap.event_id] = "stop_loss"
                 logger.info(
                     "PAPER SL hit [%s] %s: %.2f%% at %s (stop %.1f%%, conf=%d)",
                     snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
@@ -407,6 +448,7 @@ class SnapshotScheduler:
             ):
                 # t+5m 체크포인트: 손실 포지션 즉시 청산
                 self._virtual_exits[snap.event_id] = snap.horizon
+                self._virtual_exit_reasons[snap.event_id] = "t5m_loss_exit"
                 logger.info(
                     "PAPER T5M LOSS EXIT [%s] %s: %.2f%% at %s (5m checkpoint, cut losers)",
                     snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
@@ -422,6 +464,7 @@ class SnapshotScheduler:
                     trail_pct = self._get_trailing_stop_pct(snap.event_id)
                 if ret_pct <= peak - trail_pct:
                     self._virtual_exits[snap.event_id] = snap.horizon
+                    self._virtual_exit_reasons[snap.event_id] = "trailing_stop"
                     logger.info(
                         "PAPER TRAILING STOP [%s] %s: %.2f%% at %s (peak %.2f%%, trail -%.1f%%%s)",
                         snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
@@ -434,6 +477,7 @@ class SnapshotScheduler:
                 event_max = self._get_session_adjusted_max_hold(snap.event_id, event_max_raw)
                 if event_max > 0 and snap.horizon == f"t+{event_max}m":
                     self._virtual_exits[snap.event_id] = snap.horizon
+                    self._virtual_exit_reasons[snap.event_id] = "max_hold"
                     logger.info(
                         "PAPER MAX HOLD [%s] %s: %.2f%% at %s (%dm limit)",
                         snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
@@ -453,29 +497,59 @@ class SnapshotScheduler:
                             and abs(ret_pct) < stale_pct
                         ):
                             self._virtual_exits[snap.event_id] = snap.horizon
+                            self._virtual_exit_reasons[snap.event_id] = "stale_exit"
                             logger.info(
                                 "PAPER STALE EXIT [%s] %s: %.2f%% at %s (%.0fs elapsed, no momentum)",
                                 snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
                                 elapsed_s,
                             )
 
-        # Live mode: 가상 청산 시 실매도 주문 실행
+        # 가상 청산: paper는 즉시 close 처리, live는 실매도 성공 시 close 처리
         if (
             snap.is_buy_decision
             and snap.event_id in self._virtual_exits
             and snap.event_id not in self._sell_triggered
-            and self._order_executor is not None
         ):
-            self._sell_triggered.add(snap.event_id)
-            try:
-                _sell_result = await self._order_executor.sell_position(snap.event_id, snap.ticker)
-                if _sell_result and _sell_result.success and ret_long is not None:
-                    actual_size = self._event_order_size.get(snap.event_id, self._config.order_size)
-                    pnl_won = ret_long * actual_size
-                    if self._pnl_callback:
-                        self._pnl_callback(snap.ticker, pnl_won)
-            except Exception:
-                logger.exception("LIVE SELL order error [%s]", snap.ticker)
+            exit_type = self._virtual_exit_reasons.get(snap.event_id, "virtual_exit")
+            if self._order_executor is not None:
+                try:
+                    _sell_result = await self._order_executor.sell_position(snap.event_id, snap.ticker)
+                    if _sell_result and _sell_result.success and ret_long is not None and px is not None:
+                        self._emit_trade_close(
+                            snap=snap,
+                            exit_px=px,
+                            ret_long=ret_long,
+                            exit_type=exit_type,
+                            horizon=self._virtual_exits[snap.event_id],
+                        )
+                except Exception:
+                    logger.exception("LIVE SELL order error [%s]", snap.ticker)
+            elif ret_long is not None and px is not None:
+                self._emit_trade_close(
+                    snap=snap,
+                    exit_px=px,
+                    ret_long=ret_long,
+                    exit_type=exit_type,
+                    horizon=self._virtual_exits[snap.event_id],
+                )
+
+        if (
+            snap.is_buy_decision
+            and snap.horizon == "close"
+            and snap.event_id not in self._sell_triggered
+            and ret_long is not None
+            and px is not None
+        ):
+            self._emit_trade_close(
+                snap=snap,
+                exit_px=px,
+                ret_long=ret_long,
+                exit_type="close",
+                horizon="close",
+            )
+
+        if snap.horizon == "close":
+            self._cleanup_event_tracking(snap.event_id)
 
     async def flush_ready_on_shutdown(self) -> int:
         """Fire all snapshots that are already due at shutdown time."""

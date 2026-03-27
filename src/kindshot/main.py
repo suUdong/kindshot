@@ -22,6 +22,7 @@ from kindshot.guardrails import GuardrailState
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.market import MarketMonitor
+from kindshot.performance import PerformanceTracker
 from kindshot.pipeline import (
     RuntimeCounters,
     counter_snapshot,
@@ -33,6 +34,7 @@ from kindshot.price import PriceFetcher, SnapshotScheduler
 from kindshot.sd_notify import notify_ready, notify_watchdog
 from kindshot.tz import KST as _KST
 from kindshot.health import HealthState, start_health_server
+from kindshot.telegram_ops import DailySummaryNotifier, telegram_configured, try_send_daily_summary, try_send_sell_signal
 from kindshot.unknown_review import (
     UnknownReviewEngine,
     append_unknown_review,
@@ -255,6 +257,12 @@ async def run() -> None:
                 pass
 
         guardrail_state = GuardrailState(config, state_dir=state_dir)
+        performance_tracker = PerformanceTracker(config.data_dir)
+        daily_summary_notifier = (
+            DailySummaryNotifier(state_dir / "daily_summary_telegram_state.json", close_delay_s=config.close_snapshot_delay_s)
+            if telegram_configured()
+            else None
+        )
 
         # Order executor (live mode only)
         order_executor: Optional[OrderExecutor] = None
@@ -262,19 +270,63 @@ async def run() -> None:
             order_executor = OrderExecutor(kis, config)
             logger.info("OrderExecutor enabled (micro_live_max=%.0f won)", config.micro_live_max_order_won)
 
-        def _on_close_pnl(ticker: str, pnl_won: float) -> None:
+        def _on_trade_close(
+            *,
+            event_id: str,
+            ticker: str,
+            entry_px: float,
+            exit_px: float,
+            ret_pct: float,
+            pnl_won: float,
+            exit_type: str,
+            horizon: str,
+            hold_seconds: int,
+            size_won: float,
+            confidence: int,
+            mode: str,
+        ) -> None:
             guardrail_state.record_pnl(pnl_won)
             guardrail_state.record_sell(ticker)
             if pnl_won < 0:
                 guardrail_state.record_stop_loss()
             else:
                 guardrail_state.record_profitable_exit()
-            logger.info("P&L recorded: %s %.0f won (daily total: %.0f, positions: %d)", ticker, pnl_won, guardrail_state.daily_pnl, guardrail_state.position_count)
+            performance_tracker.record_trade(
+                ticker,
+                entry_px,
+                exit_px,
+                ret_pct,
+                size_won=size_won,
+                hold_seconds=hold_seconds,
+                exit_type=exit_type,
+                confidence=confidence,
+            )
+            try_send_sell_signal(
+                ticker=ticker,
+                exit_type=exit_type,
+                horizon=horizon,
+                ret_pct=ret_pct,
+                pnl_won=pnl_won,
+                confidence=confidence,
+                size_won=size_won,
+                hold_seconds=hold_seconds,
+                mode=mode,
+                open_positions=guardrail_state.position_count,
+            )
+            logger.info(
+                "Trade closed: %s %s %.0f won (ret=%.2f%%, daily total: %.0f, positions: %d)",
+                ticker,
+                exit_type,
+                pnl_won,
+                ret_pct,
+                guardrail_state.daily_pnl,
+                guardrail_state.position_count,
+            )
 
         scheduler = SnapshotScheduler(
             config, fetcher, log,
             stop_event=stop_event,
-            pnl_callback=_on_close_pnl,
+            trade_close_callback=_on_trade_close,
             order_executor=order_executor,
         )
         unknown_review_queue: Optional[asyncio.Queue] = None
@@ -326,6 +378,29 @@ async def run() -> None:
                     logger.exception("Market monitor error")
                 await _wait_or_stop(stop_event, 60)
 
+        async def _daily_summary_loop() -> None:
+            if daily_summary_notifier is None:
+                return
+            while not stop_event.is_set():
+                try:
+                    if daily_summary_notifier.should_send():
+                        summary = performance_tracker.daily_summary()
+                        report_path = str(performance_tracker.summary_path()) if summary.total_trades > 0 else ""
+                        sent = try_send_daily_summary(
+                            summary,
+                            open_positions=guardrail_state.position_count,
+                            daily_pnl_won=guardrail_state.daily_pnl,
+                            consecutive_stop_losses=guardrail_state.consecutive_stop_losses,
+                            report_path=report_path,
+                        )
+                        if sent:
+                            performance_tracker.flush()
+                            daily_summary_notifier.mark_sent(summary.date)
+                            logger.info("Daily summary telegram sent for %s", summary.date)
+                except Exception:
+                    logger.exception("Daily summary loop error")
+                await _wait_or_stop(stop_event, 60)
+
         # Health check server
         health_state = HealthState()
         health_state.set_guardrail_state(guardrail_state)
@@ -354,6 +429,8 @@ async def run() -> None:
             asyncio.create_task(_market_loop(), name="market"),
             asyncio.create_task(_watchdog_loop(feed, counters, config, stop_event), name="watchdog"),
         ]
+        if daily_summary_notifier is not None:
+            tasks.append(asyncio.create_task(_daily_summary_loop(), name="daily-summary"))
         if unknown_review_queue is not None:
             tasks.append(asyncio.create_task(_unknown_review_loop(), name="unknown-review"))
 

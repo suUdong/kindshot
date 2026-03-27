@@ -1,8 +1,11 @@
 """Tests for performance tracking module."""
 
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from kindshot.performance import PerformanceTracker, TradeRecord, DailySummary
+from kindshot.tz import KST as _KST
 
 
 def test_record_trade_returns_record(tmp_path):
@@ -74,3 +77,12 @@ def test_exit_type_recorded(tmp_path):
     rec = tracker.record_trade("005930", 50000, 50500, 1.0, exit_type="TP", confidence=85)
     assert rec.exit_type == "TP"
     assert rec.confidence == 85
+
+
+def test_daily_summary_rolls_date_forward_without_trade(tmp_path):
+    tracker = PerformanceTracker(tmp_path)
+    tracker._current_date = "2026-03-27"
+    with patch("kindshot.performance.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 3, 28, 10, 0, tzinfo=_KST)
+        summary = tracker.daily_summary()
+    assert summary.date == "2026-03-28"

@@ -1,7 +1,18 @@
 import json
+from datetime import datetime
 
 from kindshot.collector import BackfillResult, CollectionLogRecord, CollectionLogSummary, CollectorState
-from kindshot.telegram_ops import _sanitize_path, format_backfill_notification, send_telegram_message
+from kindshot.performance import DailySummary, TradeRecord
+from kindshot.telegram_ops import (
+    DailySummaryNotifier,
+    _sanitize_path,
+    format_backfill_notification,
+    format_daily_summary_signal,
+    format_high_conf_skip_signal,
+    format_sell_signal,
+    send_telegram_message,
+)
+from kindshot.tz import KST as _KST
 
 
 def _summary() -> CollectionLogSummary:
@@ -219,3 +230,76 @@ def test_send_telegram_message_builds_request(monkeypatch):
     assert captured["body"]["chat_id"] == "chat456"
     assert captured["body"]["text"] == "hello"
     assert captured["timeout"] == 3.5
+
+
+def test_format_guardrail_block_includes_shadow_state():
+    text = format_high_conf_skip_signal(
+        ticker="005930",
+        corp_name="Samsung",
+        headline="대형 공급계약 체결",
+        confidence=82,
+        skip_reason="LOW_CONFIDENCE",
+        shadow_scheduled=True,
+        mode="paper",
+    )
+    assert "GUARDRAIL BLOCK Samsung(005930)" in text
+    assert "blocked=LOW_CONFIDENCE shadow=scheduled" in text
+
+
+def test_format_sell_signal_includes_exit_metrics():
+    text = format_sell_signal(
+        ticker="005930",
+        exit_type="take_profit",
+        horizon="t+5m",
+        ret_pct=1.25,
+        pnl_won=62500,
+        confidence=84,
+        size_won=5_000_000,
+        hold_seconds=300,
+        mode="paper",
+        open_positions=1,
+    )
+    assert "[PAPER] SELL 005930" in text
+    assert "exit=take_profit horizon=t+5m ret=+1.25% pnl=+62500won" in text
+    assert "conf=84 size=5000000won hold=300s positions=1" in text
+
+
+def test_format_daily_summary_signal_includes_positions_and_report():
+    summary = DailySummary(
+        date="2026-03-27",
+        total_trades=2,
+        wins=1,
+        losses=1,
+        win_rate=50.0,
+        total_pnl_pct=0.5,
+        total_pnl_won=25000,
+        trades=[
+            TradeRecord(ticker="005930", entry_px=50000, exit_px=50500, pnl_pct=1.0),
+            TradeRecord(ticker="035420", entry_px=30000, exit_px=29850, pnl_pct=-0.5),
+        ],
+    )
+    text = format_daily_summary_signal(
+        summary,
+        open_positions=1,
+        daily_pnl_won=25000,
+        consecutive_stop_losses=0,
+        report_path="/opt/kindshot/data/performance/2026-03-27_summary.json",
+    )
+    assert "Kindshot Daily Summary 2026-03-27" in text
+    assert "trades=2 wins=1 losses=1 win_rate=50.0%" in text
+    assert "open_positions=1 consecutive_stop_losses=0" in text
+    assert "summary=data/performance/2026-03-27_summary.json" in text
+
+
+def test_daily_summary_notifier_prevents_duplicate_send(tmp_path):
+    state_path = tmp_path / "state" / "daily_summary_telegram_state.json"
+    notifier = DailySummaryNotifier(state_path, close_delay_s=300)
+    due_time = datetime(2026, 3, 27, 15, 36, tzinfo=_KST)
+    assert notifier.should_send(due_time) is True
+
+    notifier.mark_sent("2026-03-27")
+    assert notifier.should_send(due_time) is False
+
+    reloaded = DailySummaryNotifier(state_path, close_delay_s=300)
+    assert reloaded.should_send(due_time) is False
+    assert reloaded.should_send(datetime(2026, 3, 28, 15, 36, tzinfo=_KST)) is True

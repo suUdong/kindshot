@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 
 from kindshot.collector import BackfillResult, CollectionLogSummary, CollectorState
+from kindshot.performance import DailySummary
+from kindshot.tz import KST as _KST
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +99,18 @@ def send_telegram_message(text: str, bot_token: str, chat_id: str, *, timeout_s:
     with urlopen(req, timeout=timeout_s) as resp:
         result = json.loads(resp.read())
     return bool(result.get("ok"))
+
+
+def telegram_configured() -> bool:
+    return bool(os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() and os.environ.get("TELEGRAM_CHAT_ID", "").strip())
+
+
+def _telegram_target() -> tuple[str, str] | None:
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not bot_token or not chat_id:
+        return None
+    return bot_token, chat_id
 
 
 def format_backfill_notification(
@@ -218,17 +234,111 @@ def format_high_conf_skip_signal(
     headline: str,
     confidence: int,
     skip_reason: str,
+    shadow_scheduled: bool = False,
     decision_source: str = "LLM",
     mode: str = "paper",
 ) -> str:
-    """Format a high-confidence SKIP notification for monitoring false negatives."""
+    """Format a guardrail block notification for monitoring false negatives."""
     source_tag = f" [{decision_source}]" if decision_source != "LLM" else ""
+    shadow_tag = "scheduled" if shadow_scheduled else "not_scheduled"
     lines = [
-        f"⚠️ [{mode.upper()}] HIGH-CONF SKIP {corp_name}({ticker}){source_tag}",
-        f"conf={confidence} blocked={skip_reason}",
+        f"⚠️ [{mode.upper()}] GUARDRAIL BLOCK {corp_name}({ticker}){source_tag}",
+        f"conf={confidence} blocked={skip_reason} shadow={shadow_tag}",
         headline[:120],
     ]
     return "\n".join(lines)
+
+
+def format_sell_signal(
+    *,
+    ticker: str,
+    exit_type: str,
+    horizon: str,
+    ret_pct: float,
+    pnl_won: float,
+    confidence: int = 0,
+    size_won: float = 0.0,
+    hold_seconds: int = 0,
+    mode: str = "paper",
+    open_positions: int | None = None,
+) -> str:
+    """Format a real-time SELL/close notification."""
+    lines = [
+        f"{'🔴' if pnl_won < 0 else '✅'} [{mode.upper()}] SELL {ticker}",
+        f"exit={exit_type} horizon={horizon} ret={ret_pct:+.2f}% pnl={pnl_won:+.0f}won",
+    ]
+    meta_parts: list[str] = []
+    if confidence > 0:
+        meta_parts.append(f"conf={confidence}")
+    if size_won > 0:
+        meta_parts.append(f"size={size_won:.0f}won")
+    if hold_seconds > 0:
+        meta_parts.append(f"hold={hold_seconds}s")
+    if open_positions is not None:
+        meta_parts.append(f"positions={open_positions}")
+    if meta_parts:
+        lines.append(" ".join(meta_parts))
+    return "\n".join(lines)
+
+
+def format_daily_summary_signal(
+    summary: DailySummary,
+    *,
+    open_positions: int,
+    daily_pnl_won: float,
+    consecutive_stop_losses: int,
+    report_path: str = "",
+) -> str:
+    """Format an end-of-day performance summary for Telegram."""
+    lines = [
+        f"📘 Kindshot Daily Summary {summary.date}",
+        f"trades={summary.total_trades} wins={summary.wins} losses={summary.losses} win_rate={summary.win_rate:.1f}%",
+        f"realized_pnl={summary.total_pnl_won:+.0f}won ({summary.total_pnl_pct:+.2f}%) guardrail_pnl={daily_pnl_won:+.0f}won",
+        f"open_positions={open_positions} consecutive_stop_losses={consecutive_stop_losses}",
+    ]
+    if summary.trades:
+        recent = ", ".join(f"{trade.ticker}:{trade.pnl_pct:+.2f}%" for trade in summary.trades[-3:])
+        lines.append(f"recent={recent}")
+    if report_path:
+        lines.append(f"summary={_sanitize_path(report_path)}")
+    return "\n".join(lines)
+
+
+class DailySummaryNotifier:
+    """Persist once-per-day Telegram summary send state."""
+
+    def __init__(self, state_path: Path, *, close_delay_s: float) -> None:
+        self._state_path = state_path
+        self._close_delay_s = close_delay_s
+        self._last_sent_date = ""
+        self._load()
+
+    def _load(self) -> None:
+        if not self._state_path.exists():
+            return
+        try:
+            payload = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.debug("Daily summary notifier state load failed", exc_info=True)
+            return
+        self._last_sent_date = str(payload.get("last_sent_date", "") or "").strip()
+
+    def _persist(self) -> None:
+        payload = {"last_sent_date": self._last_sent_date}
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        self._state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def should_send(self, now: datetime | None = None) -> bool:
+        current = now.astimezone(_KST) if now is not None else datetime.now(_KST)
+        today = current.strftime("%Y-%m-%d")
+        if self._last_sent_date == today:
+            return False
+        market_close_ready = current.replace(hour=15, minute=30, second=0, microsecond=0) + timedelta(seconds=self._close_delay_s)
+        return current >= market_close_ready
+
+    def mark_sent(self, date_str: str) -> None:
+        self._last_sent_date = date_str
+        self._persist()
 
 
 def try_send_high_conf_skip(
@@ -238,18 +348,20 @@ def try_send_high_conf_skip(
     headline: str,
     confidence: int,
     skip_reason: str,
+    shadow_scheduled: bool = False,
     decision_source: str = "LLM",
     mode: str = "paper",
 ) -> bool:
     """Best-effort high-confidence SKIP telegram notification. Never raises."""
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    if not bot_token or not chat_id:
+    target = _telegram_target()
+    if target is None:
         return False
+    bot_token, chat_id = target
     try:
         text = format_high_conf_skip_signal(
             ticker=ticker, corp_name=corp_name, headline=headline,
             confidence=confidence, skip_reason=skip_reason,
+            shadow_scheduled=shadow_scheduled,
             decision_source=decision_source, mode=mode,
         )
         return send_telegram_message(text, bot_token, chat_id)
@@ -278,10 +390,10 @@ def try_send_buy_signal(
     sl_pct: float | None = None,
 ) -> bool:
     """Best-effort BUY signal telegram notification. Never raises."""
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    if not bot_token or not chat_id:
+    target = _telegram_target()
+    if target is None:
         return False
+    bot_token, chat_id = target
     try:
         text = format_buy_signal(
             ticker=ticker, corp_name=corp_name, headline=headline,
@@ -295,4 +407,68 @@ def try_send_buy_signal(
         return send_telegram_message(text, bot_token, chat_id)
     except Exception:
         logger.debug("BUY signal telegram send failed", exc_info=True)
+        return False
+
+
+def try_send_sell_signal(
+    *,
+    ticker: str,
+    exit_type: str,
+    horizon: str,
+    ret_pct: float,
+    pnl_won: float,
+    confidence: int = 0,
+    size_won: float = 0.0,
+    hold_seconds: int = 0,
+    mode: str = "paper",
+    open_positions: int | None = None,
+) -> bool:
+    """Best-effort SELL signal telegram notification. Never raises."""
+    target = _telegram_target()
+    if target is None:
+        return False
+    bot_token, chat_id = target
+    try:
+        text = format_sell_signal(
+            ticker=ticker,
+            exit_type=exit_type,
+            horizon=horizon,
+            ret_pct=ret_pct,
+            pnl_won=pnl_won,
+            confidence=confidence,
+            size_won=size_won,
+            hold_seconds=hold_seconds,
+            mode=mode,
+            open_positions=open_positions,
+        )
+        return send_telegram_message(text, bot_token, chat_id)
+    except Exception:
+        logger.debug("SELL signal telegram send failed", exc_info=True)
+        return False
+
+
+def try_send_daily_summary(
+    summary: DailySummary,
+    *,
+    open_positions: int,
+    daily_pnl_won: float,
+    consecutive_stop_losses: int,
+    report_path: str = "",
+) -> bool:
+    """Best-effort end-of-day summary telegram notification. Never raises."""
+    target = _telegram_target()
+    if target is None:
+        return False
+    bot_token, chat_id = target
+    try:
+        text = format_daily_summary_signal(
+            summary,
+            open_positions=open_positions,
+            daily_pnl_won=daily_pnl_won,
+            consecutive_stop_losses=consecutive_stop_losses,
+            report_path=report_path,
+        )
+        return send_telegram_message(text, bot_token, chat_id)
+    except Exception:
+        logger.debug("Daily summary telegram send failed", exc_info=True)
         return False

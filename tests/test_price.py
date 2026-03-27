@@ -172,6 +172,77 @@ async def test_scheduler_persists_runtime_price_snapshots(tmp_path):
     assert index_payload["entries"][0]["artifacts"]["price_snapshots"]["exists"] is True
 
 
+async def test_paper_virtual_exit_emits_trade_close_callback_once():
+    cfg = Config(paper_take_profit_pct=0.8, paper_stop_loss_pct=-5.0, trailing_stop_enabled=False)
+    fetcher = PriceFetcher(kis=None)
+    log = MagicMock()
+    log.write = AsyncMock()
+    close_cb = MagicMock()
+    scheduler = SnapshotScheduler(cfg, fetcher, log, trade_close_callback=close_cb)
+    scheduler._fetcher.fetch = AsyncMock(side_effect=[
+        PriceInfo(px=10000.0, open_px=10000.0, spread_bps=0.0, cum_value=1_000_000.0, fetch_latency_ms=10),
+        PriceInfo(px=10200.0, open_px=10000.0, spread_bps=0.0, cum_value=1_100_000.0, fetch_latency_ms=10),
+        PriceInfo(px=10300.0, open_px=10000.0, spread_bps=0.0, cum_value=1_200_000.0, fetch_latency_ms=10),
+    ])
+    scheduler.schedule_t0(
+        event_id="evt1",
+        ticker="005930",
+        t0_basis=T0Basis.DECIDED_AT,
+        t0_ts=datetime.now(timezone.utc),
+        run_id="run1",
+        mode="paper",
+        is_buy_decision=True,
+        confidence=82,
+        size_hint="M",
+    )
+
+    snaps = {snap.horizon: snap for snap in scheduler._heap if snap.horizon in {"t0", "t+1m", "close"}}
+    await scheduler._fire(snaps["t0"])
+    await scheduler._fire(snaps["t+1m"])
+    await scheduler._fire(snaps["close"])
+
+    close_cb.assert_called_once()
+    kwargs = close_cb.call_args.kwargs
+    assert kwargs["event_id"] == "evt1"
+    assert kwargs["exit_type"] == "take_profit"
+    assert kwargs["horizon"] == "t+1m"
+    assert kwargs["ret_pct"] == pytest.approx(2.0)
+
+
+async def test_close_snapshot_emits_trade_close_when_no_virtual_exit():
+    cfg = Config(paper_take_profit_pct=5.0, paper_stop_loss_pct=-5.0, trailing_stop_enabled=False)
+    fetcher = PriceFetcher(kis=None)
+    log = MagicMock()
+    log.write = AsyncMock()
+    close_cb = MagicMock()
+    scheduler = SnapshotScheduler(cfg, fetcher, log, trade_close_callback=close_cb)
+    scheduler._fetcher.fetch = AsyncMock(side_effect=[
+        PriceInfo(px=10000.0, open_px=10000.0, spread_bps=0.0, cum_value=1_000_000.0, fetch_latency_ms=10),
+        PriceInfo(px=10050.0, open_px=10000.0, spread_bps=0.0, cum_value=1_050_000.0, fetch_latency_ms=10),
+    ])
+    scheduler.schedule_t0(
+        event_id="evt1",
+        ticker="005930",
+        t0_basis=T0Basis.DECIDED_AT,
+        t0_ts=datetime.now(timezone.utc),
+        run_id="run1",
+        mode="paper",
+        is_buy_decision=True,
+        confidence=79,
+        size_hint="M",
+    )
+
+    snaps = {snap.horizon: snap for snap in scheduler._heap if snap.horizon in {"t0", "close"}}
+    await scheduler._fire(snaps["t0"])
+    await scheduler._fire(snaps["close"])
+
+    close_cb.assert_called_once()
+    kwargs = close_cb.call_args.kwargs
+    assert kwargs["exit_type"] == "close"
+    assert kwargs["horizon"] == "close"
+    assert kwargs["ret_pct"] == pytest.approx(0.5)
+
+
 async def _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=10.0):
     """Helper: create scheduler, schedule t0, fire t0 to set entry price."""
     fetcher = PriceFetcher(kis=None)
