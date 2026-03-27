@@ -442,6 +442,8 @@ async def run() -> None:
         health_state = HealthState()
         health_state.set_guardrail_state(guardrail_state)
         health_state.set_llm_client(decision_engine._llm)
+        health_state.set_feed(feed)
+        health_state.set_performance_tracker(performance_tracker)
         health_runner = None
         try:
             health_runner, _health_task = await start_health_server(

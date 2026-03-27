@@ -80,6 +80,31 @@ def test_exit_type_recorded(tmp_path):
     assert rec.confidence == 85
 
 
+def test_live_metrics_with_drawdown(tmp_path):
+    tracker = PerformanceTracker(tmp_path)
+    tracker.record_trade("evt1", "005930", 50000, 50500, 1.0, size_won=5_000_000)
+    tracker.record_trade("evt2", "035420", 30000, 29400, -2.0, size_won=5_000_000)
+    tracker.record_trade("evt3", "000660", 80000, 80400, 0.5, size_won=5_000_000)
+
+    metrics = tracker.live_metrics()
+
+    assert metrics["total_trades"] == 3
+    assert metrics["wins"] == 2
+    assert metrics["losses"] == 1
+    assert abs(metrics["win_rate"] - 66.67) < 1.0
+    assert metrics["total_pnl_pct"] == -0.5
+    assert metrics["peak_ret_pct"] == 1.0
+    assert metrics["mdd_pct"] == -2.0
+
+
+def test_live_metrics_empty(tmp_path):
+    tracker = PerformanceTracker(tmp_path)
+    metrics = tracker.live_metrics()
+    assert metrics["total_trades"] == 0
+    assert metrics["win_rate"] == 0.0
+    assert metrics["mdd_pct"] == 0.0
+
+
 def test_daily_summary_rolls_date_forward_without_trade(tmp_path):
     tracker = PerformanceTracker(tmp_path)
     tracker._current_date = "2026-03-27"

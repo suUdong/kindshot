@@ -36,6 +36,8 @@ class HealthState:
         # Guardrail state references (set by main.py after init)
         self._guardrail_state: Optional[Any] = None
         self._llm_client: Optional[Any] = None
+        self._feed: Optional[Any] = None
+        self._performance_tracker: Optional[Any] = None
         # Guardrail block tracking
         self.guardrail_blocks: dict[str, int] = {}
 
@@ -45,7 +47,23 @@ class HealthState:
     def set_llm_client(self, client: Any) -> None:
         self._llm_client = client
 
-    def record_poll(self) -> None:
+    def set_feed(self, feed: Any) -> None:
+        self._feed = feed
+
+    def set_performance_tracker(self, tracker: Any) -> None:
+        self._performance_tracker = tracker
+
+    def record_poll(self, polled_at: Optional[datetime | str] = None) -> None:
+        if isinstance(polled_at, datetime):
+            if polled_at.tzinfo is None:
+                polled_at = polled_at.replace(tzinfo=_KST)
+            else:
+                polled_at = polled_at.astimezone(_KST)
+            self.last_poll_at = polled_at.isoformat()
+            return
+        if isinstance(polled_at, str):
+            self.last_poll_at = polled_at
+            return
         self.last_poll_at = datetime.now(_KST).isoformat()
 
     def record_event(self) -> None:
@@ -75,15 +93,50 @@ class HealthState:
         if not success:
             self.kis_errors += 1
 
+    def _resolve_last_poll(self) -> tuple[str, str, int | None]:
+        source = "internal"
+        poll_iso = self.last_poll_at
+        poll_dt: datetime | None = None
+
+        feed_poll = getattr(self._feed, "last_poll_at", None) if self._feed is not None else None
+        if isinstance(feed_poll, datetime):
+            poll_dt = feed_poll if feed_poll.tzinfo is not None else feed_poll.replace(tzinfo=_KST)
+            poll_iso = poll_dt.astimezone(_KST).isoformat()
+            source = "feed"
+        elif isinstance(feed_poll, str) and feed_poll:
+            poll_iso = feed_poll
+            source = "feed"
+            try:
+                poll_dt = datetime.fromisoformat(feed_poll)
+            except ValueError:
+                poll_dt = None
+        elif poll_iso:
+            try:
+                poll_dt = datetime.fromisoformat(poll_iso)
+            except ValueError:
+                poll_dt = None
+        else:
+            source = "unknown"
+
+        age_s = None
+        if poll_dt is not None:
+            if poll_dt.tzinfo is None:
+                poll_dt = poll_dt.replace(tzinfo=_KST)
+            age_s = max(0, int((datetime.now(_KST) - poll_dt.astimezone(_KST)).total_seconds()))
+        return poll_iso, source, age_s
+
     def snapshot(self) -> dict[str, Any]:
         uptime_s = (datetime.now(_KST) - datetime.fromisoformat(self.started_at)).total_seconds()
         avg_llm_ms = self.llm_total_ms / self.llm_calls if self.llm_calls > 0 else 0
+        last_poll_at, last_poll_source, last_poll_age_seconds = self._resolve_last_poll()
 
         result: dict[str, Any] = {
             "status": "healthy" if self.error_count < 10 else "degraded",
             "started_at": self.started_at,
             "uptime_seconds": int(uptime_s),
-            "last_poll_at": self.last_poll_at,
+            "last_poll_at": last_poll_at,
+            "last_poll_source": last_poll_source,
+            "last_poll_age_seconds": last_poll_age_seconds,
             "last_event_at": self.last_event_at,
             "events_seen": self.events_seen,
             "events_processed": self.events_processed,
@@ -118,6 +171,9 @@ class HealthState:
 
         if self.guardrail_blocks:
             result["guardrail_blocks"] = dict(self.guardrail_blocks)
+
+        if self._performance_tracker is not None and hasattr(self._performance_tracker, "live_metrics"):
+            result["trade_metrics"] = self._performance_tracker.live_metrics()
 
         return result
 

@@ -1,10 +1,15 @@
 """Tests for health check server and state."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from kindshot.health import HealthState, _health_handler, start_health_server
+from kindshot.performance import PerformanceTracker
+
+_KST = timezone(timedelta(hours=9))
 
 
 def test_health_state_defaults():
@@ -38,6 +43,32 @@ def test_health_state_records():
     assert snap["kis_calls"] == 2
     assert snap["kis_errors"] == 1
     assert snap["last_poll_at"] != ""
+
+
+def test_health_snapshot_prefers_feed_last_poll_and_exposes_trade_metrics(tmp_path):
+    state = HealthState()
+    tracker = PerformanceTracker(tmp_path)
+    tracker.record_trade("evt1", "005930", 50000, 50500, 1.0, size_won=5_000_000)
+    tracker.record_trade("evt2", "035420", 30000, 29400, -2.0, size_won=5_000_000)
+    tracker.record_trade("evt3", "000660", 80000, 80400, 0.5, size_won=5_000_000)
+
+    feed_poll_at = datetime.now(_KST) - timedelta(seconds=7)
+    feed = type("FeedStub", (), {"last_poll_at": feed_poll_at})()
+
+    state.record_poll()
+    state.set_feed(feed)
+    state.set_performance_tracker(tracker)
+
+    snap = state.snapshot()
+
+    assert snap["last_poll_at"] == feed_poll_at.isoformat()
+    assert snap["last_poll_source"] == "feed"
+    assert snap["last_poll_age_seconds"] >= 0
+    assert snap["trade_metrics"]["total_trades"] == 3
+    assert snap["trade_metrics"]["wins"] == 2
+    assert snap["trade_metrics"]["losses"] == 1
+    assert snap["trade_metrics"]["total_pnl_pct"] == -0.5
+    assert snap["trade_metrics"]["mdd_pct"] == -2.0
 
 
 def test_health_state_degraded():

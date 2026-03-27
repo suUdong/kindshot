@@ -158,6 +158,10 @@ def _load_live_feed(limit: int, n_days: int) -> pd.DataFrame:
 def _load_versions() -> pd.DataFrame:
     return load_version_trend()
 
+@st.cache_data(ttl=15)
+def _load_health() -> dict | None:
+    return load_health()
+
 events_df = _load_events(selected_date)
 ctx_df = _load_ctx(selected_date)
 pnl_df = _load_pnl(selected_date)
@@ -168,6 +172,7 @@ shadow_df = _load_shadow(selected_date)
 shadow_summary = _load_shadow_summary(selected_date)
 live_feed_df = _load_live_feed(40, min(3, len(dates)))
 version_trend_df = _load_versions()
+health = _load_health()
 
 # ── 탭 구성 ──────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -403,6 +408,25 @@ with tab1:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with tab2:
     st.header("매매 성과")
+
+    live_trade_metrics = health.get("trade_metrics", {}) if health else {}
+    if live_trade_metrics:
+        st.subheader("실시간 트레이딩 메트릭")
+        lp1, lp2, lp3, lp4, lp5 = st.columns(5)
+        lp1.metric("실시간 거래수", int(live_trade_metrics.get("total_trades", 0)))
+        lp2.metric("실시간 승률", f"{live_trade_metrics.get('win_rate', 0.0):.1f}%")
+        lp3.metric("실시간 총수익률", f"{live_trade_metrics.get('total_pnl_pct', 0.0):+.2f}%")
+        lp4.metric("실시간 P&L", f"₩{live_trade_metrics.get('total_pnl_won', 0.0):,.0f}")
+        lp5.metric("실시간 MDD", f"{live_trade_metrics.get('mdd_pct', 0.0):+.2f}%")
+        st.caption(
+            "health API live payload 기준"
+            + (
+                f" · last poll {health.get('last_poll_at', '-')}"
+                if health.get("last_poll_at")
+                else ""
+            )
+        )
+        st.divider()
 
     # 단일 날짜 PnL
     st.subheader(f"당일 성과 — {selected_date[:4]}-{selected_date[4:6]}-{selected_date[6:]}")
@@ -959,8 +983,6 @@ with tab3:
 with tab4:
     st.header("시스템 상태")
 
-    health = load_health()
-
     if health:
         # 서버 상태
         status = health.get("status", "unknown")
@@ -977,6 +999,28 @@ with tab4:
         c4.metric("에러 건수", health.get("error_count", 0))
 
         st.divider()
+
+        hb1, hb2, hb3 = st.columns(3)
+        hb1.metric("마지막 Poll", health.get("last_poll_at") or "N/A")
+        hb2.metric("Poll Source", str(health.get("last_poll_source", "unknown")).upper())
+        last_poll_age = health.get("last_poll_age_seconds")
+        hb3.metric("Poll Age", f"{last_poll_age}s" if last_poll_age is not None else "N/A")
+
+        trade_metrics = health.get("trade_metrics", {})
+        if trade_metrics:
+            st.subheader("실시간 트레이딩 메트릭")
+            tc1, tc2, tc3, tc4, tc5 = st.columns(5)
+            tc1.metric("거래수", int(trade_metrics.get("total_trades", 0)))
+            tc2.metric("승률", f"{trade_metrics.get('win_rate', 0.0):.1f}%")
+            tc3.metric("총수익률", f"{trade_metrics.get('total_pnl_pct', 0.0):+.2f}%")
+            tc4.metric("실현 P&L", f"₩{trade_metrics.get('total_pnl_won', 0.0):,.0f}")
+            tc5.metric("MDD", f"{trade_metrics.get('mdd_pct', 0.0):+.2f}%")
+
+            extra_cols = st.columns(2)
+            extra_cols[0].metric("평균 수익률", f"{trade_metrics.get('avg_pnl_pct', 0.0):+.2f}%")
+            extra_cols[1].metric("누적 Peak", f"{trade_metrics.get('peak_ret_pct', 0.0):+.2f}%")
+
+            st.divider()
 
         col1, col2 = st.columns(2)
 

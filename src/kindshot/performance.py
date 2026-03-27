@@ -178,6 +178,48 @@ class PerformanceTracker:
         self._sync_current_date()
         return self._build_daily_summary()
 
+    def live_metrics(self) -> dict[str, float | int]:
+        """현재 intraday closed-trade 기준 실시간 성과 메트릭."""
+        self._sync_current_date()
+        trades = self._trades
+        if not trades:
+            return {
+                "total_trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0.0,
+                "total_pnl_pct": 0.0,
+                "total_pnl_won": 0.0,
+                "avg_pnl_pct": 0.0,
+                "peak_ret_pct": 0.0,
+                "mdd_pct": 0.0,
+            }
+
+        wins = [t for t in trades if t.pnl_pct > 0]
+        losses = [t for t in trades if t.pnl_pct <= 0]
+        cumulative = 0.0
+        peak = 0.0
+        max_drawdown = 0.0
+        for trade in trades:
+            cumulative += trade.pnl_pct
+            peak = max(peak, cumulative)
+            max_drawdown = min(max_drawdown, cumulative - peak)
+
+        total_trades = len(trades)
+        total_pnl_pct = sum(t.pnl_pct for t in trades)
+        total_pnl_won = sum(t.pnl_won for t in trades)
+        return {
+            "total_trades": total_trades,
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round((len(wins) / total_trades * 100) if total_trades else 0.0, 4),
+            "total_pnl_pct": round(total_pnl_pct, 4),
+            "total_pnl_won": round(total_pnl_won, 0),
+            "avg_pnl_pct": round(total_pnl_pct / total_trades if total_trades else 0.0, 4),
+            "peak_ret_pct": round(peak, 4),
+            "mdd_pct": round(max_drawdown, 4),
+        }
+
     def flush(self) -> Optional[Path]:
         """현재 일일 요약을 파일로 저장."""
         self._sync_current_date()

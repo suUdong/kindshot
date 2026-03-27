@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -267,6 +268,38 @@ def test_load_health_offline():
     """서버가 없을 때 None 반환."""
     result = load_health()
     assert result is None
+
+
+def test_load_health_live_metrics_payload():
+    payload = {
+        "status": "healthy",
+        "last_poll_at": "2026-03-28T09:10:00+09:00",
+        "last_poll_source": "feed",
+        "trade_metrics": {
+            "total_trades": 3,
+            "win_rate": 66.7,
+            "total_pnl_pct": -0.5,
+            "mdd_pct": -2.0,
+        },
+    }
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(payload).encode()
+
+    with patch("urllib.request.urlopen", return_value=_Resp()):
+        result = load_health()
+
+    assert result is not None
+    assert result["last_poll_source"] == "feed"
+    assert result["trade_metrics"]["total_trades"] == 3
+    assert result["trade_metrics"]["mdd_pct"] == -2.0
 
 
 def test_compute_daily_equity_curve(fake_logs):
