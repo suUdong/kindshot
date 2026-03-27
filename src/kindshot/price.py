@@ -477,17 +477,14 @@ class SnapshotScheduler:
             except Exception:
                 logger.exception("LIVE SELL order error [%s]", snap.ticker)
 
-    async def flush_close_on_shutdown(self) -> int:
-        """Fire pending close snapshots if shutdown happens after close fetch time."""
-        now_kst = datetime.now(_KST)
-        if now_kst < self._close_fire_kst(now_kst):
-            return 0
-
+    async def flush_ready_on_shutdown(self) -> int:
+        """Fire all snapshots that are already due at shutdown time."""
+        now = time.monotonic()
         kept: list[ScheduledSnapshot] = []
         flushed: list[ScheduledSnapshot] = []
         while self._heap:
             snap = heapq.heappop(self._heap)
-            if snap.horizon == "close":
+            if snap.fire_at <= now:
                 flushed.append(snap)
             else:
                 kept.append(snap)

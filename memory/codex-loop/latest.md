@@ -1,42 +1,30 @@
-Hypothesis: If Kindshot keeps raw-title bucketing intact but adds a source-aware analysis headline parser for contract/article handling downstream, it can reduce weak KIS article-style `수주` / `공급계약` false positives without muting direct disclosure-style catalysts.
+Hypothesis: If v66 shadow tracking is validated against current paper-runtime data, then guardrail-blocked high-confidence BUYs should produce `shadow_` snapshots, the opportunity-cost report should show skip-reason/hour/stale-data context, and shutdown should no longer drop already-due snapshots during restart.
 
 Changed files:
-- `docs/plans/2026-03-27-news-signal-source-hardening.md`
-- `src/kindshot/headline_parser.py`
-- `src/kindshot/decision.py`
-- `src/kindshot/guardrails.py`
-- `src/kindshot/pipeline.py`
+- `.omx/context/ralph-kindshot-v66-shadow-snapshot-20260327T080258Z.md`
+- `.omx/plans/prd-shadow-snapshot-reliability-20260327.md`
+- `.omx/plans/test-spec-shadow-snapshot-reliability-20260327.md`
 - `src/kindshot/price.py`
-- `src/kindshot/strategy_observability.py`
-- `tests/test_headline_parser.py`
-- `tests/test_bucket.py`
-- `tests/test_decision.py`
-- `tests/test_guardrails.py`
-- `tests/test_pipeline.py`
+- `src/kindshot/main.py`
+- `scripts/shadow_analysis.py`
 - `tests/test_price.py`
-- `tests/test_strategy_observability.py`
+- `tests/test_shadow_analysis.py`
 - `memory/codex-loop/latest.md`
 - `memory/codex-loop/session.md`
 
 Validation:
-- Added `headline_parser.py` to normalize analysis headlines and detect commentary-style contract headlines.
-- Kept `classify(raw.title)` unchanged so existing IGNORE protections for broker/article prefixes remain intact.
-- Wired normalized analysis headlines into contract preflight, article penalty, headline-quality penalty, and hold-profile routing.
-- Added regression coverage for:
-  - raw-title bucket IGNORE preservation
-  - contract/article preflight tightening
-  - normalized analysis headline handoff into decision flow
-  - headline parser helpers
-- Fixed deterministic validation gaps uncovered by the full suite:
-  - `price.py` now records entry KST from `t0_ts` instead of wall-clock now
-  - strategy observability defaults/tests align with current runtime config
-- Architect verification passed after follow-up fixes for disclosure-source `dorg` handling, fallback raw-headline article detection, and enabled pipeline propagation coverage.
-- `python3 -m compileall src/kindshot tests scripts` passed
-- `.venv/bin/python -m pytest tests/test_headline_parser.py tests/test_bucket.py tests/test_decision.py tests/test_guardrails.py tests/test_pipeline.py -q` passed (`347 passed`)
-- `.venv/bin/python -m pytest tests/test_price.py tests/test_strategy_observability.py -q` passed (`32 passed, 1 skipped`)
-- `.venv/bin/python -m pytest -q` passed (`811 passed, 1 skipped, 1 warning`)
+- Live/runtime evidence:
+  - local `logs/kindshot_20260327.jsonl` contained 15 guardrail-blocked `BUY` events with `decision_confidence >= 75`; `OPENING_LOW_CONFIDENCE` fired twice at `2026-03-27 09:00 KST`
+  - remote `journalctl -u kindshot` after the `2026-03-27 16:42 KST` restart showed `Normalized analysis headline [...]`, `Technical indicator adj [...]`, and `Confidence graduated cap [...]`, confirming v66 news-signal and MACD paths were active in the running paper service
+  - remote `/opt/kindshot/data/runtime/price_snapshots/20260327.jsonl` contained 7 rows for `shadow_7c47fb630764e6b2`, proving shadow snapshot collection was live for a guardrail-blocked `BUY`
+  - remote shadow event `7c47fb630764e6b2` was `ticker=001510`, `decision_confidence=78`, `skip_reason=MARKET_CLOSE_CUTOFF`, detected at `2026-03-27T16:55:16+09:00`
+  - running the updated `scripts/shadow_analysis.py` on copied remote data surfaced the event under `MARKET_CLOSE_CUTOFF`, hour `16:00`, and flagged it as a flat-price / stale suspect (`KIS_REST`)
+- Code verification:
+  - `python3 -m compileall src/kindshot tests scripts` passed
+  - `.venv/bin/python -m pytest tests/test_price.py tests/test_shadow_analysis.py -q` passed (`31 passed, 1 skipped`)
+  - `.venv/bin/python -m pytest -q` passed (`815 passed, 1 skipped, 1 warning`)
+  - diagnostics on `src/kindshot/price.py`, `scripts/shadow_analysis.py`, and `tests/test_shadow_analysis.py` returned 0 issues
 
 Risk and rollback note:
-- Main residual risk is heuristic over-suppression: some non-disclosure KIS article titles with contract language may now be skipped earlier. This is intentional, but should be verified against fresh paper logs.
-- Raw event logging, deploy behavior, secrets, and live-order behavior remain unchanged.
-- Roll back by reverting the files listed above; the change is confined to analysis/evaluation/reporting paths.
+- Residual risk is operational: paper mode still warns that snapshots use VTS/stale pricing without real KIS API keys, so after-close shadow events can look flat even when collection is functioning.
+- Roll back by reverting the shutdown flush / shadow analysis commit; no deploy or secrets changes are involved in this slice.

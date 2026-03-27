@@ -365,11 +365,11 @@ async def run() -> None:
             # Idempotent shutdown to cover both signaled and non-signaled exits.
             stop_event.set()
             feed.stop()
-            flushed_close = 0
+            flushed_ready = 0
             try:
-                flushed_close = await scheduler.flush_close_on_shutdown()
+                flushed_ready = await scheduler.flush_ready_on_shutdown()
             except LogWriteError:
-                logger.critical("Close snapshot shutdown flush failed — stopping runtime")
+                logger.critical("Ready snapshot shutdown flush failed — stopping runtime")
             if unknown_review_queue is not None:
                 # Sentinel 투입 후 최대 5초 대기 (무한 블로킹 방지)
                 await unknown_review_queue.put(None)
@@ -384,8 +384,8 @@ async def run() -> None:
             if kis is not None:
                 logger.info("KIS client stats: %s", kis.stats_snapshot())
             logger.info("Runtime counters: %s", counter_snapshot(counters))
-            if flushed_close:
-                logger.info("Shutdown flushed close snapshots: %d", flushed_close)
+            if flushed_ready:
+                logger.info("Shutdown flushed ready snapshots: %d", flushed_ready)
             if health_runner is not None:
                 await health_runner.cleanup()
-            logger.info("Shutdown complete. Pending snapshots lost: %d", scheduler.pending_count)
+            logger.info("Shutdown complete. Pending future snapshots lost: %d", scheduler.pending_count)

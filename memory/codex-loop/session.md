@@ -3,9 +3,9 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `News Signal Accuracy Hardening`
-- Focus: harden article-style contract/news parsing so KIS commentary titles stop leaking weak `수주` / `공급계약` signals into the positive decision path.
-- Active hypothesis: raw-title bucket IGNORE protections should stay intact, while a source-aware downstream analysis headline parser should tighten contract/article preflight and quality handling.
+- Phase: `v66 Shadow Snapshot Verification`
+- Focus: validate live `shadow_` snapshot collection, quantify opportunity-cost reporting on collected data, and harden shutdown behavior so already-due snapshots are not dropped during restart.
+- Active hypothesis: shadow snapshot collection is already live on the paper server, but shutdown-time due-snapshot loss and weak operator reporting reduce trust in the collected data; fixing those two gaps should make v66 monitoring actionable.
 - Blocker: none.
 
 ## Environment
@@ -15,22 +15,27 @@
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
   - `python3 -m compileall src/kindshot tests scripts` passed
-  - `.venv/bin/python -m pytest tests/test_headline_parser.py tests/test_bucket.py tests/test_decision.py tests/test_guardrails.py tests/test_pipeline.py -q` passed (`347 passed`)
-  - `.venv/bin/python -m pytest tests/test_price.py tests/test_strategy_observability.py -q` passed (`32 passed, 1 skipped`)
+  - `.venv/bin/python -m pytest tests/test_price.py tests/test_shadow_analysis.py -q` passed (`31 passed, 1 skipped`)
   - `.venv/bin/python -m pytest -q` passed (`811 passed, 1 skipped, 1 warning`)
+  - `.venv/bin/python -m pytest -q` passed again after the shadow-snapshot slice (`815 passed, 1 skipped, 1 warning`)
+  - remote `/opt/kindshot/data/runtime/price_snapshots/20260327.jsonl` contains `shadow_7c47fb630764e6b2` with 7 collected horizons
+  - remote journal confirms live `Normalized analysis headline [...]`, `Technical indicator adj [...]`, and `Confidence graduated cap [...]` entries after the `2026-03-27 16:42 KST` restart
+  - updated `scripts/shadow_analysis.py` correctly reports the copied remote shadow event as `MARKET_CLOSE_CUTOFF`, hour `16:00`, and flat-price/stale suspect
 
 ## Last Completed Step
 
-- Added `headline_parser.py` and wired normalized analysis headlines into decision/preflight/penalty/hold-profile paths.
-- Preserved raw-title bucketing so existing IGNORE override protections for broker/article prefixes remain active.
-- Added parser/decision/pipeline regression tests, resolved architect-raised regressions around disclosure-source `dorg` detection and fallback raw-headline handling, and fixed two unrelated full-suite validation gaps discovered during verification (`price.py` entry-time determinism and strategy observability config alignment).
+- Verified that live paper runtime is emitting real `shadow_` snapshot data for guardrail-blocked `BUY` decisions.
+- Replaced close-only shutdown flush with ready-snapshot flush so already-due snapshots are preserved on shutdown/restart.
+- Expanded `scripts/shadow_analysis.py` with skip-reason breakdown, hour breakdown, and flat-price / stale-suspect reporting, then covered the slice with targeted tests and a passing full suite.
 
 ## Next Intended Step
 
-- Monitor fresh paper logs to confirm weak KIS article-style contract flow shrinks without suppressing direct disclosure-style catalysts.
-- After collecting that evidence, resume the roadmap-backed historical collection / real-environment validation slice.
+- Keep monitoring live paper flow for a higher-volume sample of shadow events, especially intraday cases that are not `MARKET_CLOSE_CUTOFF`.
+- If flat-price shadow events continue dominating, treat VTS/stale-price limitations as an operational blocker for deeper opportunity-cost conclusions and decide whether real-price snapshot sourcing can be enabled without touching secret-handling automation.
+- After enough shadow and live v66 evidence accumulates, resume the roadmap-backed historical collection / real-environment validation slice.
 
 ## Notes
 
-- This slice changes analysis-time parsing and report reconstruction only; raw logging, deploy paths, secrets, and live-order behavior remain unchanged.
+- This slice changes shutdown snapshot handling and operator analysis/reporting only; raw deploy paths, secrets, and live-order behavior remain unchanged.
 - Full-suite warning remains in `tests/test_health.py` as `NotAppKeyWarning`; no new warnings were introduced by this slice.
+- Current live monitoring caveat: paper runtime still warns that price snapshots use VTS/stale pricing when real KIS keys are absent, so after-close shadow events can look flat even when collection itself is working.

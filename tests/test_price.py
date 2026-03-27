@@ -779,7 +779,7 @@ async def test_consecutive_fills_are_tracked_per_event_id():
     assert scheduler._t0_prices["evt2"][0] == pytest.approx(10000.0)
 
 
-async def test_flush_close_on_shutdown_fires_pending_close_after_cutoff():
+async def test_flush_ready_on_shutdown_fires_due_snapshots_only():
     cfg = Config(close_snapshot_delay_s=300.0)
     fetcher = PriceFetcher(kis=None)
     log = MagicMock()
@@ -795,19 +795,21 @@ async def test_flush_close_on_shutdown_fires_pending_close_after_cutoff():
         t0_ts=event_ts,
         run_id="run1",
     )
-    close_count_before = len([s for s in scheduler._heap if s.horizon == "close"])
-    assert close_count_before == 1
+    due_horizons = {"t0", "t+30s", "t+1m"}
+    for snap in scheduler._heap:
+        if snap.horizon in due_horizons:
+            snap.fire_at = 10.0
+        else:
+            snap.fire_at = 1000.0
 
-    with patch("kindshot.price.datetime") as mock_dt:
-        mock_dt.now.return_value = datetime(2026, 3, 6, 15, 36, tzinfo=timezone(timedelta(hours=9)))
-        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-        flushed = await scheduler.flush_close_on_shutdown()
+    with patch("kindshot.price.time.monotonic", return_value=100.0):
+        flushed = await scheduler.flush_ready_on_shutdown()
 
-    assert flushed == 1
-    assert len([s for s in scheduler._heap if s.horizon == "close"]) == 0
+    assert flushed == 3
+    assert {s.horizon for s in scheduler._heap} == {"t+2m", "t+5m", "t+10m", "t+15m", "t+20m", "t+30m", "close"}
 
 
-async def test_flush_close_on_shutdown_skips_before_cutoff():
+async def test_flush_ready_on_shutdown_keeps_future_snapshots():
     cfg = Config(close_snapshot_delay_s=300.0)
     fetcher = PriceFetcher(kis=None)
     scheduler = SnapshotScheduler(cfg, fetcher, MagicMock())
@@ -820,10 +822,11 @@ async def test_flush_close_on_shutdown_skips_before_cutoff():
         run_id="run1",
     )
 
-    with patch("kindshot.price.datetime") as mock_dt:
-        mock_dt.now.return_value = datetime(2026, 3, 6, 15, 34, tzinfo=timezone(timedelta(hours=9)))
-        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-        flushed = await scheduler.flush_close_on_shutdown()
+    for snap in scheduler._heap:
+        snap.fire_at = 1000.0
+
+    with patch("kindshot.price.time.monotonic", return_value=100.0):
+        flushed = await scheduler.flush_ready_on_shutdown()
 
     assert flushed == 0
-    assert len([s for s in scheduler._heap if s.horizon == "close"]) == 1
+    assert len(scheduler._heap) == 10

@@ -49,6 +49,9 @@ class ShadowTrade:
     virtual_exit_type: str = "NO_DATA"  # TP, SL, HOLD
     virtual_exit_pnl: float = 0.0
     virtual_exit_horizon: str = ""
+    detected_hour_kst: int = -1
+    price_sources: tuple[str, ...] = field(default_factory=tuple)
+    flat_price: bool = False
 
 
 def _parse_kst_hour(ts: str) -> int:
@@ -125,6 +128,7 @@ def build_shadow_trades(
     # shadow_ prefix 스냅샷만 필터링, event_id별 그룹핑
     shadow_snaps: dict[str, dict[str, float]] = defaultdict(dict)
     shadow_dates: dict[str, str] = {}
+    shadow_sources: dict[str, set[str]] = defaultdict(set)
     for s in snapshots:
         eid = s.get("event_id", "")
         if not eid.startswith("shadow_"):
@@ -136,6 +140,9 @@ def build_shadow_trades(
         ts = s.get("ts", "")
         if ts:
             shadow_dates[eid] = ts[:10]
+        price_source = s.get("price_source")
+        if price_source:
+            shadow_sources[eid].add(str(price_source))
 
     if not shadow_snaps:
         return []
@@ -156,6 +163,8 @@ def build_shadow_trades(
         # 원본 event_id로 이벤트 정보 조회
         original_eid = shadow_eid.replace("shadow_", "", 1)
         ev = event_map.get(original_eid, {})
+        detected_at = str(ev.get("detected_at", ""))
+        detected_hour_kst = _parse_kst_hour(detected_at)
 
         # horizon별 수익률 계산
         returns: dict[str, float] = {}
@@ -196,6 +205,9 @@ def build_shadow_trades(
             exit_pnl = returns[last_h]
             exit_horizon = last_h
 
+        observed_prices = [float(px) for px in snaps.values() if px is not None and px > 0]
+        flat_price = len(observed_prices) >= 2 and len({round(px, 6) for px in observed_prices}) == 1
+
         trade = ShadowTrade(
             event_id=shadow_eid,
             date=shadow_dates.get(shadow_eid, ""),
@@ -212,6 +224,9 @@ def build_shadow_trades(
             virtual_exit_type=exit_type,
             virtual_exit_pnl=exit_pnl,
             virtual_exit_horizon=exit_horizon,
+            detected_hour_kst=detected_hour_kst,
+            price_sources=tuple(sorted(shadow_sources.get(shadow_eid, set()))),
+            flat_price=flat_price,
         )
         trades.append(trade)
 
@@ -315,16 +330,51 @@ def render_report(trades: list[ShadowTrade], tp_pct: float, sl_pct: float) -> st
         avg_p = sum(t.virtual_exit_pnl for t in group) / n
         lines.append(f"  {reason[:25]:<25} {n:>4} {wr:>7.1f}% {avg_p:>+8.2f}%")
 
-    # 6. 개별 트레이드 상세
+    # 6. 시간대별 분석
     lines.append(f"\n{'─' * 70}")
-    lines.append("  6. 개별 트레이드 상세")
+    lines.append("  6. 시간대별 분석 (KST)")
+    lines.append(f"{'─' * 70}")
+    hour_groups: dict[str, list[ShadowTrade]] = defaultdict(list)
+    for t in trades:
+        hour_key = f"{t.detected_hour_kst:02d}" if t.detected_hour_kst >= 0 else "??"
+        hour_groups[hour_key].append(t)
+    lines.append(f"  {'시간':<8} {'건수':>4} {'가상승률':>8} {'평균P&L':>9}")
+    for hour, group in sorted(hour_groups.items()):
+        n = len(group)
+        wr = len([t for t in group if t.virtual_exit_type == "TP"]) / n * 100
+        avg_p = sum(t.virtual_exit_pnl for t in group) / n
+        lines.append(f"  {hour}:00   {n:>4} {wr:>7.1f}% {avg_p:>+8.2f}%")
+
+    # 7. Flat/stale 의심 건
+    flat_trades = [t for t in trades if t.flat_price]
+    if flat_trades:
+        lines.append(f"\n{'─' * 70}")
+        lines.append("  7. Flat-price / stale 의심 건")
+        lines.append(f"{'─' * 70}")
+        lines.append("  동일 가격이 여러 horizon에서 반복된 건입니다. after-close/VTS 환경이면 기회비용 해석을 보수적으로 해야 합니다.")
+        lines.append(f"  {'날짜':<12} {'종목':<10} {'conf':>4} {'차단사유':<20} {'source':<12}")
+        for t in flat_trades:
+            sources = ",".join(t.price_sources) if t.price_sources else "-"
+            lines.append(
+                f"  {t.date:<12} {t.ticker:<10} {t.confidence:>4} "
+                f"{t.skip_reason[:20]:<20} {sources[:12]:<12}"
+            )
+
+    # 8. 개별 트레이드 상세
+    lines.append(f"\n{'─' * 70}")
+    lines.append("  8. 개별 트레이드 상세")
     lines.append(f"{'─' * 70}")
     for t in trades:
         lines.append(f"\n  [{t.event_id}]")
-        lines.append(f"    {t.date} | {t.ticker} | conf={t.confidence} | {t.bucket}")
+        hour_label = f"{t.detected_hour_kst:02d}:00 KST" if t.detected_hour_kst >= 0 else "unknown hour"
+        lines.append(f"    {t.date} | {t.ticker} | conf={t.confidence} | {t.bucket} | {hour_label}")
         lines.append(f"    헤드라인: {t.headline}")
         lines.append(f"    차단사유: {t.skip_reason}")
         lines.append(f"    진입가: {t.t0_price:,.0f}")
+        if t.price_sources:
+            lines.append(f"    price_source: {', '.join(t.price_sources)}")
+        if t.flat_price:
+            lines.append("    flat-price suspect: multiple horizons repeated the same px")
         horizon_str = "  ".join(f"{h}:{r:+.2f}%" for h, r in t.returns.items())
         lines.append(f"    수익률: {horizon_str}")
         lines.append(f"    가상결과: {t.virtual_exit_type} @ {t.virtual_exit_horizon} ({t.virtual_exit_pnl:+.2f}%)")
