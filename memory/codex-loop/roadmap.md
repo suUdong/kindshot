@@ -18,7 +18,7 @@
 - Track: User-Directed Risk Management
 - Phase: Risk Management v2
 - Status: Completed (user override)
-- Reason: The user explicitly redirected the loop to strengthen runtime drawdown control after the v70 deploy. This slice made recent win-rate based daily-loss tightening restart-safe, made sector concentration runtime-effective by wiring KIS sector metadata into buy/sell bookkeeping, pushed `839ffdc`, and deployed it to `kindshot-server`.
+- Reason: The user explicitly redirected the loop to strengthen runtime drawdown control after the v70 deploy. The latest slice restored the simultaneous-position cap by moving `max_positions` to checked-in risk config governance, making legacy `.env` value `MAX_POSITIONS=9999` fall back to the safe paper cap `4`, pushed `5ea0269`, and deployed it to `kindshot-server`.
 
 ## Phases
 
@@ -92,9 +92,9 @@
 
 ## Next Run Candidates
 
-1. Observe the next paper session to confirm the recent win-rate multiplier activates after same-day closed trades and does not mis-tighten on partial/noise cases.
-2. Verify on real paper BUY attempts that KIS `bstp_kor_isnm` is stable enough for sector concentration; add a fallback only if field quality is insufficient.
-3. Clean or re-clone the remote `/opt/kindshot/.git` metadata so future deployments can rely on git provenance instead of clean-export hash checks.
+1. Observe the next paper session to confirm `MAX_POSITIONS` blocks trigger correctly once four simultaneous positions are already open.
+2. Observe same-day closed trades to confirm the recent win-rate multiplier activates after enough samples and does not mis-tighten on partial/noise cases.
+3. Verify on real paper BUY attempts that KIS `bstp_kor_isnm` is stable enough for sector concentration; add a fallback only if field quality is insufficient.
 
 ## Deferred
 

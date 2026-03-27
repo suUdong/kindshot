@@ -28,6 +28,77 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 02:03 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `5ea0269`
+- Deployer: Codex manual SSH + `rsync` (runtime files + `config/`) + remote venv reinstall
+- Summary:
+  1. **max position cap rollout** — synced the new checked-in `config/risk_limits.toml` plus updated runtime modules so `MAX_POSITIONS=9999` no longer disables the paper-trading simultaneous-position guardrail
+  2. **service restart** — restarted both `kindshot` and `kindshot-dashboard` under systemd and confirmed both units returned to `active`
+  3. **runtime verification** — confirmed both remote `Config().max_positions` and `/health.guardrail_state.configured_max_positions` resolve to `4`
+- Validation:
+  - local `python3 -m compileall src scripts tests dashboard`
+  - local `.venv/bin/python -m pytest tests/test_config.py tests/test_guardrails.py tests/test_health.py tests/test_pipeline.py -q` → `216 passed, 1 warning`
+  - local `.venv/bin/python -m pytest -q` → `974 passed, 1 skipped, 1 warning`
+  - remote `python3 -m compileall src scripts tests dashboard`
+  - remote `./.venv/bin/python -m pip install . --quiet`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `./.venv/bin/python -c 'from kindshot.config import Config; print(Config().max_positions)'` → `4`
+  - remote health summary returned:
+    - `status: "healthy"`
+    - `guardrail_state.configured_max_positions: 4`
+    - `guardrail_state.position_count: 0`
+    - `guardrail_state.dynamic_daily_loss_floor_won: -3000000.0`
+    - `guardrail_state.recent_closed_trades: 0`
+    - `guardrail_state.consecutive_loss_halt_threshold: 3`
+    - `guardrail_state.sector_positions: {}`
+    - `recent_pattern_profile.total_trades: 14`
+  - remote `curl -I http://127.0.0.1:8501` → `HTTP/1.1 200 OK`
+  - remote journal after restart showed:
+    - `kindshot 0.1.3 starting`
+    - `RecentPatternProfile loaded: dates=20260319,20260320,20260327 trades=14 boost=1 loss=2`
+    - `Health server started on 127.0.0.1:8080`
+- Rollback: redeploy the prior known-good tree (or revert `5ea0269`), reinstall with the remote venv, and restart `kindshot` + `kindshot-dashboard`
+- Result: 성공
+- Notes: the first immediate post-restart health probe returned an empty body during service warm-up, but the follow-up probe passed once the health server finished binding
+
+### 2026-03-28 01:42 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `2bda06d` (runtime code for risk v2 remains `839ffdc`)
+- Deployer: Codex manual SSH + `rsync` (tracked runtime files) + remote venv reinstall
+- Summary:
+  1. **latest tracked runtime sync** — re-synced `src/`, `dashboard/`, `scripts/`, `tests/`, `pyproject.toml`, `README.md`, and `requirements.lock` to `/opt/kindshot` so the server matches the latest local runtime-relevant tree without mutating remote git metadata
+  2. **service restart** — restarted both `kindshot` and `kindshot-dashboard` under systemd and confirmed both units returned to `active`
+  3. **risk v2 runtime confirmation** — `/health.guardrail_state` still reports the risk management v2 fields (`recent_closed_trades`, `recent_win_rate_multiplier`, `consecutive_loss_halt_threshold`, `sector_positions`) and the recent pattern profile remained loaded after restart
+- Validation:
+  - local `python3 -m compileall src scripts tests dashboard`
+  - local `.venv/bin/python -m pytest -q` → `971 passed, 1 skipped, 1 warning`
+  - remote `python3 -m compileall src scripts tests dashboard`
+  - remote `./.venv/bin/python -m pip install . --quiet`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote health summary returned:
+    - `status: "healthy"`
+    - `guardrail_state.dynamic_daily_loss_floor_won: -3000000.0`
+    - `guardrail_state.dynamic_daily_loss_remaining_won: 3000000.0`
+    - `guardrail_state.recent_closed_trades: 0`
+    - `guardrail_state.recent_win_rate: null`
+    - `guardrail_state.recent_win_rate_multiplier: 1.0`
+    - `guardrail_state.consecutive_loss_halt_threshold: 3`
+    - `guardrail_state.sector_positions: {}`
+    - `recent_pattern_profile.total_trades: 14`
+  - remote `curl -I http://127.0.0.1:8501` → `HTTP/1.1 200 OK`
+  - remote journal after restart showed:
+    - `kindshot 0.1.3 starting`
+    - `RecentPatternProfile loaded: dates=20260319,20260320,20260327 trades=14 boost=1 loss=2`
+    - `Health server started on 127.0.0.1:8080`
+- Rollback: re-sync the prior known-good tree to `/opt/kindshot`, reinstall with the remote venv, and restart `kindshot` + `kindshot-dashboard`
+- Result: 성공
+- Notes: remote `/opt/kindshot` still has no useful git HEAD metadata, so file sync plus live service checks remain the deployment source of truth
+
 ### 2026-03-28 01:33 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)
