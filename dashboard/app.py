@@ -463,14 +463,20 @@ with tab2:
         for d in sorted(multi_df["date"].unique()):
             day_df = multi_df[multi_df["date"] == d]
             total_ev = len(day_df)
-            buy_n = len(day_df[day_df["decision_action"] == "BUY"])
+            if "effective_action" in day_df.columns:
+                buy_exec = len(day_df[day_df["effective_action"] == "BUY"])
+                buy_blocked = len(day_df[day_df["effective_action"] == "GUARDRAIL_BLOCKED"])
+            else:
+                buy_exec = len(day_df[day_df["decision_action"] == "BUY"])
+                buy_blocked = 0
             skip_n = len(day_df[day_df["decision_action"] == "SKIP"])
             confs = day_df["decision_confidence"].dropna()
             avg_conf = confs.mean() if len(confs) > 0 else 0
             daily_stats.append({
                 "date": f"{d[:4]}-{d[4:6]}-{d[6:]}",
                 "총이벤트": total_ev,
-                "BUY": buy_n,
+                "BUY실행": buy_exec,
+                "BUY차단": buy_blocked,
                 "SKIP": skip_n,
                 "평균confidence": round(avg_conf, 1),
             })
@@ -479,11 +485,13 @@ with tab2:
         col1, col2 = st.columns(2)
         with col1:
             fig_daily = go.Figure()
-            fig_daily.add_trace(go.Bar(x=daily_df["date"], y=daily_df["BUY"],
-                                       name="BUY", marker_color="#2ecc71"))
+            fig_daily.add_trace(go.Bar(x=daily_df["date"], y=daily_df["BUY실행"],
+                                       name="BUY 실행", marker_color="#2ecc71"))
+            fig_daily.add_trace(go.Bar(x=daily_df["date"], y=daily_df["BUY차단"],
+                                       name="BUY 차단", marker_color="#f39c12"))
             fig_daily.add_trace(go.Bar(x=daily_df["date"], y=daily_df["SKIP"],
                                        name="SKIP", marker_color="#e74c3c"))
-            fig_daily.update_layout(barmode="stack", title="일별 BUY/SKIP",
+            fig_daily.update_layout(barmode="stack", title="일별 BUY 실행/차단/SKIP",
                                     height=350, xaxis_title="날짜", yaxis_title="건수")
             st.plotly_chart(fig_daily, use_container_width=True)
 
