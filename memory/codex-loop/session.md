@@ -3,34 +3,39 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `Monthly Full-Strategy Backtest`
-- Focus: the requested local monthly report slice was implemented and executed: embedded snapshot backfill was fixed, a unified backtest/report script was added, and the latest local strategy estimate plus `v64`~`v70` comparison were generated.
-- Active hypothesis: if the local reporting surface faithfully reconstructs current deterministic guards and current exit/risk logic on top of historical logged BUY decisions, then operators can make the next strategy choice from one report even while the opaque LLM replay path is temporarily blocked.
-- Blocker: current opaque LLM replay is blocked in this environment because NVIDIA is unconfigured locally and Anthropic returns `400 invalid_request_error` due to insufficient credits.
+- Phase: `Runtime Latency Profiling`
+- Focus: the requested end-to-end profiling slice was implemented, pushed, and deployed: runtime stage latency is now structured, `/health` exposes recent profiling and LLM cache stats, and equivalent LLM decisions persist across restarts.
+- Active hypothesis: if fresh paper-session events accumulate after this rollout, then operators can identify whether `context_card`, LLM, final guardrails, or order-attempt paths dominate real runtime latency from the new `/health` and log-backed profiling surfaces.
+- Blocker: today is `2026-03-28` (Saturday, KST), so the deployed runtime is healthy but does not yet have post-rollout live event samples to populate the new profiling window.
 
 ## Environment
 
 - Host: local workspace
-- Runtime target: none for this run; this slice stayed local-only and did not deploy
+- Runtime target: AWS Lightsail `kindshot-server` (`/opt/kindshot`, paper mode)
 - Validation status:
-  - local `./.venv/bin/python -m pytest tests/test_trade_db.py tests/test_monthly_full_strategy_backtest.py -q` passed (`20 passed`)
-  - local `./.venv/bin/python scripts/monthly_full_strategy_backtest.py` produced `logs/daily_analysis/monthly_full_strategy_backtest_20260328.{json,txt}`
   - local `python3 -m compileall src scripts tests` passed
-  - local full `pytest -q` passed (`997 passed, 1 skipped, 1 warning`)
+  - local targeted pytest passed: `101 passed`
+  - local full pytest passed: `1001 passed, 1 skipped, 1 warning`
+  - local profiling script wrote `logs/daily_analysis/runtime_latency_report_20260328.{json,txt}`
   - diagnostics returned `0 errors`, `0 warnings`
+  - pushed commit: `23600c8`
+  - remote compile + install passed using `.venv/bin/python -m compileall` and `.venv/bin/python -m pip install -e .`
+  - remote `systemctl is-active kindshot` returned `active`
+  - remote `systemctl is-active kindshot-dashboard` returned `active`
+  - remote `/health` returned `status=healthy`, `last_poll_source=feed`, `latency_profile` present, `llm_cache` present
 
 ## Last Completed Step
 
-- Implemented, tested, and ran the unified monthly full-strategy backtest/report flow locally in Ralph mode, producing a fresh current-strategy estimate and `v64`~`v70` comparison artifact.
+- Implemented, tested, committed, pushed, and deployed the runtime latency + persistent LLM cache slice, then verified the remote service restart and new `/health` payload shape.
 
 ## Next Intended Step
 
-- Restore a working LLM replay surface if the next run must measure prompt-path changes directly rather than through historical BUY proxies.
-- Decide whether the next bounded strategy hypothesis should target one of the dominant current blockers from the report (`ADV_TOO_LOW`, low-confidence gates, or thin intraday participation).
-- If a follow-up strategy slice is chosen, keep it to one narrow hypothesis and regenerate the monthly report after the change.
+- During the next Korean market session, capture the first real profiled event samples and inspect `latency_profile.stages` / `bottlenecks` to confirm whether `context_card` remains the dominant bottleneck after the parallel fetch change.
+- Use `scripts/runtime_latency_report.py` again after new runtime events land so the local report moves from `no data` to actual stage distributions.
+- If one stage is clearly dominant, tune exactly one additional bounded optimization next rather than widening scope.
 
 ## Notes
 
-- The fresh report uses the available checked-in log window `20260310`~`20260327`; it is not a full market month.
-- This run did not alter `deploy/`, secrets, `.env`, runtime services, or live-order behavior.
-- The current-strategy estimate reuses historical logged BUY decisions as the opaque-model proxy because fresh LLM replay is blocked locally.
+- The first raw rsync copied the live workspace tree, so a clean-export `git archive HEAD` rsync was run immediately afterward to ensure the deployed server matches pushed commit `23600c8` rather than unrelated dirty local files.
+- This run did not edit `deploy/`, secrets, `.env`, or live-order enablement.
+- The runtime remains in paper mode and still warns about VTS stale-price limits.

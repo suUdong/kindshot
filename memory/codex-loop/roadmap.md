@@ -15,10 +15,10 @@
 
 ## Current Focus
 
-- Track: User-Directed Strategy Validation And Reporting
-- Phase: Monthly Full-Strategy Backtest
-- Status: Complete
-- Reason: The user explicitly requested a full local backtest/report pass with `v70` plus later entry/exit/LLM/risk work reflected as far as local evidence allows. The latest slice added a unified monthly report command, fixed embedded snapshot backfill, generated `logs/daily_analysis/monthly_full_strategy_backtest_20260328.{json,txt}`, and produced a current-strategy estimate plus `v64`~`v70` comparison without changing runtime deployment surfaces.
+- Track: User-Directed Runtime Performance Profiling
+- Phase: Post-Deployment Observation
+- Status: In Progress (user override)
+- Reason: The requested profiling/caching slice is now deployed. The next bounded step is not more implementation by default; it is collecting the first real post-rollout latency samples from the new runtime surfaces.
 
 ## Phases
 
@@ -59,9 +59,9 @@
 
 ## Next Run Candidates
 
-1. Restore a working LLM replay path or a funded local provider so prompt-path changes can be measured directly instead of through historical BUY proxies.
-2. Choose one bounded follow-up hypothesis from the fresh monthly report. The leading current blockers were `ADV_TOO_LOW`, low-confidence gates, and thin intraday participation.
-3. If runtime-side validation matters next, wait for a live Korean market session and confirm whether the current entry/exit guard stack behaves in production paper trading as the local report suggests.
+1. Observe the next live paper session and confirm that `/health.latency_profile` starts filling with real stage samples and a stable bottleneck ranking.
+2. Re-run `scripts/runtime_latency_report.py` once fresh profiled events exist and decide whether one additional narrow optimization is justified.
+3. If runtime latency is acceptable, return to the next highest-leverage strategy hypothesis using the new profiling surface as a guardrail against hidden performance regressions.
 
 ## Deferred
 

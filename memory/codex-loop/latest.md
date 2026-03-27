@@ -1,69 +1,86 @@
-Hypothesis: If Kindshot adds one unified monthly backtest/report path that reuses local replay evidence, versioned exit simulation, and current deterministic guardrail/risk logic, then operators can compare `v64`~`v70`, estimate current-strategy performance, and confirm the best-supported parameter set without depending on fresh paid LLM replay.
+Hypothesis: If Kindshot records structured stage latency through the news→analysis→risk→order path, exposes recent profiling and cache stats via `/health`, and persists bounded LLM decision cache entries on disk, then operators can see real bottlenecks directly and avoid paying for equivalent prompt replays after restarts.
 
 Changed files:
-- `src/kindshot/trade_db.py`
-- `tests/test_trade_db.py`
-- `scripts/monthly_full_strategy_backtest.py`
-- `tests/test_monthly_full_strategy_backtest.py`
-- `docs/plans/2026-03-28-monthly-full-strategy-backtest.md`
+- `src/kindshot/config.py`
+- `src/kindshot/context_card.py`
+- `src/kindshot/decision.py`
+- `src/kindshot/health.py`
+- `src/kindshot/main.py`
+- `src/kindshot/models.py`
+- `src/kindshot/pipeline.py`
+- `src/kindshot/runtime_latency.py`
+- `scripts/runtime_latency_report.py`
+- `tests/test_decision.py`
+- `tests/test_health.py`
+- `tests/test_pipeline.py`
+- `docs/plans/2026-03-28-runtime-latency-and-llm-cache.md`
 - `memory/codex-loop/latest.md`
 - `memory/codex-loop/session.md`
 - `memory/codex-loop/roadmap.md`
 
 Implementation summary:
-- Fixed `trade_db.backfill_from_logs()` so embedded `price_snapshot` rows from `logs/kindshot_*.jsonl` are used even when standalone runtime snapshot files are missing.
-- Added `scripts/monthly_full_strategy_backtest.py`, a unified local report command that:
-  - selects the latest available 30-day local log window
-  - reconstructs current exit behavior from historical executed BUY trades
-  - simulates current deterministic preflight, current guardrails, and risk-v2 portfolio progression
-  - generates `v64`~`v70` comparison metrics on the same trade set
-  - surfaces the best-supported entry / exit / risk parameter summary
-  - records the LLM replay blocker explicitly instead of pretending the opaque model was replayed
-- Added regression tests for embedded snapshot backfill and the new monthly report script.
-- Generated analysis artifacts:
-  - `logs/daily_analysis/monthly_full_strategy_backtest_20260328.json`
-  - `logs/daily_analysis/monthly_full_strategy_backtest_20260328.txt`
+- Added structured per-event runtime profiling with:
+  - `news_to_pipeline_ms`
+  - `context_card_ms`
+  - `decision_total_ms`
+  - `guardrail_ms`
+  - `order_attempt_ms`
+  - `pipeline_total_ms`
+  - `llm_latency_ms`
+  - `llm_cache_layer`
+  - `bottleneck_stage`
+- Persisted the profile inside event logs and surfaced recent aggregate summaries through `/health.latency_profile`.
+- Extended `DecisionEngine` caching from memory-only TTL to bounded disk-backed cache under `data/runtime/llm_cache`, while preserving in-flight dedup.
+- Added `DecisionEngine.cache_stats()` and surfaced it through `/health.llm_cache`.
+- Tightened cache correctness by including market/risk/context inputs in the cache key while still bucketing `detected_at` to the minute for practical reuse.
+- Reduced context-card bottleneck by parallelizing:
+  - pykrx historical fetch
+  - KIS price fetch
+  - alpha-scanner fetch
+- Added `scripts/runtime_latency_report.py` to summarize recent profiled runtime logs into:
+  - `logs/daily_analysis/runtime_latency_report_20260328.json`
+  - `logs/daily_analysis/runtime_latency_report_20260328.txt`
 
-Backtest result summary:
-- Requested “1 month” window, available local evidence window: `2026-03-10` → `2026-03-27` (`14` log files)
-- Current-strategy estimate on reconstructable historical BUY candidates:
-  - candidates: `14`
-  - accepted after current deterministic guards/risk: `5`
-  - blocked: `9`
-  - accepted win rate: `40.0%`
-  - total return: `-1.4325%`
-  - approximate PnL: `-106,980 KRW`
-- Current-strategy blocked reasons:
-  - `ADV_TOO_LOW`: `3`
-  - `LOW_CONFIDENCE`: `2`
-  - `OPENING_LOW_CONFIDENCE`: `1`
-  - `PRE_OPENING_LOW_CONFIDENCE`: `1`
-  - `INTRADAY_VALUE_TOO_THIN`: `1`
-  - `PRIOR_VOLUME_TOO_THIN`: `1`
-- Version comparison on the same trade set:
-  - `v64`: total `-5.8541%`, PF `0.10`, MDD `-6.4824%`
-  - `v65`~`v70`: total `-5.0093%`, PF `0.11`, MDD `-5.6376%`
-- Best-supported parameter set from current local evidence:
-  - entry: `max_entry_delay_ms=60000`, `min_intraday_value_vs_adv20d=0.15`, `orderbook_bid_ask_ratio_min=0.8`
-  - exit: current shipped set remained the top-ranked candidate in the local slice (`TP 2.0`, `SL -1.5`, trailing activation `0.5`, trailing `0.5/0.8/1.0`, `max_hold 20`, `t5m_loss_exit=True`)
-  - risk v2: `max_positions=4`, `consecutive_loss_halt=3`, recent trade window `4`
+Latency evidence summary:
+- Local profiling command currently reports `0` profiled historical events because existing checked-in logs (`20260325`~`20260327`) predate this instrumentation.
+- Deployed `/health` now exposes:
+  - `latency_profile` keys: `window_size`, `stages`, `bottlenecks`, `decision_sources`, `cache_layers`
+  - `llm_cache` keys: `memory_entries`, `memory_hits`, `disk_hits`, `inflight_hits`, `misses`, `writes`, `disk_errors`
 
 Validation:
 - local `python3 -m compileall src scripts tests`
-- local `.venv/bin/python -m pytest tests/test_trade_db.py tests/test_monthly_full_strategy_backtest.py -q` → `20 passed`
-- local `.venv/bin/python scripts/monthly_full_strategy_backtest.py`
-- local `.venv/bin/python -m pytest -q` → `997 passed, 1 skipped, 1 warning`
+- local `.venv/bin/python -m pytest tests/test_decision.py tests/test_health.py tests/test_pipeline.py -q` → `101 passed`
+- local `.venv/bin/python -m pytest -q` → `1001 passed, 1 skipped, 1 warning`
+- local `.venv/bin/python scripts/runtime_latency_report.py`
 - diagnostics `lsp_diagnostics_directory` → `0 errors`, `0 warnings`
+- commit/push:
+  - `git commit` → `23600c8`
+  - `git push origin main` → `23600c8` pushed to `origin/main`
+- remote deploy:
+  - clean-export re-rsync from `HEAD` to avoid carrying unrelated dirty local files
+  - remote `./.venv/bin/python -m compileall src/kindshot scripts/runtime_latency_report.py`
+  - remote `./.venv/bin/python -m pip install -e . --quiet`
+  - remote `systemctl restart kindshot kindshot-dashboard`
+  - remote `systemctl is-active kindshot` → `active`
+  - remote `systemctl is-active kindshot-dashboard` → `active`
+  - remote `/health` summary:
+    - `status=healthy`
+    - `last_poll_source=feed`
+    - `guardrail_state.configured_max_positions=4`
+    - `latency_profile` block present
+    - `llm_cache` block present
+  - remote `systemctl status kindshot` showed active since `2026-03-28 04:23:07 KST`
+  - remote journal showed the restarted paper runtime and health server startup
 
 Simplifications made:
-- Reused `backtest_analysis.py`, `version_report.py`, and existing guardrail/risk primitives instead of adding a second offline simulation stack.
-- Reused historical logged BUY decisions as the opaque-model proxy when fresh LLM replay was unavailable, while still reapplying current deterministic preflight and guardrails.
-- Kept the new slice local-analysis only; no deployment/runtime behavior was changed.
+- Reused the existing event log record instead of adding a second profiling-only log stream.
+- Kept the cache as bounded JSON files under the existing runtime data tree instead of adding a new storage dependency.
+- Optimized only the obvious pre-LLM bottleneck (`build_context_card`) instead of rewriting the full pipeline scheduler.
 
 Remaining risks:
-- The report does not replay the opaque current LLM prompt path because Anthropic replay returned `400 invalid_request_error` due to insufficient credits and NVIDIA is unconfigured locally.
-- The available local evidence window is not a full calendar month; it is bounded by checked-in logs from `2026-03-10` through `2026-03-27`.
-- Sector concentration inside risk v2 can only be simulated when sector metadata exists in local context artifacts; the current local historical context is sparse there.
+- Existing historical logs do not contain the new `pipeline_profile` block, so local report evidence will remain empty until new runtime events are processed after deployment.
+- The server is still in paper mode with VTS quote limitations; order-attempt latency samples will remain sparse or absent unless a live order path is explicitly exercised in a safe environment.
+- `detected_at` is intentionally bucketed to the minute in the cache key; if future prompt behavior becomes more second-sensitive, this reuse policy should be re-validated before widening cache TTL or scope further.
 
 Rollback note:
-- Revert the monthly backtest/reporting commit to remove the new script, tests, backfill fix, and run-summary docs. No deploy rollback is required because this slice changes only local analysis/reporting surfaces.
+- Re-deploy the previous known-good commit to `/opt/kindshot` using the same clean-export `rsync` lane, then rerun `.venv` install and restart `kindshot` / `kindshot-dashboard`.
