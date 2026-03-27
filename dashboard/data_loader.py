@@ -96,6 +96,17 @@ def load_events(date_str: str) -> pd.DataFrame:
             ev.setdefault("decision_source", dec.get("decision_source"))
             ev.setdefault("llm_model", dec.get("llm_model"))
             ev.setdefault("llm_latency_ms", dec.get("llm_latency_ms"))
+        news_signal = ev.get("news_signal") or {}
+        cluster = news_signal.get("cluster") or {}
+        ev.setdefault("impact_score", news_signal.get("impact_score"))
+        ev.setdefault("contract_amount_eok", news_signal.get("contract_amount_eok"))
+        ev.setdefault("revenue_eok", news_signal.get("revenue_eok"))
+        ev.setdefault("operating_profit_eok", news_signal.get("operating_profit_eok"))
+        ev.setdefault("sales_ratio_pct", news_signal.get("sales_ratio_pct"))
+        ev.setdefault("news_cluster_size", cluster.get("cluster_size"))
+        ev.setdefault("news_cluster_id", cluster.get("cluster_id"))
+        ev.setdefault("direct_disclosure", news_signal.get("direct_disclosure"))
+        ev.setdefault("commentary", news_signal.get("commentary"))
     df = pd.DataFrame(events)
     if "detected_at" in df.columns:
         df["detected_at"] = pd.to_datetime(df["detected_at"], errors="coerce")
@@ -122,6 +133,8 @@ def load_context_cards(date_str: str) -> pd.DataFrame:
     for r in records:
         ctx = r.get("ctx") or {}
         market = r.get("market_ctx") or {}
+        news_signal = r.get("news_signal") or {}
+        cluster = news_signal.get("cluster") or {}
         row = {
             "event_id": r.get("event_id"),
             "ticker": r.get("ticker"),
@@ -137,6 +150,14 @@ def load_context_cards(date_str: str) -> pd.DataFrame:
             "vol_pct_20d": ctx.get("vol_pct_20d"),
             "kospi_change_pct": market.get("kospi_change_pct"),
             "kosdaq_change_pct": market.get("kosdaq_change_pct"),
+            "impact_score": news_signal.get("impact_score"),
+            "contract_amount_eok": news_signal.get("contract_amount_eok"),
+            "revenue_eok": news_signal.get("revenue_eok"),
+            "operating_profit_eok": news_signal.get("operating_profit_eok"),
+            "sales_ratio_pct": news_signal.get("sales_ratio_pct"),
+            "news_cluster_size": cluster.get("cluster_size"),
+            "direct_disclosure": news_signal.get("direct_disclosure"),
+            "commentary": news_signal.get("commentary"),
         }
         rows.append(row)
     return pd.DataFrame(rows)
@@ -456,6 +477,8 @@ def load_live_feed(limit: int = 40, n_days: int = 3) -> pd.DataFrame:
         "bucket",
         "feed_action",
         "decision_confidence",
+        "impact_score",
+        "news_cluster_size",
         "guardrail_result",
     ]
     available = [col for col in cols if col in ordered.columns]

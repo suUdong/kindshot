@@ -368,6 +368,64 @@ with tab1:
         else:
             st.info("BUY 시그널 없음")
 
+        if "impact_score" in events_df.columns:
+            st.subheader("뉴스 시맨틱 신호")
+            semantic_df = events_df[events_df["impact_score"].notna()].copy()
+            if semantic_df.empty:
+                st.info("시맨틱 신호 데이터 없음")
+            else:
+                semantic_df["impact_score"] = pd.to_numeric(semantic_df["impact_score"], errors="coerce")
+                semantic_df["contract_amount_eok"] = pd.to_numeric(semantic_df.get("contract_amount_eok"), errors="coerce")
+                semantic_df["revenue_eok"] = pd.to_numeric(semantic_df.get("revenue_eok"), errors="coerce")
+                semantic_df["operating_profit_eok"] = pd.to_numeric(semantic_df.get("operating_profit_eok"), errors="coerce")
+                semantic_df["news_cluster_size"] = pd.to_numeric(semantic_df.get("news_cluster_size"), errors="coerce")
+
+                sc1, sc2, sc3, sc4 = st.columns(4)
+                sc1.metric("Semantic 이벤트", int(len(semantic_df)))
+                sc2.metric("평균 Impact", f"{semantic_df['impact_score'].mean():.1f}")
+                sc3.metric("최대 Impact", int(semantic_df["impact_score"].max()))
+                numeric_hits = int(
+                    semantic_df[["contract_amount_eok", "revenue_eok", "operating_profit_eok"]]
+                    .notna()
+                    .any(axis=1)
+                    .sum()
+                )
+                sc4.metric("수치 추출", numeric_hits, delta=f"{numeric_hits/len(semantic_df)*100:.1f}%")
+
+                semantic_display = semantic_df[
+                    [
+                        c for c in [
+                            "detected_at",
+                            "ticker",
+                            "corp_name",
+                            "headline",
+                            "impact_score",
+                            "contract_amount_eok",
+                            "revenue_eok",
+                            "operating_profit_eok",
+                            "sales_ratio_pct",
+                            "news_cluster_size",
+                            "direct_disclosure",
+                            "commentary",
+                        ] if c in semantic_df.columns
+                    ]
+                ].sort_values("impact_score", ascending=False, kind="stable").head(12).copy()
+                semantic_display = semantic_display.rename(columns={
+                    "detected_at": "시각",
+                    "ticker": "종목코드",
+                    "corp_name": "종목명",
+                    "headline": "헤드라인",
+                    "impact_score": "Impact",
+                    "contract_amount_eok": "계약금액(억)",
+                    "revenue_eok": "매출(억)",
+                    "operating_profit_eok": "영업이익(억)",
+                    "sales_ratio_pct": "매출대비(%)",
+                    "news_cluster_size": "클러스터",
+                    "direct_disclosure": "직접공시",
+                    "commentary": "기사형",
+                })
+                st.dataframe(semantic_display, width="stretch", hide_index=True)
+
     st.divider()
     st.subheader("실시간 뉴스 피드 모니터")
     if live_feed_df.empty:

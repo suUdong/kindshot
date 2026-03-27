@@ -54,6 +54,13 @@ def fake_logs(tmp_path, monkeypatch):
             "source": "KIS",
             "headline": "삼성전자 공급계약 체결",
             "bucket": "POS_STRONG", "keyword_hits": ["공급계약"],
+            "news_signal": {
+                "impact_score": 87,
+                "contract_amount_eok": 8237,
+                "cluster": {"cluster_size": 2, "cluster_id": "cluster001"},
+                "direct_disclosure": True,
+                "commentary": False,
+            },
             "detected_at": "2026-03-19T09:10:00+09:00",
             "skip_stage": None, "skip_reason": None,
             "decision_action": "BUY", "decision_confidence": 85,
@@ -107,6 +114,13 @@ def fake_logs(tmp_path, monkeypatch):
         {
             "type": "context_card", "event_id": "evt001",
             "ticker": "005930", "corp_name": "삼성전자", "bucket": "POS_STRONG",
+            "news_signal": {
+                "impact_score": 87,
+                "contract_amount_eok": 8237,
+                "cluster": {"cluster_size": 2, "cluster_id": "cluster001"},
+                "direct_disclosure": True,
+                "commentary": False,
+            },
             "ctx": {"rsi_14": 55.0, "macd_hist": 0.3, "bb_position": 60.0,
                     "atr_14": 2.5, "ret_today": 1.2, "spread_bps": 15.0,
                     "adv_value_20d": 1e10, "vol_pct_20d": 65.0},
@@ -193,6 +207,11 @@ def test_load_events(fake_logs):
     df = load_events("20260319")
     assert len(df) == 4
     assert "event_id" in df.columns
+    assert "impact_score" in df.columns
+    assert "contract_amount_eok" in df.columns
+    row = df[df["event_id"] == "evt001"].iloc[0]
+    assert row["impact_score"] == 87
+    assert row["news_cluster_size"] == 2
     buys = df[df["decision_action"] == "BUY"]
     assert len(buys) == 2
 
@@ -207,6 +226,8 @@ def test_load_context_cards(fake_logs):
     assert len(df) == 1
     assert df.iloc[0]["rsi_14"] == 55.0
     assert df.iloc[0]["ticker"] == "005930"
+    assert df.iloc[0]["impact_score"] == 87
+    assert df.iloc[0]["contract_amount_eok"] == 8237
 
 
 def test_load_price_snapshots(fake_logs):
@@ -346,6 +367,7 @@ def test_load_live_feed(fake_logs):
     assert len(df) == 3
     assert list(df["ticker"]) == ["051910", "035420", "000660"]
     assert list(df["feed_action"]) == ["GUARDRAIL_BLOCKED", "BUCKET", "SKIP"]
+    assert "impact_score" in df.columns
 
 
 def test_load_version_trend(fake_logs):
