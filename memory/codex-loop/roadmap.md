@@ -15,10 +15,10 @@
 
 ## Current Focus
 
-- Track: Historical Collection Foundation
-- Phase: In Progress
-- Status: In Progress
-- Reason: Data collection is now the highest-value foundation gap. `collect backfill` needs a working collector, finalized-day state handling, and historical news/price/index persistence before broader replay and model-tuning loops can be trusted.
+- Track: User-Directed Runtime Quality
+- Phase: v69 Runtime Baseline Deployed
+- Status: Completed (user override)
+- Reason: The user explicitly overrode the historical-collection priority to ship prompt-quality, partial-exit, and dynamic-loss-limit runtime behavior. The validated current `main` tree was then deployed to the paper-trading server via clean export because the remote worktree was dirty.
 
 ## Phases
 
@@ -92,9 +92,9 @@
 
 ## Next Run Candidates
 
-1. Extend `collect backfill` with richer collection logs and replay-facing storage contracts once the basic backfill path is validated in a real environment.
-2. Verify KIS historical-news coverage and pagination behavior on actual dates, then harden collector retry/cutoff handling with that evidence.
-3. Add runtime ingest persistence only after the backfill collector path is stable and reviewable.
+1. Observe one or more live paper sessions to confirm the prompt/risk context, partial-take-profit, and dynamic daily loss floor behave as intended in real logs.
+2. Decide whether the broader `846cfd5` bundle now on the server should be split into narrower deployment lanes for future strategy slices.
+3. Clean or re-clone the remote `/opt/kindshot/.git` metadata so future deployments can rely on git provenance instead of clean-export hash checks.
 
 ## Deferred
 
