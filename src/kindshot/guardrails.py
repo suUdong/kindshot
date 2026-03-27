@@ -575,8 +575,11 @@ def apply_time_session_confidence_adjustment(confidence: int, decision_time_kst:
     # 08:30~09:00: 장 직전 — 변동성 커짐, 부스트 없음
     if h == 8 and m >= 30:
         return confidence
-    # 비유동 시간대 (11:00~13:00): 승률 저조
-    if 11 <= h < 13:
+    # v66: 11시대 승률 100% (3건/3건) — 부스트 +2 (기존 -3에서 반전)
+    if h == 11:
+        return min(confidence + 2, 100)
+    # 비유동 시간대 (12:00~13:00): 승률 저조 — v66: 11시 제외
+    if h == 12:
         return max(0, confidence - 3)
     return confidence
 
@@ -604,8 +607,15 @@ def apply_technical_confidence_adjustment(
             confidence = max(0, confidence - 5)
         elif rsi_14 < 30 and has_catalyst:
             confidence = min(confidence + 3, 100)
+    # v66: MACD 감점 세분화 — 약한 음수(-50~0)는 -1, 강한 음수(-200 이하)만 -3
+    # 하락장에서 거의 모든 종목이 MACD<0이므로 일괄 -3은 유효 촉매 과다 차단
     if macd_hist is not None and macd_hist < 0:
-        confidence = max(0, confidence - 3)
+        if macd_hist < -200:
+            confidence = max(0, confidence - 3)
+        elif macd_hist < -50:
+            confidence = max(0, confidence - 2)
+        else:
+            confidence = max(0, confidence - 1)
     if bb_position is not None:
         if bb_position > 95:
             confidence = max(0, confidence - 3)

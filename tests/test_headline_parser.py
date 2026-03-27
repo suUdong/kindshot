@@ -20,3 +20,15 @@ def test_direct_contract_headline_not_treated_as_commentary():
     headline = "넥스틴, SK하이닉스와 106억 규모 공급계약 체결"
     assert is_commentary_headline(headline) is False
     assert is_contract_commentary_headline(headline) is False
+
+
+def test_disclosure_source_with_securities_name_is_not_broker_note():
+    headline = "삼성증권(016360) 주요사항보고서(단일판매ㆍ공급계약체결)"
+    assert is_commentary_headline(headline, dorg="DART/삼성증권") is False
+    assert is_contract_commentary_headline(headline, dorg="DART/삼성증권") is False
+
+
+def test_exchange_disclosure_office_is_not_treated_as_broker_note():
+    headline = "유가증권시장본부, 250억 규모 공급계약 체결"
+    assert is_commentary_headline(headline, dorg="유가증권시장본부") is False
+    assert is_contract_commentary_headline(headline, dorg="유가증권시장본부") is False

@@ -447,6 +447,9 @@ def _rule_based_decide(
     headline: str,
     keyword_hits: list[str],
     ctx: ContextCard,
+    *,
+    raw_headline: str | None = None,
+    dorg: str = "",
 ) -> dict:
     """LLM 없이 키워드 + quant context로 BUY/SKIP 결정.
 
@@ -459,7 +462,7 @@ def _rule_based_decide(
                 "reason": "rule_fallback:weak_bucket"}
 
     # 기사 패턴 감지: rule_fallback은 LLM보다 보수적이어야 함
-    if any(marker in headline for marker in _ARTICLE_MARKERS):
+    if has_article_pattern(headline, raw_headline=raw_headline, dorg=dorg):
         return {"action": "SKIP", "confidence": 55, "size_hint": "S",
                 "reason": "rule_fallback:article_pattern"}
 
@@ -567,11 +570,19 @@ class DecisionEngine:
         keyword_hits: list[str],
         *,
         analysis_headline: Optional[str] = None,
+        dorg: str = "",
         run_id: str = "",
         schema_version: str = "0.1.2",
     ) -> DecisionRecord:
         """Rule-based fallback when LLM is unavailable."""
-        parsed = _rule_based_decide(bucket, analysis_headline or headline, keyword_hits, ctx)
+        parsed = _rule_based_decide(
+            bucket,
+            analysis_headline or headline,
+            keyword_hits,
+            ctx,
+            raw_headline=headline,
+            dorg=dorg,
+        )
 
         record = DecisionRecord(
             schema_version=schema_version,

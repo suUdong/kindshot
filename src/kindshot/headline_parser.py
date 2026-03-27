@@ -55,6 +55,16 @@ _ARTICLE_STYLE_MARKERS = (
     "보인다",
     "강세",
 )
+_DISCLOSURE_DORG_PREFIXES = (
+    "거래소",
+    "한국거래소",
+    "유가증권시장본부",
+    "코스닥시장본부",
+    "코넥스시장본부",
+    "금감원",
+    "DART",
+    "DART/",
+)
 
 
 def normalize_analysis_headline(headline: str) -> str:
@@ -69,9 +79,18 @@ def normalize_analysis_headline(headline: str) -> str:
     return text.strip(" -:")
 
 
+def is_disclosure_source_dorg(dorg: str) -> bool:
+    source = str(dorg or "").strip()
+    if not source:
+        return False
+    return any(source.startswith(prefix) for prefix in _DISCLOSURE_DORG_PREFIXES)
+
+
 def is_broker_note_headline(headline: str, *, dorg: str = "") -> bool:
     raw = str(headline or "").strip()
     source = str(dorg or "").strip()
+    if is_disclosure_source_dorg(source):
+        return False
     if "증권" in source:
         return True
     if re.search(r"(?:^|[\s\[])?:?[A-Za-z가-힣&·]+증권\s*[\"“”'‘’]", raw):

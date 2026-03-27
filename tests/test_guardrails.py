@@ -1249,12 +1249,12 @@ def test_time_premarket_after_0830_no_boost():
 
 
 def test_time_midday_penalty():
-    """비유동 시간대 11:00~13:00 → -3."""
+    """v66: 11시 +2 부스트 (승률 100%), 12시 -3 (비유동)."""
     from kindshot.tz import KST
     t1130 = datetime(2026, 3, 27, 11, 30, tzinfo=KST)
     t1200 = datetime(2026, 3, 27, 12, 0, tzinfo=KST)
-    assert apply_time_session_confidence_adjustment(80, t1130) == 77
-    assert apply_time_session_confidence_adjustment(80, t1200) == 77
+    assert apply_time_session_confidence_adjustment(80, t1130) == 82  # v66: 11시대 부스트
+    assert apply_time_session_confidence_adjustment(80, t1200) == 77  # 12시대 유지
 
 
 def test_time_normal_no_adjustment():
@@ -1359,8 +1359,10 @@ def test_technical_rsi_oversold_no_catalyst():
 
 
 def test_technical_macd_negative():
-    """MACD hist < 0 → -3."""
-    assert apply_technical_confidence_adjustment(85, rsi_14=None, macd_hist=-5.0) == 82
+    """v66: MACD 세분화 — 약한 음수(-5) → -1, 강한 음수(-200 이하) → -3."""
+    assert apply_technical_confidence_adjustment(85, rsi_14=None, macd_hist=-5.0) == 84   # 약한: -1
+    assert apply_technical_confidence_adjustment(85, rsi_14=None, macd_hist=-100.0) == 83  # 중간: -2
+    assert apply_technical_confidence_adjustment(85, rsi_14=None, macd_hist=-300.0) == 82  # 강한: -3
 
 
 def test_technical_bb_overbought():
@@ -1395,11 +1397,11 @@ def test_technical_atr_normal_no_change():
 
 def test_technical_combined_rsi_macd_bb_atr():
     """RSI overbought + MACD negative + BB overbought + high ATR = cumulative penalty."""
-    # 85 - 5(rsi) - 3(macd) - 3(bb) - 2(atr) = 72
+    # v66: 85 - 5(rsi) - 1(macd, 약한 음수) - 3(bb) - 2(atr) = 74
     result = apply_technical_confidence_adjustment(
         85, rsi_14=80.0, macd_hist=-5.0, bb_position=98.0, atr_14=7.0,
     )
-    assert result == 72
+    assert result == 74
 
 
 def test_technical_all_none_no_change():

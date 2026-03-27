@@ -207,11 +207,42 @@ def test_contract_preflight_keeps_direct_disclosure_contract_headline():
     assert parsed_small["confidence"] == 45
 
 
+def test_contract_preflight_keeps_exchange_office_disclosure_headline():
+    ctx = ContextCard(ret_today=0.5, ret_3d=0.5, adv_value_20d=50e9)
+    parsed = _contract_preflight_skip(
+        "삼성증권, 250억 규모 공급계약 체결",
+        ["공급계약"],
+        ctx,
+        raw_headline="삼성증권, 250억 규모 공급계약 체결",
+        dorg="유가증권시장본부",
+    )
+    assert parsed is None
+
+
 def test_has_article_pattern_detects_raw_brokerage_framing():
     assert has_article_pattern(
         "삼성전자 추가 상승 여력 충분 장기공급계약 요구 큰 폭 증가",
         raw_headline='KB증권 "삼성전자, 추가 상승 여력 충분…장기공급계약 요구 큰 폭 증가"',
     ) is True
+
+
+def test_fallback_decide_skips_brokerage_contract_commentary_from_raw_headline():
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+    ctx = ContextCard(ret_today=0.5, ret_3d=0.5, adv_value_20d=50e9)
+
+    record = engine.fallback_decide(
+        ticker="005930",
+        headline='KB증권 "삼성전자, 추가 상승 여력 충분…장기공급계약 요구 큰 폭 증가"',
+        analysis_headline="삼성전자 추가 상승 여력 충분 장기공급계약 요구 큰 폭 증가",
+        bucket=Bucket.POS_STRONG,
+        ctx=ctx,
+        keyword_hits=["장기 공급"],
+        dorg="연합뉴스",
+    )
+
+    assert record.action == Action.SKIP
+    assert record.reason == "rule_fallback:article_pattern"
 
 
 def test_cache_key_changes_with_microstructure_context():

@@ -237,7 +237,6 @@ async def test_pipeline_passes_time_and_hold_profile_to_guardrails(tmp_path):
     assert kwargs["decision_hold_minutes"] == 20
 
 
-@pytest.mark.skip(reason="Pre-existing breakage: EventRegistry.mark→process, counters arg, decide kwargs changes")
 async def test_pipeline_passes_normalized_analysis_headline_to_decision(tmp_path):
     from kindshot.event_registry import EventRegistry
     from kindshot.logger import JsonlLogger
@@ -248,7 +247,7 @@ async def test_pipeline_passes_normalized_analysis_headline_to_decision(tmp_path
     from kindshot.guardrails import GuardrailResult
 
     raw = RawDisclosure(
-        title="[단독] 삼성전자, 250억 규모 공급계약 체결",
+        title='삼성전자, "250억 규모 공급계약 체결"',
         link="https://kind.krx.co.kr/?rcpNo=20260305000001",
         rss_guid="guid1",
         published="2026-03-24T14:10:00+09:00",
@@ -287,7 +286,8 @@ async def test_pipeline_passes_normalized_analysis_headline_to_decision(tmp_path
 
     with patch("kindshot.pipeline.build_context_card", new_callable=AsyncMock) as mock_ctx, \
          patch("kindshot.pipeline.check_guardrails") as mock_gr, \
-         patch("kindshot.pipeline.classify", wraps=__import__("kindshot.pipeline", fromlist=["classify"]).classify) as mock_classify:
+         patch("kindshot.pipeline.classify", wraps=__import__("kindshot.pipeline", fromlist=["classify"]).classify) as mock_classify, \
+         patch("kindshot.pipeline.normalize_analysis_headline", return_value="삼성전자, 250억 규모 공급계약 체결"):
         mock_ctx.return_value = (
             ContextCard(adv_value_20d=10e9, spread_bps=10.0),
             ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=1.0),

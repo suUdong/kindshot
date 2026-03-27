@@ -385,6 +385,7 @@ async def execute_bucket_path(
             ctx=ctx if ctx else ContextCard(),
             keyword_hits=keyword_hits,
             analysis_headline=analysis_headline,
+            dorg=raw.dorg,
             run_id=run_id,
             schema_version=config.schema_version,
         )
@@ -405,6 +406,7 @@ async def execute_bucket_path(
             ctx=ctx if ctx else ContextCard(),
             keyword_hits=keyword_hits,
             analysis_headline=analysis_headline,
+            dorg=raw.dorg,
             run_id=run_id,
             schema_version=config.schema_version,
         )
@@ -423,13 +425,16 @@ async def execute_bucket_path(
     # llm_original_conf를 모든 감점 전에 캡처해야 article(-10) + pipeline(-10) = -20 방지
     if decision.action == Action.BUY:
         llm_original_conf = decision.confidence
-        # graduated cap: 강한 시그널(88+)은 보호, 약한 시그널(~84)은 감점 허용
+        # v66: graduated cap 보호 강화 — 유효 촉매 과다 차단 방지
+        # 88+: cap 6 → 최악 82 (BUY 유지 확실)
+        # 83-87: cap 8 → 최악 75-79 (BUY 유지 가능)
+        # <83: cap 12 → 최악 ~71 (약한 시그널은 감점 허용)
         if llm_original_conf >= 88:
-            _MAX_TOTAL_PENALTY = 8
+            _MAX_TOTAL_PENALTY = 6
         elif llm_original_conf >= 83:
-            _MAX_TOTAL_PENALTY = 10
+            _MAX_TOTAL_PENALTY = 8
         else:
-            _MAX_TOTAL_PENALTY = 15
+            _MAX_TOTAL_PENALTY = 12
 
         # 0. Post-LLM 기사/미확정 패턴 감점: LLM이 기사 헤드라인에 BUY를 줄 때 conf -10
         if decision.decision_source == "LLM" and has_article_pattern(
@@ -644,6 +649,17 @@ async def execute_bucket_path(
                 skip_reason=gr.reason or "UNKNOWN",
                 decision_source=decision.decision_source,
                 mode=mode,
+            )
+        # v66: 차단된 BUY의 shadow snapshot — 기회비용 추적
+        if decision.action == Action.BUY and decision.confidence >= 75:
+            scheduler.schedule_t0(
+                event_id=f"shadow_{processed.event_id}",
+                ticker=raw.ticker,
+                t0_basis=T0Basis.DECIDED_AT,
+                t0_ts=decision.decided_at,
+                run_id=run_id,
+                mode=mode,
+                is_buy_decision=False,  # snapshot만, 가상 매매 아님
             )
         return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason=gr.reason)
 
