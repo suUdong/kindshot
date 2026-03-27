@@ -162,7 +162,7 @@ class Config:
     t5m_loss_exit_enabled: bool = field(default_factory=lambda: _env_bool("T5M_LOSS_EXIT_ENABLED", True))
     t5m_profit_trailing_pct: float = field(default_factory=lambda: _env_float("T5M_PROFIT_TRAILING_PCT", 0.5))  # v65: 0.2→0.5% t+5m 이후 수익 포지션 trailing (기존 너무 타이트)
     partial_take_profit_enabled: bool = field(default_factory=lambda: _env_bool("PARTIAL_TAKE_PROFIT_ENABLED", True))
-    partial_take_profit_target_ratio: float = field(default_factory=lambda: _env_float("PARTIAL_TAKE_PROFIT_TARGET_RATIO", 0.6))
+    partial_take_profit_target_ratio: float = field(default_factory=lambda: _env_float("PARTIAL_TAKE_PROFIT_TARGET_RATIO", 1.0))
     partial_take_profit_size_pct: float = field(default_factory=lambda: _env_float("PARTIAL_TAKE_PROFIT_SIZE_PCT", 50.0))
     trailing_stop_post_partial_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_POST_PARTIAL_EARLY_PCT", 0.4))
     trailing_stop_post_partial_mid_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_POST_PARTIAL_MID_PCT", 0.6))
@@ -358,9 +358,10 @@ class Config:
             raise ValueError(f"paper_take_profit_pct must be positive, got {self.paper_take_profit_pct}")
         if self.paper_stop_loss_pct >= 0:
             raise ValueError(f"paper_stop_loss_pct must be negative, got {self.paper_stop_loss_pct}")
-        if not (0 < self.partial_take_profit_target_ratio < 1):
+        if not (0 < self.partial_take_profit_target_ratio <= 1):
             raise ValueError(
-                f"partial_take_profit_target_ratio must be between 0 and 1, got {self.partial_take_profit_target_ratio}"
+                "partial_take_profit_target_ratio must be between 0 and 1 inclusive, "
+                f"got {self.partial_take_profit_target_ratio}"
             )
         if not (0 < self.partial_take_profit_size_pct < 100):
             raise ValueError(

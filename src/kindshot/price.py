@@ -568,12 +568,13 @@ class SnapshotScheduler:
                 self._t5m_profitable[snap.event_id] = ret_pct > 0
 
             remaining_position_pct = self._remaining_position_pct.get(snap.event_id, 1.0)
+            partial_target_pct = effective_tp * self._config.partial_take_profit_target_ratio if tp_active else 0.0
             if (
                 tp_active
                 and snap.mode == "paper"
                 and self._config.partial_take_profit_enabled
                 and not self._partial_take_profit_taken.get(snap.event_id, False)
-                and ret_pct >= effective_tp
+                and ret_pct >= partial_target_pct
             ):
                 close_fraction = min(remaining_position_pct, self._config.partial_take_profit_size_pct / 100)
                 if 0.0 < close_fraction < remaining_position_pct:
@@ -595,7 +596,7 @@ class SnapshotScheduler:
                         snap.event_id[:8],
                         ret_pct,
                         snap.horizon,
-                        effective_tp,
+                        partial_target_pct,
                         close_fraction * 100,
                         post_partial_remaining * 100,
                     )

@@ -128,8 +128,12 @@ async def _pykrx_features(ticker: str) -> dict:
             if low_col and len(df) >= 2:
                 completed_lows = df[low_col].iloc[:-1]
                 if len(completed_lows) >= 1:
-                    support_price_5d = float(completed_lows.tail(min(5, len(completed_lows))).min())
-                    support_price_20d = float(completed_lows.tail(min(20, len(completed_lows))).min())
+                    recent_window = completed_lows.tail(min(5, len(completed_lows)))
+                    support_price_5d = float(recent_window.min())
+                    medium_window = completed_lows.tail(min(20, len(completed_lows)))
+                    if len(medium_window) > len(recent_window):
+                        medium_window = medium_window.iloc[:-len(recent_window)]
+                    support_price_20d = float(medium_window.min()) if len(medium_window) > 0 else None
                     support_candidates = [value for value in (support_price_5d, support_price_20d) if value and value > 0]
                     if support_candidates:
                         # Use the stronger available floor so noise does not trigger exits too early.

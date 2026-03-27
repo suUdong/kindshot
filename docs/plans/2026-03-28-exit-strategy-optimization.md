@@ -33,8 +33,8 @@ If Kindshot treats same-ticker bad-news events as immediate liquidation triggers
 
 - Extend context-card historical features with deterministic support references that can be computed from existing pykrx data without new dependencies.
 - Use a conservative composite support level for exit enforcement:
-  - near-term support from recent swing low
-  - medium-term floor from a longer rolling low
+  - near-term support from the most recent completed 5-session low
+  - medium-term floor from the older portion of the completed 20-session low window
   - choose the stronger of the available levels so noise does not force early exits
 - Store the support reference per buy event at schedule time and let `SnapshotScheduler` exit if a later price snapshot breaches it by a configurable margin.
 - Emit an explicit exit reason (`support_breach`) and include the reference/support price in logs when triggered.
@@ -43,9 +43,10 @@ If Kindshot treats same-ticker bad-news events as immediate liquidation triggers
 
 - Remove the old "partial before full target" semantics from the runtime exit engine.
 - Requested behavior:
-  - when the TP target is reached, close exactly 50% of the remaining position
+  - by default, when the TP target is reached, close exactly 50% of the remaining position
   - keep the remaining 50% open
   - move the remainder under tighter trailing logic
+- Keep `PARTIAL_TAKE_PROFIT_TARGET_RATIO` as an explicit operator knob, but default it to `1.0` so the shipped behavior matches the requested target-hit partial.
 - Preserve the full-take-profit path only when partial take profit is disabled or the remaining position is already too small to split.
 
 ## Logging / Observability

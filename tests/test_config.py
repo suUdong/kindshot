@@ -78,7 +78,7 @@ def test_trailing_stop_defaults():
         assert cfg.trailing_stop_mid_pct == 0.8  # v65: 0.5→0.8
         assert cfg.trailing_stop_late_pct == 1.0  # v65: 0.7→1.0
         assert cfg.partial_take_profit_enabled is True
-        assert cfg.partial_take_profit_target_ratio == 0.6
+        assert cfg.partial_take_profit_target_ratio == 1.0
         assert cfg.partial_take_profit_size_pct == 50.0
         assert cfg.trailing_stop_post_partial_early_pct == 0.4
         assert cfg.trailing_stop_post_partial_mid_pct == 0.6
