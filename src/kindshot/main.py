@@ -225,7 +225,12 @@ async def run() -> None:
 
         def _on_close_pnl(ticker: str, pnl_won: float) -> None:
             guardrail_state.record_pnl(pnl_won)
-            logger.info("P&L recorded: %s %.0f won (daily total: %.0f)", ticker, pnl_won, guardrail_state.daily_pnl)
+            guardrail_state.record_sell(ticker)
+            if pnl_won < 0:
+                guardrail_state.record_stop_loss()
+            else:
+                guardrail_state.record_profitable_exit()
+            logger.info("P&L recorded: %s %.0f won (daily total: %.0f, positions: %d)", ticker, pnl_won, guardrail_state.daily_pnl, guardrail_state.position_count)
 
         scheduler = SnapshotScheduler(
             config, fetcher, log,
