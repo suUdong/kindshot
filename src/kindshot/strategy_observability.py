@@ -79,6 +79,13 @@ def classify_buy_exit(
             return "take_profit", horizon
         if sl_active and ret_pct <= config.paper_stop_loss_pct:
             return "stop_loss", horizon
+        # t+5m 체크포인트: 5분+ 경과 손실 포지션 즉시 청산
+        is_past_5m = horizon in {"t+5m", "t+10m", "t+15m", "t+20m", "t+30m"}
+        if is_past_5m and ret_pct <= 0 and hold_minutes != 0:
+            # 이전 horizon들에서 수익이었는지 체크 (첫 5m+ 시점의 수익 여부)
+            t5m_ret = _ret_pct(snapshots, "t+5m")
+            if t5m_ret is not None and t5m_ret <= 0:
+                return "t5m_loss_exit", horizon
         if (
             config.trailing_stop_enabled
             and peak >= config.trailing_stop_activation_pct
@@ -112,6 +119,7 @@ def collect_strategy_summary(
         "take_profit_hits": 0,
         "trailing_stop_hits": 0,
         "stop_loss_hits": 0,
+        "t5m_loss_exit_hits": 0,
         "max_hold_hits": 0,
         "hold_profile_applied": 0,
         "hold_profile_breakdown": Counter(),
@@ -156,6 +164,8 @@ def collect_strategy_summary(
             summary["trailing_stop_hits"] += 1
         elif exit_type == "stop_loss":
             summary["stop_loss_hits"] += 1
+        elif exit_type == "t5m_loss_exit":
+            summary["t5m_loss_exit_hits"] += 1
         elif exit_type == "max_hold":
             summary["max_hold_hits"] += 1
 

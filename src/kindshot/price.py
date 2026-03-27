@@ -98,6 +98,10 @@ class SnapshotScheduler:
         self._peak_returns: dict[str, float] = {}
         # 진입 시각 추적 (event_id → monotonic time at t0 fire)
         self._entry_times: dict[str, float] = {}
+        # 진입 KST 시각 (시간대별 청산 차등용)
+        self._entry_times_kst: dict[str, datetime] = {}
+        # t+5m 체크포인트 통과 여부 (event_id → profitable at 5m)
+        self._t5m_profitable: dict[str, bool] = {}
         # 이벤트별 max_hold_minutes (0=EOD까지)
         self._max_hold_minutes: dict[str, int] = {}
         # 이벤트별 confidence (동적 TP/SL용)
@@ -132,6 +136,31 @@ class SnapshotScheduler:
         if hold <= 20:
             return base * 0.85  # 수주/공급계약: trailing (반전 대비, TP와 일관)
         return base
+
+    def _get_session_adjusted_sl(self, event_id: str, base_sl: float) -> float:
+        """시간대별 SL 조정. 장 초반(09:00-09:30)은 타이트, 장 후반(14:00+)은 타이트."""
+        entry_kst = self._entry_times_kst.get(event_id)
+        if entry_kst is None:
+            return base_sl
+        h, m = entry_kst.hour, entry_kst.minute
+        # 장 초반 (09:00-09:30): 변동성 최고, SL 타이트
+        if h == 9 and m < 30:
+            return base_sl * self._config.session_early_sl_multiplier  # 예: -1.5 * 0.7 = -1.05
+        # 장 후반 (14:00+): 회복 시간 부족, SL 타이트
+        if h >= 14:
+            return base_sl * 0.8  # 20% 타이트
+        return base_sl
+
+    def _get_session_adjusted_max_hold(self, event_id: str, base_max_hold: int) -> int:
+        """시간대별 max_hold 조정. 장 후반(14:00+)은 축소."""
+        if base_max_hold == 0:  # EOD hold는 조정 안 함
+            return 0
+        entry_kst = self._entry_times_kst.get(event_id)
+        if entry_kst is None:
+            return base_max_hold
+        if entry_kst.hour >= 14:
+            return max(5, int(base_max_hold / self._config.session_late_max_hold_divisor))
+        return base_max_hold
 
     def _runtime_snapshot_path(self, ts: datetime) -> Path:
         dt = ts.astimezone(_KST).strftime("%Y%m%d")
@@ -266,6 +295,7 @@ class SnapshotScheduler:
             )
             self._t0_prices[snap.event_id] = (effective_entry_px, cum_value)
             self._entry_times[snap.event_id] = time.monotonic()
+            self._entry_times_kst[snap.event_id] = datetime.now(_KST)
         else:
             t0_px, t0_cum = self._t0_prices.get(snap.event_id, (None, None))
             if px is not None and t0_px and t0_px > 0:
@@ -278,6 +308,8 @@ class SnapshotScheduler:
                 self._t0_prices.pop(snap.event_id, None)
                 self._event_tickers.pop(snap.event_id, None)
                 self._entry_times.pop(snap.event_id, None)
+                self._entry_times_kst.pop(snap.event_id, None)
+                self._t5m_profitable.pop(snap.event_id, None)
                 self._max_hold_minutes.pop(snap.event_id, None)
                 self._event_confidence.pop(snap.event_id, None)
                 # Report close P&L to guardrail state (BUY decisions only)
@@ -323,6 +355,8 @@ class SnapshotScheduler:
             evt_hold = self._max_hold_minutes.get(snap.event_id, self._config.max_hold_minutes)
             effective_tp = get_dynamic_tp_pct(self._config, evt_conf, evt_hold) if evt_conf > 0 else self._config.paper_take_profit_pct
             effective_sl = get_dynamic_stop_loss_pct(self._config, evt_conf, evt_hold) if evt_conf > 0 else self._config.paper_stop_loss_pct
+            # 시간대별 SL 조정 (장 초반/후반 타이트닝)
+            effective_sl = self._get_session_adjusted_sl(snap.event_id, effective_sl)
             tp_active = effective_tp > 0
             sl_active = effective_sl < 0
 
@@ -331,6 +365,17 @@ class SnapshotScheduler:
                 prev_peak = self._peak_returns.get(snap.event_id, 0.0)
                 self._peak_returns[snap.event_id] = max(prev_peak, ret_pct)
                 peak = self._peak_returns[snap.event_id]
+
+            # --- t+5m 체크포인트: 5분 경과 후 손실→즉시 청산, 수익→타이트 trailing ---
+            elapsed_s = 0.0
+            entry_time = self._entry_times.get(snap.event_id)
+            if entry_time is not None:
+                elapsed_s = time.monotonic() - entry_time
+
+            is_past_5m = elapsed_s >= 300
+            if self._config.t5m_loss_exit_enabled and is_past_5m and snap.event_id not in self._t5m_profitable:
+                # 첫 번째 5분+ 스냅샷에서 체크포인트 판정
+                self._t5m_profitable[snap.event_id] = ret_pct > 0
 
             if tp_active and ret_pct >= effective_tp:
                 self._virtual_exits[snap.event_id] = snap.horizon
@@ -347,20 +392,39 @@ class SnapshotScheduler:
                     effective_sl, evt_conf,
                 )
             elif (
-                self._config.trailing_stop_enabled
-                and peak >= self._config.trailing_stop_activation_pct
-                and ret_pct <= peak - self._get_trailing_stop_pct(snap.event_id)
+                self._config.t5m_loss_exit_enabled
+                and is_past_5m
+                and self._t5m_profitable.get(snap.event_id) is False
+                and ret_pct <= 0
+                and evt_hold != 0  # EOD hold 제외
             ):
-                trail_pct = self._get_trailing_stop_pct(snap.event_id)
+                # t+5m 체크포인트: 손실 포지션 즉시 청산
                 self._virtual_exits[snap.event_id] = snap.horizon
                 logger.info(
-                    "PAPER TRAILING STOP [%s] %s: %.2f%% at %s (peak %.2f%%, trail -%.1f%%)",
+                    "PAPER T5M LOSS EXIT [%s] %s: %.2f%% at %s (5m checkpoint, cut losers)",
                     snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
-                    peak, trail_pct,
                 )
+            elif (
+                self._config.trailing_stop_enabled
+                and peak >= self._config.trailing_stop_activation_pct
+            ):
+                # t+5m 이후 수익 포지션: 타이트 trailing으로 전환
+                if self._t5m_profitable.get(snap.event_id) is True:
+                    trail_pct = self._config.t5m_profit_trailing_pct
+                else:
+                    trail_pct = self._get_trailing_stop_pct(snap.event_id)
+                if ret_pct <= peak - trail_pct:
+                    self._virtual_exits[snap.event_id] = snap.horizon
+                    logger.info(
+                        "PAPER TRAILING STOP [%s] %s: %.2f%% at %s (peak %.2f%%, trail -%.1f%%%s)",
+                        snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
+                        peak, trail_pct,
+                        ", t5m-tight" if self._t5m_profitable.get(snap.event_id) else "",
+                    )
             else:
-                # 이벤트별 또는 전역 max_hold_minutes 체크
-                event_max = self._max_hold_minutes.get(snap.event_id, self._config.max_hold_minutes)
+                # 이벤트별 또는 전역 max_hold_minutes 체크 (시간대별 조정 적용)
+                event_max_raw = self._max_hold_minutes.get(snap.event_id, self._config.max_hold_minutes)
+                event_max = self._get_session_adjusted_max_hold(snap.event_id, event_max_raw)
                 if event_max > 0 and snap.horizon == f"t+{event_max}m":
                     self._virtual_exits[snap.event_id] = snap.horizon
                     logger.info(
@@ -368,12 +432,10 @@ class SnapshotScheduler:
                         snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
                         event_max,
                     )
-                # Stale position exit: 5분+ 경과 후 모멘텀 소멸
+                # Stale position exit: 3분+ 경과 후 모멘텀 소멸
                 # confidence 기반 동적 threshold: 고확신(85+)은 SL 밴드 내 조기 exit 방지
-                elif event_max != 0:  # EOD hold는 stale 판정 제외
-                    entry_time = self._entry_times.get(snap.event_id)
+                elif event_max_raw != 0:  # EOD hold는 stale 판정 제외
                     if entry_time is not None:
-                        elapsed_s = time.monotonic() - entry_time
                         stale_pct = self._stale_threshold_pct_default
                         if evt_conf >= 85:
                             stale_pct = max(0.5, abs(effective_sl) * 0.4)

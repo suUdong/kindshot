@@ -377,6 +377,7 @@ async def test_trailing_stop_mid_tier_no_exit_within_tolerance():
         trailing_stop_early_pct=0.3,
         trailing_stop_mid_pct=0.5,
         trailing_stop_late_pct=0.7,
+        t5m_loss_exit_enabled=False,  # t5m 체크포인트 비활성 (순수 trailing 테스트)
     )
     scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
 
@@ -406,6 +407,167 @@ async def test_trailing_activation_default_lowered_to_0_3():
     """Trailing stop activation 값을 명시하면 해당 값이 그대로 반영되어야 함."""
     cfg = Config(trailing_stop_activation_pct=0.3)
     assert cfg.trailing_stop_activation_pct == 0.3
+
+
+async def test_t5m_loss_exit_triggers():
+    """t+5m 이후 손실 포지션: 즉시 청산."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=False,
+        t5m_loss_exit_enabled=True,
+        max_hold_minutes=30,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+
+    # Simulate 5+ minutes elapsed
+    scheduler._entry_times["evt1"] = time.monotonic() - 310
+    scheduler._entry_times_kst["evt1"] = datetime(2026, 3, 27, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+
+    # t+5m: -0.3% (losing but above SL) → t5m loss exit
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=9970.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=900_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+5m"][0]
+    await scheduler._fire(snap)
+
+    assert "evt1" in scheduler._virtual_exits
+    assert scheduler._virtual_exits["evt1"] == "t+5m"
+
+
+async def test_t5m_loss_exit_skips_eod_hold():
+    """EOD hold(자사주소각 등)는 t+5m 손실 청산 제외."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=False,
+        t5m_loss_exit_enabled=True,
+        max_hold_minutes=30,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+    scheduler._entry_times["evt1"] = time.monotonic() - 310
+    scheduler._entry_times_kst["evt1"] = datetime(2026, 3, 27, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+    # EOD hold
+    scheduler._max_hold_minutes["evt1"] = 0
+
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=9970.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=900_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+5m"][0]
+    await scheduler._fire(snap)
+
+    assert "evt1" not in scheduler._virtual_exits
+
+
+async def test_t5m_profit_tightens_trailing():
+    """t+5m 수익 포지션: 타이트 trailing(0.2%)으로 전환."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=True,
+        trailing_stop_activation_pct=0.3,
+        trailing_stop_mid_pct=0.5,
+        t5m_loss_exit_enabled=True,
+        t5m_profit_trailing_pct=0.2,
+        max_hold_minutes=30,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+    scheduler._entry_times["evt1"] = time.monotonic() - 310
+    scheduler._entry_times_kst["evt1"] = datetime(2026, 3, 27, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+    # Mark as profitable at 5m checkpoint
+    scheduler._t5m_profitable["evt1"] = True
+    scheduler._peak_returns["evt1"] = 1.0  # peak 1.0%
+
+    # Price at +0.7% (drop 0.3% from peak 1.0%, > tight trail 0.2%) → trailing exit
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10070.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_070_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+10m"][0]
+    await scheduler._fire(snap)
+
+    assert "evt1" in scheduler._virtual_exits
+    assert scheduler._virtual_exits["evt1"] == "t+10m"
+
+
+async def test_t5m_profit_no_exit_within_tight_trail():
+    """t+5m 수익 포지션: 타이트 trailing 범위 내면 exit 안 함."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-5.0,
+        trailing_stop_enabled=True,
+        trailing_stop_activation_pct=0.3,
+        t5m_profit_trailing_pct=0.2,
+        max_hold_minutes=30,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+    scheduler._entry_times["evt1"] = time.monotonic() - 310
+    scheduler._entry_times_kst["evt1"] = datetime(2026, 3, 27, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+    scheduler._t5m_profitable["evt1"] = True
+    scheduler._peak_returns["evt1"] = 1.0
+
+    # Price at +0.85% (drop 0.15% from peak, < tight trail 0.2%) → NO exit
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10085.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_085_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+10m"][0]
+    await scheduler._fire(snap)
+
+    assert "evt1" not in scheduler._virtual_exits
+
+
+async def test_session_early_tighter_sl():
+    """장 초반(09:00-09:30) 진입: SL 타이트닝 (×0.7)."""
+    cfg = Config(
+        paper_take_profit_pct=5.0,
+        paper_stop_loss_pct=-1.5,  # base SL
+        trailing_stop_enabled=False,
+        session_early_sl_multiplier=0.7,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+    # 09:15 KST entry
+    kst = timezone(timedelta(hours=9))
+    scheduler._entry_times_kst["evt1"] = datetime(2026, 3, 27, 9, 15, tzinfo=kst)
+
+    # -1.1% drop: base SL=-1.5% wouldn't trigger, but adjusted SL=-1.05% should
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=9890.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=900_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+1m"][0]
+    await scheduler._fire(snap)
+
+    assert "evt1" in scheduler._virtual_exits
+    assert scheduler._virtual_exits["evt1"] == "t+1m"
+
+
+async def test_session_late_max_hold_reduced():
+    """장 후반(14:00+) 진입: max_hold 축소 (÷2)."""
+    cfg = Config(
+        paper_take_profit_pct=10.0,
+        paper_stop_loss_pct=-10.0,
+        trailing_stop_enabled=False,
+        max_hold_minutes=10,
+        session_late_max_hold_divisor=2.0,
+        t5m_loss_exit_enabled=False,
+    )
+    scheduler, log = await _make_scheduler_with_t0(cfg, t0_px=10000.0, spread_bps=0.0)
+    kst = timezone(timedelta(hours=9))
+    scheduler._entry_times_kst["evt1"] = datetime(2026, 3, 27, 14, 30, tzinfo=kst)
+
+    # At t+5m: max_hold=10/2=5 → should trigger at t+5m
+    scheduler._fetcher.fetch = AsyncMock(return_value=PriceInfo(
+        px=10000.0, open_px=10000.0, spread_bps=0.0,
+        cum_value=1_000_000.0, fetch_latency_ms=10,
+    ))
+    snap = [s for s in scheduler._heap if s.horizon == "t+5m"][0]
+    await scheduler._fire(snap)
+
+    assert "evt1" in scheduler._virtual_exits
+    assert scheduler._virtual_exits["evt1"] == "t+5m"
 
 
 async def test_flush_close_on_shutdown_fires_pending_close_after_cutoff():
