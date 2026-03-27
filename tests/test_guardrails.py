@@ -291,6 +291,78 @@ def test_intraday_value_ratio_does_not_block_skip():
     assert r.passed is True
 
 
+def test_entry_delay_too_late_blocks_buy():
+    cfg = _cfg(max_entry_delay_ms=60_000, no_buy_after_kst_hour=24)
+    r = check_guardrails(
+        "005930",
+        cfg,
+        delay_ms=90_000,
+        decision_action=Action.BUY,
+        **_base_args(),
+    )
+    assert r.passed is False
+    assert r.reason == "ENTRY_DELAY_TOO_LATE"
+
+
+def test_orderbook_imbalance_blocks_buy():
+    cfg = _cfg(orderbook_bid_ask_ratio_min=0.8, no_buy_after_kst_hour=24)
+    r = check_guardrails(
+        "005930",
+        cfg,
+        orderbook_snapshot=OrderbookSnapshot(
+            ask_price1=50_000.0,
+            bid_price1=49_900.0,
+            ask_size1=200,
+            bid_size1=100,
+            total_ask_size=5_000,
+            total_bid_size=3_000,
+            spread_bps=20.0,
+        ),
+        decision_action=Action.BUY,
+        decision_size_hint="S",
+        **_base_args(),
+    )
+    assert r.passed is False
+    assert r.reason == "ORDERBOOK_IMBALANCE"
+
+
+def test_prior_volume_gate_blocks_buy_after_gate_start():
+    cfg = _cfg(
+        min_prior_volume_rate=70.0,
+        prior_volume_gate_start_kst_hour=10,
+        prior_volume_gate_start_kst_minute=0,
+        no_buy_after_kst_hour=24,
+    )
+    r = check_guardrails(
+        "005930",
+        cfg,
+        prior_volume_rate=45.0,
+        decision_action=Action.BUY,
+        decision_time_kst=_kst_dt(10, 5),
+        **_base_args(),
+    )
+    assert r.passed is False
+    assert r.reason == "PRIOR_VOLUME_TOO_THIN"
+
+
+def test_prior_volume_gate_ignores_pre_gate_session():
+    cfg = _cfg(
+        min_prior_volume_rate=70.0,
+        prior_volume_gate_start_kst_hour=10,
+        prior_volume_gate_start_kst_minute=0,
+        no_buy_after_kst_hour=24,
+    )
+    r = check_guardrails(
+        "005930",
+        cfg,
+        prior_volume_rate=0.0,
+        decision_action=Action.BUY,
+        decision_time_kst=_kst_dt(9, 15),
+        **_base_args(),
+    )
+    assert r.passed is True
+
+
 def test_normalized_quote_temp_stop_blocks_without_raw_dataclass():
     cfg = _cfg()
     r = check_guardrails(

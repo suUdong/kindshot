@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from kindshot.config import Config
+from kindshot.entry_filter_analysis import compute_orderbook_bid_ask_ratios
 from kindshot.headline_parser import is_contract_commentary_headline
 from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
 from kindshot.models import Action
@@ -397,6 +398,8 @@ def check_guardrails(
     quote_risk_state: Optional[QuoteRiskState] = None,
     orderbook_snapshot: Optional[OrderbookSnapshot] = None,
     intraday_value_vs_adv20d: Optional[float] = None,
+    delay_ms: Optional[int] = None,
+    prior_volume_rate: Optional[float] = None,
     quote_temp_stop: Optional[bool] = None,
     quote_liquidation_trade: Optional[bool] = None,
     top_ask_notional: Optional[float] = None,
@@ -510,6 +513,15 @@ def check_guardrails(
         if ret_today > config.chase_buy_pct:
             return GuardrailResult(passed=False, reason="CHASE_BUY_BLOCKED")
 
+    # 5g. Stale-entry block: news already old enough that local history degrades.
+    if (
+        decision_action == Action.BUY
+        and delay_ms is not None
+        and config.max_entry_delay_ms > 0
+        and delay_ms >= config.max_entry_delay_ms
+    ):
+        return GuardrailResult(passed=False, reason="ENTRY_DELAY_TOO_LATE")
+
     # 6. BUY-side top-of-book liquidity gate.
     # size_hint별 실제 주문 크기 사용 (S=3M, M=5M, L=7M)
     _size_hint = str(kwargs.get("decision_size_hint", "M"))
@@ -518,6 +530,9 @@ def check_guardrails(
         best_ask_notional = orderbook_snapshot.ask_price1 * orderbook_snapshot.ask_size1
         if best_ask_notional < _effective_order_size:
             return GuardrailResult(passed=False, reason="ORDERBOOK_TOP_LEVEL_LIQUIDITY")
+        _level1_ratio, total_ratio = compute_orderbook_bid_ask_ratios(orderbook_snapshot)
+        if total_ratio is not None and total_ratio < config.orderbook_bid_ask_ratio_min:
+            return GuardrailResult(passed=False, reason="ORDERBOOK_IMBALANCE")
     if decision_action == Action.BUY and top_ask_notional is not None:
         if top_ask_notional < _effective_order_size:
             return GuardrailResult(passed=False, reason="ORDERBOOK_TOP_LEVEL_LIQUIDITY")
@@ -539,6 +554,18 @@ def check_guardrails(
             effective_threshold = config.min_intraday_value_vs_adv20d
         if intraday_value_vs_adv20d < effective_threshold:
             return GuardrailResult(passed=False, reason="INTRADAY_VALUE_TOO_THIN")
+
+    # 7b. Volume confirmation once the regular session has enough elapsed time.
+    if decision_action == Action.BUY and prior_volume_rate is not None and config.min_prior_volume_rate > 0:
+        now_kst = _resolve_decision_time_kst(decision_time_kst)
+        volume_gate_start = now_kst.replace(
+            hour=config.prior_volume_gate_start_kst_hour,
+            minute=config.prior_volume_gate_start_kst_minute,
+            second=0,
+            microsecond=0,
+        )
+        if now_kst >= volume_gate_start and prior_volume_rate < config.min_prior_volume_rate:
+            return GuardrailResult(passed=False, reason="PRIOR_VOLUME_TOO_THIN")
 
     # 8-11: Portfolio-level guardrails (require state tracking)
     if state is not None:

@@ -214,6 +214,37 @@ async def test_guardrail_block_logged(tmp_path):
     assert len(decision_records) == 0
 
 
+async def test_pipeline_passes_delay_ms_to_guardrails(tmp_path):
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=82,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+    raw = _make_raw()
+    raw.published = "2026-03-05T09:11:00+09:00"
+    raw.detected_at = datetime.fromisoformat("2026-03-05T09:12:30+09:00")
+
+    _records, guardrail_calls = await _run_pipeline_once(
+        tmp_path,
+        [raw],
+        decision_side_effect=[mock_decision],
+        capture_guardrail_calls=True,
+    )
+
+    assert len(guardrail_calls) == 1
+    assert guardrail_calls[0].kwargs["delay_ms"] == 90_000
+
+
 async def test_pipeline_records_buy_with_sector_metadata(tmp_path):
     from kindshot.models import DecisionRecord, Action, SizeHint
     from kindshot.guardrails import GuardrailState
@@ -1153,6 +1184,86 @@ async def test_pipeline_passes_intraday_value_ratio_to_guardrails(tmp_path):
 
     assert mock_gr.call_args is not None
     assert mock_gr.call_args.kwargs["intraday_value_vs_adv20d"] == 0.005
+
+
+async def test_pipeline_passes_effective_delay_and_prior_volume_to_guardrails(tmp_path):
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime(2026, 3, 27, 1, 6, 15, tzinfo=timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=80,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+    raw = _make_raw()
+    raw = raw.__class__(
+        title=raw.title,
+        link=raw.link,
+        rss_guid=raw.rss_guid,
+        published="2026-03-27T10:05:10+09:00",
+        ticker=raw.ticker,
+        corp_name=raw.corp_name,
+        detected_at=datetime(2026, 3, 27, 10, 5, 30, tzinfo=timezone(timedelta(hours=9))),
+        source=raw.source,
+        metadata=raw.metadata,
+        dorg=raw.dorg,
+    )
+
+    from kindshot.event_registry import EventRegistry
+    from kindshot.logger import JsonlLogger
+    from kindshot.market import MarketMonitor
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+    from kindshot.pipeline import pipeline_loop
+    from kindshot.feed import KindFeed
+    from kindshot.guardrails import GuardrailResult
+    from kindshot.models import ContextCard
+
+    cfg = Config(log_dir=tmp_path / "logs", paper=True)
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+
+    mock_engine = MagicMock()
+    mock_engine.decide = AsyncMock(return_value=mock_decision)
+
+    mock_feed = AsyncMock(spec=KindFeed)
+
+    async def _one_batch():
+        yield [raw]
+
+    mock_feed.stream = _one_batch
+
+    with patch("kindshot.pipeline.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.pipeline.check_guardrails") as mock_gr:
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0, prior_volume_rate=55.0),
+            ContextCardData(
+                adv_value_20d=10e9,
+                spread_bps=10.0,
+                ret_today=1.0,
+                prior_volume_rate=55.0,
+            ),
+        )
+        mock_gr.return_value = GuardrailResult(passed=True)
+
+        await asyncio.wait_for(
+            pipeline_loop(mock_feed, registry, mock_engine, market, scheduler, log, cfg, "test_run", None, mode="paper"),
+            timeout=2.0,
+        )
+
+    assert mock_gr.call_args is not None
+    assert mock_gr.call_args.kwargs["delay_ms"] == 65_000
+    assert mock_gr.call_args.kwargs["prior_volume_rate"] == 55.0
     assert mock_gr.call_args.kwargs["decision_action"] == Action.BUY
 
 

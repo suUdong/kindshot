@@ -21,6 +21,7 @@ from kindshot.context_card import (
     build_context_card,
 )
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError, has_high_conviction_keyword, has_article_pattern
+from kindshot.entry_filter_analysis import compute_effective_entry_delay_ms
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
 from kindshot.headline_parser import normalize_analysis_headline
@@ -623,12 +624,13 @@ async def execute_bucket_path(
                             raw.ticker, before, decision.confidence, raw_data.prior_volume_rate)
 
         # 4. Detection delay
-        if delay_ms is not None:
+        effective_entry_delay_ms = compute_effective_entry_delay_ms(disclosed_at, decision.decided_at)
+        if effective_entry_delay_ms is not None:
             before = decision.confidence
-            decision.confidence = apply_delay_confidence_adjustment(decision.confidence, delay_ms)
+            decision.confidence = apply_delay_confidence_adjustment(decision.confidence, effective_entry_delay_ms)
             if decision.confidence != before:
                 logger.info("Delay confidence adj [%s]: %d → %d (delay=%.1fs)",
-                            raw.ticker, before, decision.confidence, delay_ms / 1000)
+                            raw.ticker, before, decision.confidence, effective_entry_delay_ms / 1000)
 
         # 5. 하락장 감점
         market_snapshot = market.snapshot
@@ -815,12 +817,14 @@ async def execute_bucket_path(
         spread_bps=raw_data.spread_bps if ctx else None,
         adv_value_20d=raw_data.adv_value_20d if ctx else None,
         ret_today=raw_data.ret_today if ctx else None,
+        delay_ms=effective_entry_delay_ms,
         state=guardrail_state,
         headline=raw.title,
         sector=raw_data.sector if ctx else "",
         quote_risk_state=raw_data.quote_risk_state if ctx else None,
         orderbook_snapshot=raw_data.orderbook_snapshot if ctx else None,
         intraday_value_vs_adv20d=raw_data.intraday_value_vs_adv20d if ctx else None,
+        prior_volume_rate=raw_data.prior_volume_rate if ctx else None,
         decision_action=decision.action,
         decision_confidence=decision.confidence,
         decision_time_kst=decision.decided_at,

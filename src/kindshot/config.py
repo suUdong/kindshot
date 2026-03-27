@@ -141,7 +141,12 @@ class Config:
     extreme_move_pct: float = 20.0
     spread_check_enabled: bool = field(default_factory=lambda: _env_bool("SPREAD_CHECK_ENABLED", True))
     spread_missing_policy: str = field(default_factory=lambda: _env("SPREAD_MISSING_POLICY", "pass"))  # "pass" = fail-open, "fail" = fail-close
-    min_intraday_value_vs_adv20d: float = field(default_factory=lambda: _env_float("MIN_INTRADAY_VALUE_VS_ADV20D", 0.01))
+    min_intraday_value_vs_adv20d: float = field(default_factory=lambda: _env_float("MIN_INTRADAY_VALUE_VS_ADV20D", 0.15))
+    max_entry_delay_ms: int = field(default_factory=lambda: _env_int("MAX_ENTRY_DELAY_MS", 60_000))
+    orderbook_bid_ask_ratio_min: float = field(default_factory=lambda: _env_float("ORDERBOOK_BID_ASK_RATIO_MIN", 0.8))
+    min_prior_volume_rate: float = field(default_factory=lambda: _env_float("MIN_PRIOR_VOLUME_RATE", 70.0))
+    prior_volume_gate_start_kst_hour: int = field(default_factory=lambda: _env_int("PRIOR_VOLUME_GATE_START_KST_HOUR", 10))
+    prior_volume_gate_start_kst_minute: int = field(default_factory=lambda: _env_int("PRIOR_VOLUME_GATE_START_KST_MINUTE", 0))
     chase_buy_pct: float = field(default_factory=lambda: _env_float("CHASE_BUY_PCT", 3.0))  # 당일 3%+ 상승 시 BUY 차단 (추격매수 방지)
     min_buy_confidence: int = field(default_factory=lambda: _env_int("MIN_BUY_CONFIDENCE", 78))  # BUY 최소 confidence (75→78: 성과 분석 기반 상향)
     no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_HOUR", 15))  # 15시 이후 BUY 차단
@@ -239,6 +244,8 @@ class Config:
     health_port: int = field(default_factory=lambda: _env_int("HEALTH_PORT", 8080))
     macro_api_base_url: str = field(default_factory=lambda: _env("MACRO_API_BASE_URL", ""))
     macro_api_timeout_s: float = field(default_factory=lambda: _env_float("MACRO_API_TIMEOUT_S", 5.0))
+    alpha_scanner_api_base_url: str = field(default_factory=lambda: _env("ALPHA_SCANNER_API_BASE_URL", ""))
+    alpha_scanner_api_timeout_s: float = field(default_factory=lambda: _env_float("ALPHA_SCANNER_API_TIMEOUT_S", 5.0))
 
     # --- Logging ---
     log_dir: Path = field(default_factory=lambda: Path(_env("LOG_DIR", "logs")))
