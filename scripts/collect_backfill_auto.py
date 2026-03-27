@@ -14,7 +14,13 @@ import sys
 from datetime import datetime, timezone, timedelta
 
 from kindshot.backfill_auto import backfill_lock, compute_auto_backfill_plan, default_lock_path, format_auto_noop_message
-from kindshot.collector import compute_finalized_date, load_collection_log_summary, load_collector_state, run_backfill
+from kindshot.collector import (
+    compute_finalized_date,
+    load_collection_log_summary,
+    load_collection_status_report,
+    load_collector_state,
+    run_backfill,
+)
 from kindshot.config import load_config
 from kindshot.telegram_ops import format_backfill_notification, send_telegram_message
 
@@ -107,7 +113,8 @@ async def _main() -> int:
     except Exception:
         summary = load_collection_log_summary(config.collector_log_path)
         state = load_collector_state(config.collector_state_path)
-        message = format_backfill_notification(None, state, summary, error=sys.exc_info()[1])
+        status_report = load_collection_status_report(config, backlog_limit=5, state=state, summary=summary)
+        message = format_backfill_notification(None, state, summary, error=sys.exc_info()[1], status_report=status_report)
         print(message)
         _send_if_configured(message, notify_required=False)
         raise
@@ -115,7 +122,8 @@ async def _main() -> int:
     # 최종 요약 알림
     summary = load_collection_log_summary(config.collector_log_path)
     state = load_collector_state(config.collector_state_path)
-    message = format_backfill_notification(None, state, summary)
+    status_report = load_collection_status_report(config, backlog_limit=5, state=state, summary=summary)
+    message = format_backfill_notification(None, state, summary, status_report=status_report)
     if total_processed > 0:
         message = f"Kindshot Backfill AUTO DONE\nrounds={round_num} total_processed={total_processed}\n{message}"
     print(message)

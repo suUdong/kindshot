@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from typing import Any
 from urllib.request import Request, urlopen
 
 from kindshot.collector import BackfillResult, CollectionLogSummary, CollectorState
@@ -20,6 +21,32 @@ def _format_reason_pairs(dates: list[str], summary: CollectionLogSummary) -> str
             continue
         parts.append(f"{dt}:{record.skip_reason}")
     return ";".join(parts)
+
+
+def _detail_rows_by_date(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        str(row.get("date", "")).strip(): row
+        for row in rows
+        if str(row.get("date", "")).strip()
+    }
+
+
+def _format_blocked_detail_line(label: str, detail: dict[str, Any], *, primary_key: str) -> str:
+    primary_value = str(detail.get(primary_key, "") or "").strip()
+    manifest_reason = str(detail.get("manifest_status_reason", "") or "").strip()
+    manifest_status = str(detail.get("manifest_status", "") or "").strip()
+    manifest_path = str(detail.get("manifest_path", "") or "").strip()
+    parts = [f"{label}={detail.get('date', '-') or '-'}"]
+    if primary_value:
+        key_name = "error" if primary_key == "error" else "reason"
+        parts.append(f"{key_name}={primary_value}")
+    if manifest_reason and manifest_reason != primary_value:
+        parts.append(f"manifest_reason={manifest_reason}")
+    if manifest_status:
+        parts.append(f"manifest_status={manifest_status}")
+    if manifest_path:
+        parts.append(f"manifest={manifest_path}")
+    return " ".join(parts)
 
 
 def send_telegram_message(text: str, bot_token: str, chat_id: str, *, timeout_s: float = 10.0) -> bool:
@@ -44,10 +71,15 @@ def format_backfill_notification(
     summary: CollectionLogSummary,
     *,
     error: Exception | None = None,
+    status_report: dict[str, Any] | None = None,
 ) -> str:
     """Format a concise Telegram-safe backfill notification."""
     status = "FAIL" if error is not None else "OK"
     lines = [f"Kindshot Backfill {status}"]
+    summary_payload = dict(status_report.get("summary", {})) if status_report is not None else {}
+    backlog_payload = dict(status_report.get("backlog", {})) if status_report is not None else {}
+    partial_detail_map = _detail_rows_by_date(list(backlog_payload.get("partial_details", [])))
+    error_details = list(backlog_payload.get("error_details", []))
 
     if result is not None:
         lines.append(
@@ -63,6 +95,10 @@ def format_backfill_notification(
             lines.append(f"partial_dates={','.join(result.partial_dates[:5])}")
             if partial_reasons := _format_reason_pairs(result.partial_dates, summary):
                 lines.append(f"partial_reasons={partial_reasons}")
+            for dt in result.partial_dates[:3]:
+                detail = partial_detail_map.get(dt)
+                if detail is not None:
+                    lines.append(_format_blocked_detail_line("partial_detail", detail, primary_key="skip_reason"))
         if result.skipped_dates:
             lines.append(f"skipped_dates={','.join(result.skipped_dates[:5])}")
             if skip_reasons := _format_reason_pairs(result.skipped_dates, summary):
@@ -78,6 +114,14 @@ def format_backfill_notification(
         f"partial={len(summary.partial_dates)} error={len(summary.error_dates)} "
         f"oldest_blocked={summary.oldest_blocked_date or '-'}"
     )
+    if summary_payload:
+        lines.append(
+            "backlog_health="
+            f"{summary_payload.get('health', '-') or '-'} "
+            f"oldest_blocked_age_s={summary_payload.get('oldest_blocked_age_seconds', 0)}"
+        )
+    for detail in error_details[:3]:
+        lines.append(_format_blocked_detail_line("error_detail", detail, primary_key="error"))
 
     if error is not None:
         lines.append(f"error={type(error).__name__}: {error}")

@@ -556,6 +556,23 @@ def _build_status_report(
     }
 
 
+def load_collection_status_report(
+    config: Config,
+    *,
+    backlog_limit: int = 10,
+    state: Optional[CollectorState] = None,
+    summary: Optional[CollectionLogSummary] = None,
+) -> dict[str, Any]:
+    resolved_state = state or load_collector_state(config.collector_state_path)
+    resolved_summary = summary or load_collection_log_summary(config.collector_log_path)
+    return _build_status_report(
+        resolved_state,
+        resolved_summary,
+        backlog_limit=backlog_limit,
+        collector_manifests_dir=config.collector_manifests_dir,
+    )
+
+
 def _parse_status_args(argv: list[str]) -> tuple[int, bool, str]:
     backlog_limit = 10
     as_json = False
@@ -588,11 +605,11 @@ def log_collection_status(config: Config, *, backlog_limit: int = 10) -> Collect
     state = load_collector_state(config.collector_state_path)
     summary = load_collection_log_summary(config.collector_log_path)
     health = _compute_status_health(state, summary)
-    report = _build_status_report(
-        state,
-        summary,
+    report = load_collection_status_report(
+        config,
         backlog_limit=backlog_limit,
-        collector_manifests_dir=config.collector_manifests_dir,
+        state=state,
+        summary=summary,
     )
     logger.info(
         "Collect status: health=%s state=%s cursor=%s finalized=%s last_completed=%s tracked=%d partial=%d error=%d oldest_partial=%s oldest_error=%s oldest_blocked=%s oldest_blocked_age_s=%d blocked_news=%d blocked_classified=%d blocked_prices=%d blocked_index=%d",
@@ -650,14 +667,7 @@ def log_collection_status(config: Config, *, backlog_limit: int = 10) -> Collect
 
 
 def print_collection_status_json(config: Config, *, backlog_limit: int = 10, output_path: str = "") -> dict[str, Any]:
-    state = load_collector_state(config.collector_state_path)
-    summary = load_collection_log_summary(config.collector_log_path)
-    report = _build_status_report(
-        state,
-        summary,
-        backlog_limit=backlog_limit,
-        collector_manifests_dir=config.collector_manifests_dir,
-    )
+    report = load_collection_status_report(config, backlog_limit=backlog_limit)
     payload = json.dumps(report, ensure_ascii=False)
     print(payload)
     if output_path:

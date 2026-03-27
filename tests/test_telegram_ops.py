@@ -30,12 +30,23 @@ def _summary() -> CollectionLogSummary:
                 error="",
                 skip_reason="non_trading_day",
             ),
+            "20260314": CollectionLogRecord(
+                date="20260314",
+                status="error",
+                news_count=0,
+                classification_count=0,
+                daily_price_count=0,
+                daily_index_count=0,
+                completed_at="2026-03-16T16:38:00+09:00",
+                error="boom",
+                skip_reason="",
+            ),
         },
-        partial_dates=["20260314"],
-        error_dates=[],
-        tracked_dates=["20260315", "20260314"],
-        oldest_partial_date="20260314",
-        oldest_error_date="",
+        partial_dates=["20260316"],
+        error_dates=["20260314"],
+        tracked_dates=["20260316", "20260315", "20260314"],
+        oldest_partial_date="20260316",
+        oldest_error_date="20260314",
         oldest_blocked_date="20260314",
         blocked_news_count=12,
         blocked_classification_count=12,
@@ -44,6 +55,35 @@ def _summary() -> CollectionLogSummary:
         status_generated_at="2026-03-16T16:40:00+09:00",
         oldest_blocked_age_seconds=300,
     )
+
+
+def _status_report() -> dict:
+    return {
+        "summary": {
+            "health": "error_backlog",
+            "oldest_blocked_age_seconds": 300,
+        },
+        "backlog": {
+            "partial_details": [
+                {
+                    "date": "20260316",
+                    "skip_reason": "daily_index_missing",
+                    "manifest_status_reason": "daily_index_missing",
+                    "manifest_status": "partial",
+                    "manifest_path": "data/collector/manifests/20260316.json",
+                }
+            ],
+            "error_details": [
+                {
+                    "date": "20260314",
+                    "error": "boom",
+                    "manifest_status_reason": "daily_prices_missing",
+                    "manifest_status": "partial",
+                    "manifest_path": "data/collector/manifests/20260314.json",
+                }
+            ],
+        },
+    }
 
 
 def test_format_backfill_notification_success():
@@ -62,15 +102,16 @@ def test_format_backfill_notification_success():
     )
     state = CollectorState(status="idle", cursor_date="20260314", last_completed_date="20260315")
 
-    text = format_backfill_notification(result, state, _summary())
+    text = format_backfill_notification(result, state, _summary(), status_report=_status_report())
 
     assert "Kindshot Backfill OK" in text
     assert "range=20260315->20260315 finalized=20260315" in text
     assert "processed=1 complete=1 partial=0 skipped=0" in text
     assert "collector=idle cursor=20260314 last_completed=20260315" in text
+    assert "backlog_health=error_backlog oldest_blocked_age_s=300" in text
 
 
-def test_format_backfill_notification_includes_partial_and_skipped_dates():
+def test_format_backfill_notification_includes_manifest_aware_partial_and_error_details():
     result = BackfillResult(
         requested_from="20260316",
         requested_to="20260314",
@@ -86,22 +127,25 @@ def test_format_backfill_notification_includes_partial_and_skipped_dates():
     )
     state = CollectorState(status="idle", cursor_date="20260316", last_completed_date="")
 
-    text = format_backfill_notification(result, state, _summary())
+    text = format_backfill_notification(result, state, _summary(), status_report=_status_report())
 
     assert "partial_dates=20260316" in text
     assert "partial_reasons=20260316:daily_index_missing" in text
+    assert "partial_detail=20260316 reason=daily_index_missing manifest_status=partial manifest=data/collector/manifests/20260316.json" in text
     assert "skipped_dates=20260315" in text
     assert "skip_reasons=20260315:non_trading_day" in text
+    assert "error_detail=20260314 error=boom manifest_reason=daily_prices_missing manifest_status=partial manifest=data/collector/manifests/20260314.json" in text
 
 
 def test_format_backfill_notification_failure():
     state = CollectorState(status="error", cursor_date="20260315", last_completed_date="20260314")
 
-    text = format_backfill_notification(None, state, _summary(), error=RuntimeError("boom"))
+    text = format_backfill_notification(None, state, _summary(), error=RuntimeError("boom"), status_report=_status_report())
 
     assert "Kindshot Backfill FAIL" in text
     assert "error=RuntimeError: boom" in text
     assert "collector=error cursor=20260315 last_completed=20260314" in text
+    assert "error_detail=20260314 error=boom manifest_reason=daily_prices_missing manifest_status=partial manifest=data/collector/manifests/20260314.json" in text
 
 
 def test_send_telegram_message_builds_request(monkeypatch):

@@ -9,6 +9,7 @@ import os
 import sys
 
 from kindshot.collector import (
+    load_collection_status_report,
     load_collection_log_summary,
     load_collector_state,
     run_backfill,
@@ -48,7 +49,8 @@ async def _main() -> int:
 
     state = load_collector_state(config.collector_state_path)
     summary = load_collection_log_summary(config.collector_log_path)
-    message = format_backfill_notification(result, state, summary, error=error)
+    status_report = load_collection_status_report(config, backlog_limit=5, state=state, summary=summary)
+    message = format_backfill_notification(result, state, summary, error=error, status_report=status_report)
     print(message)
 
     sent = send_telegram_message(message, bot_token, chat_id)
