@@ -9,14 +9,17 @@ from dataclasses import asdict, is_dataclass
 import json
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+import aiohttp
+
 from kindshot.config import Config
 from kindshot.kis_client import KisClient
-from kindshot.models import ContextCard
+from kindshot.models import AlphaSignalContext, ContextCard
 from kindshot.runtime_artifacts import update_runtime_artifact_index
+from kindshot.tz import KST as _KST
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +46,7 @@ class ContextCardData:
     support_price_5d: Optional[float] = None
     support_price_20d: Optional[float] = None
     support_reference_px: Optional[float] = None
-
-
-from kindshot.tz import KST as _KST
+    alpha_signal: dict | None = None
 
 
 def configure_cache(ttl_s: int, max_size: int) -> None:
@@ -233,6 +234,38 @@ async def _pykrx_features(ticker: str) -> dict:
     return result
 
 
+async def _fetch_alpha_scanner_signal(
+    base_url: str,
+    timeout_s: float,
+    ticker: str,
+) -> AlphaSignalContext | None:
+    """Fetch a fresh STRONG_BUY signal from alpha-scanner."""
+    if not base_url:
+        return None
+
+    url = f"{base_url.rstrip('/')}/kindshot/signals/current"
+    timeout = aiohttp.ClientTimeout(total=timeout_s)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url, params={"ticker": ticker}) as response:
+            response.raise_for_status()
+            payload = await response.json()
+
+    if payload.get("status") != "ok" or not payload.get("has_signal"):
+        return None
+
+    return AlphaSignalContext(
+        ticker=payload.get("ticker") or ticker,
+        signal_type=payload.get("signal_type") or "",
+        score_current=payload.get("score_current"),
+        confidence=payload.get("confidence"),
+        size_hint=payload.get("size_hint"),
+        score_delta=payload.get("score_delta"),
+        regime=payload.get("regime"),
+        created_at=payload.get("created_at"),
+        age_hours=payload.get("age_hours"),
+    )
+
+
 async def build_context_card(
     ticker: str,
     kis: Optional[KisClient] = None,
@@ -255,6 +288,7 @@ async def build_context_card(
     top_ask_notional: Optional[float] = None
     quote_temp_stop: Optional[bool] = None
     quote_liquidation_trade: Optional[bool] = None
+    alpha_signal: AlphaSignalContext | None = None
 
     if kis:
         price_info = await kis.get_price(ticker)
@@ -272,6 +306,16 @@ async def build_context_card(
                 top_ask_notional = round(price_info.orderbook.ask_price1 * price_info.orderbook.ask_size1, 2)
             quote_temp_stop = price_info.risk_state.temp_stop_yn == "Y"
             quote_liquidation_trade = price_info.risk_state.sltr_yn == "Y"
+
+    if config is not None and config.alpha_scanner_api_base_url:
+        try:
+            alpha_signal = await _fetch_alpha_scanner_signal(
+                config.alpha_scanner_api_base_url,
+                config.alpha_scanner_api_timeout_s,
+                ticker,
+            )
+        except Exception:
+            logger.warning("Alpha-scanner signal fetch failed for %s", ticker, exc_info=True)
 
     card = ContextCard(
         ret_today=ret_today,
@@ -294,6 +338,7 @@ async def build_context_card(
         support_price_5d=hist.get("support_price_5d"),
         support_price_20d=hist.get("support_price_20d"),
         support_reference_px=hist.get("support_reference_px"),
+        alpha_signal=alpha_signal,
     )
 
     raw = ContextCardData(
@@ -313,6 +358,7 @@ async def build_context_card(
         support_price_5d=hist.get("support_price_5d"),
         support_price_20d=hist.get("support_price_20d"),
         support_reference_px=hist.get("support_reference_px"),
+        alpha_signal=alpha_signal.model_dump(mode="json") if alpha_signal is not None else None,
     )
     return card, raw
 
@@ -406,6 +452,7 @@ async def append_runtime_context_card(
             "support_price_5d": raw.support_price_5d,
             "support_price_20d": raw.support_price_20d,
             "support_reference_px": raw.support_reference_px,
+            "alpha_signal": raw.alpha_signal,
         },
         "market_ctx": _json_safe_value(market_ctx),
     }

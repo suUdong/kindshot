@@ -205,6 +205,50 @@ async def test_context_card_preserves_participation_fields(monkeypatch):
     assert raw.intraday_value_vs_adv20d == 0.005
 
 
+async def test_context_card_fetches_alpha_scanner_signal(monkeypatch):
+    cc._pykrx_cache.clear()
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_TTL", 300)
+    monkeypatch.setattr(cc, "_PYKRX_CACHE_MAX_SIZE", 512)
+
+    async def _fake_to_thread(func, *args, **kwargs):
+        return {"prev_close": 50000, "adv_value_20d": 20_000_000_000}
+
+    monkeypatch.setattr(cc.asyncio, "to_thread", _fake_to_thread)
+    monkeypatch.setattr(
+        cc,
+        "_fetch_alpha_scanner_signal",
+        AsyncMock(
+            return_value=cc.AlphaSignalContext(
+                ticker="005930",
+                signal_type="STRONG_BUY",
+                score_current=84.0,
+                confidence=88,
+                size_hint="full",
+                age_hours=0.5,
+            )
+        ),
+    )
+
+    mock_kis = AsyncMock()
+    mock_kis.get_price = AsyncMock(return_value=PriceInfo(
+        px=52000,
+        open_px=51000,
+        spread_bps=12.0,
+        cum_value=100_000_000.0,
+        fetch_latency_ms=50,
+    ))
+
+    card, raw = await cc.build_context_card(
+        "005930",
+        kis=mock_kis,
+        config=Config(alpha_scanner_api_base_url="http://alpha.local", alpha_scanner_api_timeout_s=2.0),
+    )
+
+    assert card.alpha_signal is not None
+    assert card.alpha_signal.signal_type == "STRONG_BUY"
+    assert raw.alpha_signal is not None
+    assert raw.alpha_signal["confidence"] == 88
+
 async def test_context_card_surfaces_support_reference(monkeypatch):
     cc._pykrx_cache.clear()
     monkeypatch.setattr(cc, "_PYKRX_CACHE_TTL", 300)

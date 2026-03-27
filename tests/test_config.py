@@ -14,7 +14,7 @@ def test_default_config_creates_without_error():
         "CHASE_", "MIN_BUY_", "PAPER_", "TRAILING_", "PARTIAL_", "DYNAMIC_", "MAX_HOLD_",
         "NO_BUY_", "KOSPI_", "MIN_MARKET_", "DAILY_LOSS_", "MAX_POSITIONS",
         "MAX_SECTOR_", "ORDER_SIZE", "PIPELINE_", "PYKRX_", "RECENT_PATTERN_", "UNKNOWN_", "SESSION_",
-        "FINALIZE_", "COLLECTOR_", "LOG_DIR", "DATA_DIR",
+        "FINALIZE_", "COLLECTOR_", "LOG_DIR", "DATA_DIR", "ALPHA_SCANNER_",
     ))}
     with patch.dict(os.environ, clean_env, clear=True):
         cfg = Config()
@@ -43,6 +43,19 @@ def test_env_override_float():
         assert cfg.chase_buy_pct == 7.5
 
 
+def test_alpha_scanner_api_env_override():
+    with patch.dict(
+        os.environ,
+        {
+            "ALPHA_SCANNER_API_BASE_URL": "http://alpha-scanner.local:8765",
+            "ALPHA_SCANNER_API_TIMEOUT_S": "2.5",
+        },
+    ):
+        cfg = Config()
+        assert cfg.alpha_scanner_api_base_url == "http://alpha-scanner.local:8765"
+        assert cfg.alpha_scanner_api_timeout_s == 2.5
+
+
 def test_env_override_int():
     with patch.dict(os.environ, {"MIN_BUY_CONFIDENCE": "80"}):
         cfg = Config()
@@ -67,7 +80,7 @@ def test_trailing_stop_defaults():
         "CHASE_", "MIN_BUY_", "PAPER_", "TRAILING_", "PARTIAL_", "DYNAMIC_", "MAX_HOLD_",
         "NO_BUY_", "KOSPI_", "MIN_MARKET_", "DAILY_LOSS_", "MAX_POSITIONS",
         "MAX_SECTOR_", "ORDER_SIZE", "PIPELINE_", "PYKRX_", "RECENT_PATTERN_", "UNKNOWN_", "SESSION_",
-        "FINALIZE_", "COLLECTOR_", "LOG_DIR", "DATA_DIR", "FAST_PROFILE_",
+        "FINALIZE_", "COLLECTOR_", "LOG_DIR", "DATA_DIR", "FAST_PROFILE_", "ALPHA_SCANNER_",
     ))}
     with patch.dict(os.environ, clean_env, clear=True):
         cfg = Config()

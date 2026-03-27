@@ -20,7 +20,7 @@ from kindshot.decision import (
     LlmParseError,
     LlmCallError,
 )
-from kindshot.models import Bucket, ContextCard, Action, MarketContext, SizeHint
+from kindshot.models import AlphaSignalContext, Bucket, ContextCard, Action, MarketContext
 
 
 def test_parse_valid_json():
@@ -217,6 +217,37 @@ def test_build_prompt_includes_macro_market_context():
     assert "kr_macro=neutral" in prompt
     assert "crypto_macro=contractionary" in prompt
 
+
+def test_build_prompt_includes_alpha_scanner_signal():
+    ctx = ContextCard(
+        ret_today=1.5,
+        ret_1d=0.4,
+        ret_3d=1.2,
+        pos_20d=63,
+        gap=0.1,
+        adv_value_20d=25e9,
+        spread_bps=11,
+        alpha_signal=AlphaSignalContext(
+            ticker="005930",
+            signal_type="STRONG_BUY",
+            score_current=83.5,
+            confidence=86,
+            size_hint="full",
+            age_hours=1.2,
+        ),
+    )
+    prompt = _build_prompt(
+        bucket=Bucket.POS_STRONG,
+        headline="대규모 수주 공시",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at="09:10:00",
+        ctx=ctx,
+    )
+    assert "alpha_signal=STRONG_BUY" in prompt
+    assert "alpha_score=83.5" in prompt
+    assert "alpha_confidence=86" in prompt
+    assert "alpha_size=full" in prompt
 
 def test_build_prompt_truncates_long_headline():
     """Headlines longer than 500 chars are truncated to prevent prompt injection."""

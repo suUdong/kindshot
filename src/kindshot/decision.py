@@ -160,6 +160,16 @@ def _build_prompt(
     signal_parts.append(
         f"contract_amount_eok={amount_eok:.0f}" if amount_eok is not None else "contract_amount_eok=N/A"
     )
+    if ctx.alpha_signal is not None and ctx.alpha_signal.signal_type == "STRONG_BUY":
+        signal_parts.append("alpha_signal=STRONG_BUY")
+        if ctx.alpha_signal.score_current is not None:
+            signal_parts.append(f"alpha_score={ctx.alpha_signal.score_current:.1f}")
+        if ctx.alpha_signal.confidence is not None:
+            signal_parts.append(f"alpha_confidence={ctx.alpha_signal.confidence}")
+        if ctx.alpha_signal.size_hint:
+            signal_parts.append(f"alpha_size={ctx.alpha_signal.size_hint}")
+        if ctx.alpha_signal.age_hours is not None:
+            signal_parts.append(f"alpha_age_h={ctx.alpha_signal.age_hours:.1f}")
 
     risk_line = ""
     if risk_budget is not None:
