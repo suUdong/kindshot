@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from kindshot.config import Config
 from kindshot.hold_profile import resolve_hold_profile
 
 _HORIZON_ORDER = ["t+30s", "t+1m", "t+2m", "t+5m", "t+10m", "t+15m", "t+20m", "t+30m", "close"]
@@ -32,7 +33,7 @@ class StrategyReportConfig:
     trailing_stop_early_pct: float = 0.5  # v65: 0.3→0.5
     trailing_stop_mid_pct: float = 0.8   # v65: 0.5→0.8
     trailing_stop_late_pct: float = 1.0  # v65: 0.7→1.0
-    max_hold_minutes: int = 15  # v65: 10→15
+    max_hold_minutes: int = field(default_factory=lambda: Config().max_hold_minutes)
 
 
 def _ret_pct(snapshots: dict[str, dict[str, Any]], horizon: str) -> float | None:

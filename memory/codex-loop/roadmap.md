@@ -15,10 +15,10 @@
 
 ## Current Focus
 
-- Track: User-Directed Runtime Quality
-- Phase: v69 Runtime Baseline Deployed
+- Track: User-Directed Runtime Observability
+- Phase: v69 Observability Alignment
 - Status: Completed (user override)
-- Reason: The user explicitly overrode the historical-collection priority to ship prompt-quality, partial-exit, and dynamic-loss-limit runtime behavior. The validated current `main` tree was then deployed to the paper-trading server via clean export because the remote worktree was dirty.
+- Reason: The user explicitly redirected the loop to fix `/health` heartbeat accuracy and add live dashboard metrics after the v69 deploy. The slice was implemented, validated locally, pushed as `f0e1bc4`, and deployed to `kindshot-server` via clean export.
 
 ## Phases
 
@@ -92,8 +92,8 @@
 
 ## Next Run Candidates
 
-1. Observe one or more live paper sessions to confirm the prompt/risk context, partial-take-profit, and dynamic daily loss floor behave as intended in real logs.
-2. Decide whether the broader `846cfd5` bundle now on the server should be split into narrower deployment lanes for future strategy slices.
+1. Observe one or more live paper sessions to confirm the new `/health.trade_metrics` and dashboard live cards evolve correctly under actual trade closes.
+2. Decide whether unrealized/open-position MTM belongs in the health/dashboard surface or should remain separate from realized trade metrics.
 3. Clean or re-clone the remote `/opt/kindshot/.git` metadata so future deployments can rely on git provenance instead of clean-export hash checks.
 
 ## Deferred

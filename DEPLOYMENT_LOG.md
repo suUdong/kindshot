@@ -28,6 +28,73 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 00:21 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `f0e1bc4`
+- Deployer: Codex manual SSH + clean `git archive` export + `rsync`
+- Summary:
+  1. **health heartbeat 정합화 배포** — `/health.last_poll_at` 가 internal timestamp 대신 runtime feed heartbeat source 를 사용하도록 `health.py`/`main.py` 를 반영
+  2. **실시간 trade metrics 노출** — runtime 이 closed-trade 기준 `trade_metrics` (`win_rate`, `total_pnl_pct`, `total_pnl_won`, `avg_pnl_pct`, `peak_ret_pct`, `mdd_pct`) 를 health payload 로 제공
+  3. **dashboard live observability 반영** — Streamlit 대시보드가 health payload 의 `trade_metrics`, `last_poll_source`, `last_poll_age_seconds` 를 읽어 실시간 KPI/heartbeat 상태를 표시
+- Validation:
+  - local `python3 -m compileall src dashboard tests`
+  - local `.venv/bin/python -m pytest tests/test_health.py tests/test_performance.py tests/test_dashboard.py -q` → `39 passed`
+  - local `.venv/bin/python -m pytest -q` → `956 passed, 1 skipped`
+  - local affected-file diagnostics → `0 errors`
+  - remote `python3 -m compileall src/kindshot dashboard tests`
+  - remote `source .venv/bin/activate && python -m pip install . --quiet`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `curl -sf http://127.0.0.1:8080/health` returned:
+    - `last_poll_source: "feed"`
+    - `trade_metrics` block present with zeroed live metrics before market activity
+  - remote `curl -I http://127.0.0.1:8501` → `HTTP/1.1 200 OK`
+  - remote journal after restart:
+    - `kindshot 0.1.3 starting`
+    - `Health server started on 127.0.0.1:8080`
+    - later heartbeat `last_poll=00:20:14`
+  - follow-up remote health check returned `last_poll_at=2026-03-28T00:20:31.008898+09:00`, `last_poll_source=feed`, `last_poll_age_seconds=3`
+  - remote source files contained new strings:
+    - `trade_metrics`
+    - `last_poll_source`
+    - `실시간 트레이딩 메트릭`
+- Rollback: re-sync the prior known-good tree to `/opt/kindshot`, reinstall with the remote venv, and restart `kindshot` + `kindshot-dashboard`
+- Result: 성공
+- Notes: initial non-sudo `systemctl restart` failed with interactive auth, but `sudo systemctl restart ...` succeeded; the deployed services now report the new health payload shape
+
+### 2026-03-28 00:05 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: clean export from local `25d339c`
+- Deployer: Codex manual SSH + `rsync`
+- Summary:
+  1. **clean HEAD export redeploy** — local worktree had an unrelated dirty `guardrails.py`, so deployment used a clean `git archive` snapshot from pushed `25d339c`
+  2. **runtime sync + reinstall** — `src/`, `dashboard/`, `tests/`, `scripts/`, and package metadata were rsynced to `/opt/kindshot`, then remote `compileall` + `pip install . --quiet` completed successfully
+  3. **service restart + v69 smoke verification** — `kindshot` and `kindshot-dashboard` restarted cleanly, `/health` and dashboard HTTP returned healthy/200, and remote smoke checks confirmed prompt enrichment, dynamic daily loss floor wiring, and tighter post-partial trailing behavior
+- Validation:
+  - remote `python3 -m compileall src/kindshot scripts tests`
+  - remote `source .venv/bin/activate && python -m pip install . --quiet`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `curl http://127.0.0.1:8080/health` → `healthy`
+  - remote `curl -I http://127.0.0.1:8501` → `HTTP/1.1 200 OK`
+  - remote sha256 matched clean export for:
+    - `src/kindshot/decision.py`
+    - `src/kindshot/price.py`
+    - `src/kindshot/guardrails.py`
+    - `src/kindshot/main.py`
+    - `src/kindshot/health.py`
+    - `src/kindshot/prompts/decision_strategy.txt`
+  - remote smoke script passed:
+    - `ctx_signal` / `ctx_risk` prompt fields present
+    - direct disclosure + contract amount fields rendered in prompt
+    - dynamic daily loss floor matched live config formula and health payload
+    - post-partial trailing stop was tighter than pre-partial trailing
+- Rollback: re-sync the prior known-good tree to `/opt/kindshot`, reinstall with the remote venv, and restart `kindshot` + `kindshot-dashboard`
+- Result: 성공
+- Notes: `/health` remained healthy after restart; runtime is still in VTS price mode because real quote keys are not present, so live-day observation is still needed for full intraday exit calibration
+
 ### 2026-03-27 23:46 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)

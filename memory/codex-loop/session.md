@@ -3,44 +3,43 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `v69 Runtime Baseline Deployed`
-- Focus: verify and deploy the current runtime baseline that already includes structured prompt hints, partial take-profit, finer trailing-stop handling, and dynamic daily loss budgeting.
-- Active hypothesis: the existing `846cfd5` runtime baseline is sufficient to satisfy the requested v69 behavior set, so end-to-end validation + deployment is higher value than forcing another code mutation.
+- Phase: `v69 Observability Alignment Deployed`
+- Focus: make `/health` use the same heartbeat source as the watchdog, expose live trade metrics, reflect them in the dashboard, and verify the deployed runtime.
+- Active hypothesis: wiring `/health` directly to `feed.last_poll_at` plus `PerformanceTracker.live_metrics()` is the smallest reliable fix because empty polls never flow through the previous health update path.
 - Blocker: none.
 
 ## Environment
 
 - Host: local workspace
-- Runtime target: Python `3.11+`
-- Current local venv: `.venv` uses Python `3.12.3`
+- Runtime target: AWS Lightsail `kindshot-server` (`/opt/kindshot`, paper mode)
+- Local note: workspace still has uncommitted run-log/session artifacts, so deployment again used a clean `git archive` export from pushed `HEAD`
 - Validation status:
-  - `python3 -m compileall src/kindshot tests scripts` passed
-  - `.venv/bin/python -m pytest tests/test_config.py tests/test_decision.py tests/test_guardrails.py tests/test_price.py tests/test_telegram_ops.py -q` passed (`261 passed, 1 skipped`)
-  - `.venv/bin/python -m pytest tests/test_pipeline.py tests/test_performance.py tests/test_main_cli.py tests/test_health.py -q` passed (`55 passed, 1 warning`)
-  - `.venv/bin/python -m pytest -q` passed (`934 passed, 1 skipped, 1 warning`)
-  - affected-file diagnostics returned 0 issues for `decision.py`, `price.py`, `main.py`, and `guardrails.py`
-  - remote `python3 -m compileall src/kindshot scripts tests` passed on `kindshot-server`
-  - remote `python -m pip install . --quiet` passed on `kindshot-server` after the broken editable-install state was removed
-  - remote `systemctl restart kindshot kindshot-dashboard` succeeded and both services returned `active` at `2026-03-27 23:45:59 KST`
-  - remote `curl http://127.0.0.1:8080/health` returned `healthy`
+  - local `python3 -m compileall src dashboard tests` passed
+  - local targeted pytest (`test_health`, `test_performance`, `test_dashboard`) passed
+  - local full `pytest -q` passed (`956 passed, 1 skipped`)
+  - local affected-file diagnostics returned `0 errors`
+  - remote `python3 -m compileall src/kindshot dashboard tests` passed
+  - remote `python -m pip install . --quiet` passed in `/opt/kindshot/.venv`
+  - remote non-sudo restart failed with interactive auth, but `sudo systemctl restart kindshot kindshot-dashboard` succeeded
+  - remote `curl http://127.0.0.1:8080/health` returned the new payload with `last_poll_source="feed"` and `trade_metrics`
   - remote `curl -I http://127.0.0.1:8501` returned `HTTP/1.1 200 OK`
-  - remote file checks confirmed deployed files contain partial take-profit, `ctx_signal` / `ctx_risk`, and dynamic daily loss floor code paths
+  - remote journal showed clean startup, health server bind, and post-restart heartbeat logging
+  - remote source grep confirmed the deployed dashboard and runtime files contain the new observability strings
 
 ## Last Completed Step
 
-- Wrote the Ralph context snapshot, PRD, and test spec for the v69 runtime slice.
-- Verified that current head `846cfd5` already contains the requested v69 runtime features instead of needing a new code diff.
-- Ran local compile, targeted pytest, full pytest, and affected-file diagnostics.
-- Deployed the current head to `kindshot-server` via clean export, restarted `kindshot` + `kindshot-dashboard`, and passed remote health/dashboard checks.
+- Wrote the Ralph context snapshot and observability design/test-spec artifacts.
+- Implemented the `/health` heartbeat-source fix plus live trade metrics export and dashboard consumption.
+- Pushed commit `f0e1bc4`, redeployed it to `kindshot-server`, restarted both services with `sudo`, and captured fresh remote health/dashboard/journal evidence.
 
 ## Next Intended Step
 
-- Observe the next full paper/live runtime day to confirm how partial take-profit and dynamic daily loss budgeting behave on real intraday flows.
-- Check whether `ctx_signal` / `ctx_risk` prompt enrichment improves borderline BUY/SKIP handling in logs without over-admitting analyst/commentary items.
-- If VTS-mode stale pricing continues to limit exit-quality observation, prioritize restoring real quote keys or separating prompt-quality review from snapshot-quality review.
+- Monitor the next market session to confirm `trade_metrics` evolve correctly under real closed trades and that dashboard live cards stay readable during active flow.
+- If MTM visibility becomes necessary, decide whether open-position unrealized P&L belongs in health/dashboard or should stay in a separate surface.
+- If real quote keys become available, re-verify observability behavior outside VTS mode.
 
 ## Notes
 
-- This run validated and deployed an already-present runtime implementation; it still leaves `deploy/`, secrets, and live-order behavior untouched.
-- Full-suite warning remains in `tests/test_health.py` as `NotAppKeyWarning`; no new warnings were introduced by this slice.
-- Remote venv still does not include `pytest`, so server-side verification used compile/install/restart/HTTP checks instead of remote unit tests.
+- This run changed runtime observability and dashboard surfaces only; it did not alter `deploy/`, secrets, `.env`, or live-order behavior.
+- The server remains in VTS mode for pricing, so stale-price warnings are expected at startup.
+- Fresh deployment evidence is recorded in `DEPLOYMENT_LOG.md` and `memory/codex-loop/latest.md`.
