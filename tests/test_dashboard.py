@@ -15,14 +15,19 @@ from data_loader import (  # noqa: E402
     _read_jsonl,
     _read_json,
     available_dates,
+    compute_daily_equity_curve,
     compute_multi_day_pnl,
     compute_trade_pnl,
     load_context_cards,
     load_events,
     load_health,
+    load_live_feed,
     load_multi_day_events,
     load_multi_day_pnl_detail,
     load_price_snapshots,
+    load_shadow_trade_pnl,
+    load_version_trend,
+    summarize_shadow_trade_pnl,
 )
 
 
@@ -45,6 +50,7 @@ def fake_logs(tmp_path, monkeypatch):
         {
             "type": "event", "mode": "paper",
             "event_id": "evt001", "ticker": "005930", "corp_name": "삼성전자",
+            "source": "KIS",
             "headline": "삼성전자 공급계약 체결",
             "bucket": "POS_STRONG", "keyword_hits": ["공급계약"],
             "detected_at": "2026-03-19T09:10:00+09:00",
@@ -56,6 +62,7 @@ def fake_logs(tmp_path, monkeypatch):
         {
             "type": "event", "mode": "paper",
             "event_id": "evt002", "ticker": "000660", "corp_name": "SK하이닉스",
+            "source": "KIS",
             "headline": "SK하이닉스 실적 발표",
             "bucket": "POS_WEAK", "keyword_hits": ["실적"],
             "detected_at": "2026-03-19T09:15:00+09:00",
@@ -67,6 +74,7 @@ def fake_logs(tmp_path, monkeypatch):
         {
             "type": "event", "mode": "paper",
             "event_id": "evt003", "ticker": "035420", "corp_name": "NAVER",
+            "source": "KIND",
             "headline": "네이버 일반 공시",
             "bucket": "UNKNOWN", "keyword_hits": [],
             "detected_at": "2026-03-19T09:20:00+09:00",
@@ -74,6 +82,18 @@ def fake_logs(tmp_path, monkeypatch):
             "decision_action": None, "decision_confidence": None,
             "decision_size_hint": None, "decision_reason": None,
             "guardrail_result": None,
+        },
+        {
+            "type": "event", "mode": "paper",
+            "event_id": "evt004", "ticker": "051910", "corp_name": "LG화학",
+            "source": "KIS",
+            "headline": "LG화학 대형 공급계약 체결",
+            "bucket": "POS_STRONG", "keyword_hits": ["공급계약"],
+            "detected_at": "2026-03-19T09:30:00+09:00",
+            "skip_stage": "GUARDRAIL", "skip_reason": "CHASE_BUY_BLOCKED",
+            "decision_action": "BUY", "decision_confidence": 82,
+            "decision_size_hint": "L", "decision_reason": "대형 계약 호재",
+            "guardrail_result": "CHASE_BUY_BLOCKED",
         },
     ]
     log_path = logs_dir / "kindshot_20260319.jsonl"
@@ -113,6 +133,21 @@ def fake_logs(tmp_path, monkeypatch):
             "type": "price_snapshot", "event_id": "evt001", "horizon": "t+30m",
             "ts": "2026-03-19T09:40:00Z", "px": 60300.0,
             "ret_long_vs_t0": 0.005, "spread_bps": 15.0,
+        },
+        {
+            "type": "price_snapshot", "event_id": "shadow_evt004", "horizon": "t0",
+            "ts": "2026-03-19T09:30:00Z", "px": 300000.0,
+            "ret_long_vs_t0": 0.0, "spread_bps": 12.0,
+        },
+        {
+            "type": "price_snapshot", "event_id": "shadow_evt004", "horizon": "t+5m",
+            "ts": "2026-03-19T09:35:00Z", "px": 303000.0,
+            "ret_long_vs_t0": 0.01, "spread_bps": 12.0,
+        },
+        {
+            "type": "price_snapshot", "event_id": "shadow_evt004", "horizon": "t+30m",
+            "ts": "2026-03-19T10:00:00Z", "px": 306000.0,
+            "ret_long_vs_t0": 0.02, "spread_bps": 12.0,
         },
     ]
     snap_path = runtime_dir / "price_snapshots" / "20260319.jsonl"
@@ -155,10 +190,10 @@ def test_available_dates(fake_logs):
 
 def test_load_events(fake_logs):
     df = load_events("20260319")
-    assert len(df) == 3
+    assert len(df) == 4
     assert "event_id" in df.columns
     buys = df[df["decision_action"] == "BUY"]
-    assert len(buys) == 1
+    assert len(buys) == 2
 
 
 def test_load_events_empty(fake_logs):
@@ -175,7 +210,7 @@ def test_load_context_cards(fake_logs):
 
 def test_load_price_snapshots(fake_logs):
     df = load_price_snapshots("20260319")
-    assert len(df) == 3
+    assert len(df) == 6
     assert set(df["horizon"]) == {"t0", "t+5m", "t+30m"}
 
 
@@ -196,7 +231,7 @@ def test_compute_trade_pnl_empty(fake_logs):
 
 def test_load_multi_day_events(fake_logs):
     df = load_multi_day_events(7)
-    assert len(df) == 3
+    assert len(df) == 4
     assert "date" in df.columns
 
 
@@ -232,3 +267,58 @@ def test_load_health_offline():
     """서버가 없을 때 None 반환."""
     result = load_health()
     assert result is None
+
+
+def test_compute_daily_equity_curve(fake_logs):
+    df = compute_daily_equity_curve("20260319")
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["cum_ret_pct"] == 0.5
+    assert row["drawdown_pct"] == 0.0
+
+
+def test_load_shadow_trade_pnl_and_summary(fake_logs):
+    df = load_shadow_trade_pnl("20260319")
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["ticker"] == "051910"
+    assert row["guardrail_result"] == "CHASE_BUY_BLOCKED"
+    assert row["best_ret_pct"] == 2.0
+    assert row["final_ret_pct"] == 2.0
+
+    summary = summarize_shadow_trade_pnl("20260319")
+    assert summary["blocked_buy_count"] == 1
+    assert summary["shadow_trade_count"] == 1
+    assert summary["win_rate"] == 100.0
+    assert summary["total_ret_pct"] == 2.0
+
+
+def test_shadow_summary_without_shadow_snapshots(fake_logs, monkeypatch):
+    import data_loader
+
+    original = load_price_snapshots("20260319")
+    monkeypatch.setattr(
+        data_loader,
+        "load_price_snapshots",
+        lambda date_str: original[~original["event_id"].astype(str).str.startswith("shadow_")].copy(),
+    )
+    summary = summarize_shadow_trade_pnl("20260319")
+    assert summary["blocked_buy_count"] == 1
+    assert summary["shadow_trade_count"] == 0
+    assert summary["top_guardrail_reason"] == "CHASE_BUY_BLOCKED"
+
+
+def test_load_live_feed(fake_logs):
+    df = load_live_feed(limit=3, n_days=7)
+    assert len(df) == 3
+    assert list(df["ticker"]) == ["051910", "035420", "000660"]
+    assert list(df["feed_action"]) == ["GUARDRAIL_BLOCKED", "BUCKET", "SKIP"]
+
+
+def test_load_version_trend(fake_logs):
+    df = load_version_trend()
+    assert list(df["version"]) == ["v64", "v65", "v66"]
+    v66 = df[df["version"] == "v66"].iloc[0]
+    assert v66["sample_size"] == 1
+    assert v66["win_rate"] == 100.0
+    assert v66["total_ret_pct"] == 0.5

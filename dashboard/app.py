@@ -9,14 +9,19 @@ import plotly.graph_objects as go
 
 from data_loader import (
     available_dates,
+    compute_daily_equity_curve,
     compute_multi_day_pnl,
     compute_trade_pnl,
     load_context_cards,
     load_events,
     load_health,
+    load_live_feed,
     load_multi_day_events,
     load_multi_day_pnl_detail,
     load_price_snapshots,
+    load_shadow_trade_pnl,
+    load_version_trend,
+    summarize_shadow_trade_pnl,
 )
 
 # ── 페이지 설정 ──────────────────────────────────────
@@ -25,6 +30,55 @@ st.set_page_config(
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
+)
+
+st.markdown(
+    """
+    <style>
+    :root {
+        --kindshot-bg: #f4efe6;
+        --kindshot-panel: #fffdf8;
+        --kindshot-text: #1f2933;
+        --kindshot-muted: #5f6c7b;
+        --kindshot-accent: #c65d2e;
+        --kindshot-line: rgba(31, 41, 51, 0.08);
+    }
+    .stApp {
+        background:
+            radial-gradient(circle at top right, rgba(198, 93, 46, 0.12), transparent 28%),
+            linear-gradient(180deg, #f8f3eb 0%, var(--kindshot-bg) 100%);
+        color: var(--kindshot-text);
+    }
+    .block-container {
+        padding-top: 1.2rem;
+        padding-bottom: 2rem;
+    }
+    div[data-testid="stMetric"] {
+        background: rgba(255, 253, 248, 0.85);
+        border: 1px solid var(--kindshot-line);
+        border-radius: 18px;
+        padding: 0.7rem 0.9rem;
+        box-shadow: 0 10px 30px rgba(31, 41, 51, 0.04);
+    }
+    div[data-testid="stDataFrame"] {
+        border-radius: 18px;
+        overflow: hidden;
+    }
+    @media (max-width: 768px) {
+        .block-container {
+            padding-left: 0.8rem;
+            padding-right: 0.8rem;
+        }
+        h1, h2, h3 {
+            letter-spacing: -0.02em;
+        }
+        div[data-testid="stMetric"] {
+            padding: 0.65rem 0.75rem;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 # ── 사이드바: 날짜 선택 ──────────────────────────────
@@ -77,10 +131,36 @@ def _load_multi(n: int) -> pd.DataFrame:
 def _load_multi_pnl(n: int) -> pd.DataFrame:
     return compute_multi_day_pnl(n)
 
+@st.cache_data(ttl=60)
+def _load_daily_equity(d: str) -> pd.DataFrame:
+    return compute_daily_equity_curve(d)
+
+@st.cache_data(ttl=60)
+def _load_shadow(d: str) -> pd.DataFrame:
+    return load_shadow_trade_pnl(d)
+
+@st.cache_data(ttl=60)
+def _load_shadow_summary(d: str) -> dict:
+    return summarize_shadow_trade_pnl(d)
+
+@st.cache_data(ttl=60)
+def _load_live_feed(limit: int, n_days: int) -> pd.DataFrame:
+    return load_live_feed(limit=limit, n_days=n_days)
+
+@st.cache_data(ttl=60)
+def _load_versions() -> pd.DataFrame:
+    return load_version_trend()
+
 events_df = _load_events(selected_date)
 ctx_df = _load_ctx(selected_date)
 pnl_df = _load_pnl(selected_date)
 multi_df = _load_multi(multi_day_n)
+multi_pnl_df = _load_multi_pnl(multi_day_n)
+daily_equity_df = _load_daily_equity(selected_date)
+shadow_df = _load_shadow(selected_date)
+shadow_summary = _load_shadow_summary(selected_date)
+live_feed_df = _load_live_feed(40, min(3, len(dates)))
+version_trend_df = _load_versions()
 
 # ── 탭 구성 ──────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -275,6 +355,40 @@ with tab1:
         else:
             st.info("BUY 시그널 없음")
 
+    st.divider()
+    st.subheader("실시간 뉴스 피드 모니터")
+    if live_feed_df.empty:
+        st.info("최근 이벤트 피드가 없습니다.")
+    else:
+        latest_ts = live_feed_df["detected_at"].dropna().max() if "detected_at" in live_feed_df.columns else None
+        feed_exec = int((live_feed_df["feed_action"] == "BUY").sum()) if "feed_action" in live_feed_df.columns else 0
+        feed_blocked = int((live_feed_df["feed_action"] == "GUARDRAIL_BLOCKED").sum()) if "feed_action" in live_feed_df.columns else 0
+        feed_sources = int(live_feed_df["source"].nunique()) if "source" in live_feed_df.columns else 0
+
+        fc1, fc2, fc3, fc4 = st.columns(4)
+        fc1.metric("최근 이벤트", len(live_feed_df))
+        fc2.metric("실행 BUY", feed_exec)
+        fc3.metric("차단 BUY", feed_blocked)
+        fc4.metric("활성 소스", feed_sources, delta=latest_ts.strftime("%m-%d %H:%M") if latest_ts is not None else None)
+
+        feed_display = live_feed_df.copy()
+        if "detected_at" in feed_display.columns:
+            feed_display["detected_at"] = feed_display["detected_at"].dt.strftime("%m-%d %H:%M:%S")
+        rename_map = {
+            "date": "일자",
+            "detected_at": "시각",
+            "source": "소스",
+            "ticker": "종목코드",
+            "corp_name": "종목명",
+            "headline": "헤드라인",
+            "bucket": "버킷",
+            "feed_action": "결과",
+            "decision_confidence": "Confidence",
+            "guardrail_result": "차단사유",
+        }
+        feed_display = feed_display.rename(columns=rename_map)
+        st.dataframe(feed_display, use_container_width=True, hide_index=True, height=420)
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # TAB 2: 매매 성과
@@ -299,6 +413,53 @@ with tab2:
         c2.metric("승률", f"{win_rate:.1f}%")
         c3.metric("평균 수익률", f"{avg_ret:.2f}%")
         c4.metric("최고 수익", f"{best_trade:.2f}%")
+
+        if not daily_equity_df.empty:
+            st.subheader("실시간 P&L 차트")
+            eq_col1, eq_col2 = st.columns(2)
+            with eq_col1:
+                fig_intraday = go.Figure()
+                fig_intraday.add_trace(go.Scatter(
+                    x=daily_equity_df["detected_at"],
+                    y=daily_equity_df["cum_ret_pct"],
+                    mode="lines+markers",
+                    name="당일 누적 수익률",
+                    line=dict(color="#c65d2e", width=3),
+                    fill="tozeroy",
+                    fillcolor="rgba(198,93,46,0.12)",
+                    customdata=daily_equity_df[["ticker", "headline"]],
+                    hovertemplate="%{x}<br>%{customdata[0]}<br>%{customdata[1]}<br>누적 %{y:.2f}%<extra></extra>",
+                ))
+                fig_intraday.add_hline(y=0, line_dash="dash", line_color="gray")
+                fig_intraday.update_layout(
+                    title="당일 수익곡선",
+                    height=360,
+                    yaxis_title="누적 수익률 (%)",
+                    xaxis_title="시각",
+                    margin=dict(l=10, r=10, t=48, b=10),
+                )
+                st.plotly_chart(fig_intraday, use_container_width=True)
+            with eq_col2:
+                fig_daily_dd = go.Figure()
+                fig_daily_dd.add_trace(go.Scatter(
+                    x=daily_equity_df["detected_at"],
+                    y=daily_equity_df["drawdown_pct"],
+                    mode="lines+markers",
+                    name="당일 드로다운",
+                    line=dict(color="#264653", width=3),
+                    fill="tozeroy",
+                    fillcolor="rgba(38,70,83,0.14)",
+                    hovertemplate="%{x}<br>드로다운 %{y:.2f}%<extra></extra>",
+                ))
+                fig_daily_dd.add_hline(y=0, line_dash="dash", line_color="gray")
+                fig_daily_dd.update_layout(
+                    title="당일 드로다운",
+                    height=360,
+                    yaxis_title="드로다운 (%)",
+                    xaxis_title="시각",
+                    margin=dict(l=10, r=10, t=48, b=10),
+                )
+                st.plotly_chart(fig_daily_dd, use_container_width=True)
 
         # 종목별 수익률 바 차트
         fig_pnl = px.bar(
@@ -458,6 +619,98 @@ with tab2:
                             kw_display[c] = kw_display[c].round(2)
                         st.dataframe(kw_display, use_container_width=True, hide_index=True)
 
+        st.divider()
+        st.subheader("Shadow Snapshot 기회비용")
+        blocked_buy_count = shadow_summary.get("blocked_buy_count", 0)
+        if shadow_df.empty:
+            if blocked_buy_count > 0:
+                st.warning(f"차단된 BUY는 {blocked_buy_count}건 있었지만 아직 shadow snapshot 결과가 없습니다.")
+            else:
+                st.info("차단된 BUY shadow snapshot 데이터가 없습니다.")
+        else:
+            sc1, sc2, sc3, sc4 = st.columns(4)
+            sc1.metric("차단 BUY", blocked_buy_count)
+            sc2.metric("가상 승률", f"{shadow_summary.get('win_rate', 0.0):.1f}%")
+            sc3.metric("가상 총수익률", f"{shadow_summary.get('total_ret_pct', 0.0):.2f}%")
+            sc4.metric("대표 차단사유", shadow_summary.get("top_guardrail_reason") or "N/A")
+
+            shadow_chart_col, shadow_table_col = st.columns([1.15, 1])
+            with shadow_chart_col:
+                shadow_valid = shadow_df.dropna(subset=["final_ret_pct"])
+                fig_shadow = px.bar(
+                    shadow_valid,
+                    x="ticker",
+                    y="final_ret_pct",
+                    color="guardrail_result",
+                    hover_data=["headline", "confidence", "best_ret_pct", "final_horizon"],
+                    title="차단 BUY 가상 수익률",
+                    labels={"final_ret_pct": "가상 수익률 (%)", "ticker": "종목코드"},
+                )
+                fig_shadow.add_hline(y=0, line_dash="dash", line_color="gray")
+                fig_shadow.update_layout(height=360, margin=dict(l=10, r=10, t=48, b=10))
+                st.plotly_chart(fig_shadow, use_container_width=True)
+            with shadow_table_col:
+                shadow_display = shadow_df[[
+                    "ticker", "corp_name", "headline", "confidence",
+                    "guardrail_result", "best_ret_pct", "final_ret_pct", "final_horizon",
+                ]].rename(columns={
+                    "ticker": "종목코드",
+                    "corp_name": "종목명",
+                    "headline": "헤드라인",
+                    "confidence": "Confidence",
+                    "guardrail_result": "차단사유",
+                    "best_ret_pct": "최대수익(%)",
+                    "final_ret_pct": "가상수익(%)",
+                    "final_horizon": "종결시점",
+                })
+                st.dataframe(shadow_display, use_container_width=True, hide_index=True, height=360)
+
+        st.divider()
+        st.subheader("버전 성과 추이 (v64 → v65 → v66)")
+        vt_col1, vt_col2 = st.columns([1.2, 1])
+        with vt_col1:
+            fig_version = go.Figure()
+            fig_version.add_trace(go.Scatter(
+                x=version_trend_df["version"],
+                y=version_trend_df["win_rate"],
+                mode="lines+markers",
+                name="승률",
+                line=dict(color="#c65d2e", width=3),
+                hovertemplate="%{x}<br>승률 %{y:.1f}%<extra></extra>",
+            ))
+            fig_version.add_trace(go.Scatter(
+                x=version_trend_df["version"],
+                y=version_trend_df["total_ret_pct"],
+                mode="lines+markers",
+                name="총수익률",
+                line=dict(color="#264653", width=3),
+                yaxis="y2",
+                hovertemplate="%{x}<br>총수익률 %{y:.2f}%<extra></extra>",
+            ))
+            fig_version.update_layout(
+                height=360,
+                title="승률 / 총수익률 트렌드",
+                yaxis=dict(title="승률 (%)"),
+                yaxis2=dict(title="총수익률 (%)", overlaying="y", side="right"),
+                margin=dict(l=10, r=10, t=48, b=10),
+            )
+            st.plotly_chart(fig_version, use_container_width=True)
+        with vt_col2:
+            version_display = version_trend_df.copy()
+            version_display["win_rate"] = version_display["win_rate"].map(lambda v: f"{v:.1f}%" if pd.notna(v) else "N/A")
+            version_display["total_ret_pct"] = version_display["total_ret_pct"].map(lambda v: f"{v:.2f}%" if pd.notna(v) else "N/A")
+            version_display["mdd_pct"] = version_display["mdd_pct"].map(lambda v: f"{v:.2f}%" if pd.notna(v) else "N/A")
+            version_display = version_display.rename(columns={
+                "version": "버전",
+                "win_rate": "승률",
+                "total_ret_pct": "총수익률",
+                "mdd_pct": "MDD",
+                "sample_size": "표본수",
+                "source": "근거",
+                "notes": "메모",
+            })
+            st.dataframe(version_display, use_container_width=True, hide_index=True, height=360)
+
     # 멀티데이 성과 추이
     st.divider()
     st.subheader(f"최근 {multi_day_n}일 추이")
@@ -509,10 +762,9 @@ with tab2:
             fig_conf_trend.update_layout(height=350)
             st.plotly_chart(fig_conf_trend, use_container_width=True)
 
-        # 누적 PnL 곡선
-        multi_pnl_df = _load_multi_pnl(multi_day_n)
+        # 주간/멀티데이 곡선
         if not multi_pnl_df.empty and multi_pnl_df["trades"].sum() > 0:
-            st.subheader("누적 수익률 곡선")
+            st.subheader("주간 수익곡선 / 드로다운")
 
             col_pnl1, col_pnl2 = st.columns(2)
             with col_pnl1:
@@ -532,21 +784,36 @@ with tab2:
                 st.plotly_chart(fig_cum, use_container_width=True)
 
             with col_pnl2:
-                fig_daily_pnl = go.Figure()
-                colors = ["#2ecc71" if v >= 0 else "#e74c3c"
-                          for v in multi_pnl_df["total_ret_pct"]]
-                fig_daily_pnl.add_trace(go.Bar(
-                    x=multi_pnl_df["date"], y=multi_pnl_df["total_ret_pct"],
-                    name="일별 수익률", marker_color=colors,
-                    text=[f"{v:.2f}%" for v in multi_pnl_df["total_ret_pct"]],
-                    textposition="outside",
+                fig_weekly_dd = go.Figure()
+                fig_weekly_dd.add_trace(go.Scatter(
+                    x=multi_pnl_df["date"], y=multi_pnl_df["drawdown_pct"],
+                    mode="lines+markers", name="주간 드로다운",
+                    line=dict(color="#264653", width=3),
+                    fill="tozeroy",
+                    fillcolor="rgba(38,70,83,0.14)",
                 ))
-                fig_daily_pnl.add_hline(y=0, line_dash="dash", line_color="gray")
-                fig_daily_pnl.update_layout(
-                    title="일별 수익률 (%)",
-                    height=400, yaxis_title="수익률 (%)", xaxis_title="날짜",
+                fig_weekly_dd.add_hline(y=0, line_dash="dash", line_color="gray")
+                fig_weekly_dd.update_layout(
+                    title="주간 드로다운 (%)",
+                    height=400, yaxis_title="드로다운 (%)", xaxis_title="날짜",
                 )
-                st.plotly_chart(fig_daily_pnl, use_container_width=True)
+                st.plotly_chart(fig_weekly_dd, use_container_width=True)
+
+            fig_daily_pnl = go.Figure()
+            colors = ["#2ecc71" if v >= 0 else "#e74c3c"
+                      for v in multi_pnl_df["total_ret_pct"]]
+            fig_daily_pnl.add_trace(go.Bar(
+                x=multi_pnl_df["date"], y=multi_pnl_df["total_ret_pct"],
+                name="일별 수익률", marker_color=colors,
+                text=[f"{v:.2f}%" for v in multi_pnl_df["total_ret_pct"]],
+                textposition="outside",
+            ))
+            fig_daily_pnl.add_hline(y=0, line_dash="dash", line_color="gray")
+            fig_daily_pnl.update_layout(
+                title="일별 수익률 (%)",
+                height=360, yaxis_title="수익률 (%)", xaxis_title="날짜",
+            )
+            st.plotly_chart(fig_daily_pnl, use_container_width=True)
 
             # 승률 추이
             wr_data = multi_pnl_df[multi_pnl_df["trades"] > 0]

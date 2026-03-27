@@ -40,6 +40,31 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return json.load(f)
 
 
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _with_equity_and_drawdown(
+    df: pd.DataFrame,
+    *,
+    pnl_col: str,
+    order_col: str,
+) -> pd.DataFrame:
+    if df.empty or pnl_col not in df.columns:
+        return df
+    ordered = df.sort_values(order_col, kind="stable").copy()
+    ordered[pnl_col] = pd.to_numeric(ordered[pnl_col], errors="coerce").fillna(0.0)
+    ordered["cum_ret_pct"] = ordered[pnl_col].cumsum()
+    ordered["peak_ret_pct"] = ordered["cum_ret_pct"].cummax()
+    ordered["drawdown_pct"] = ordered["cum_ret_pct"] - ordered["peak_ret_pct"]
+    return ordered
+
+
 def available_dates() -> list[str]:
     """로그가 존재하는 날짜 목록 (YYYYMMDD) 반환, 최신순."""
     dates = set()
@@ -203,6 +228,8 @@ def compute_trade_pnl(date_str: str) -> pd.DataFrame:
             "confidence": ev.get("decision_confidence"),
             "size_hint": ev.get("decision_size_hint"),
             "bucket": ev.get("bucket"),
+            "detected_at": ev.get("detected_at"),
+            "guardrail_result": ev.get("guardrail_result"),
             "entry_px": entry_px,
             "best_ret_pct": round(best_ret * 100, 2) if best_ret is not None else None,
             "final_ret_pct": round(final_ret * 100, 2) if final_ret is not None else None,
@@ -210,6 +237,23 @@ def compute_trade_pnl(date_str: str) -> pd.DataFrame:
         })
 
     return pd.DataFrame(rows)
+
+
+def compute_daily_equity_curve(date_str: str) -> pd.DataFrame:
+    """당일 실행 BUY 기준 누적 수익곡선 + 드로다운."""
+    pnl_df = compute_trade_pnl(date_str)
+    if pnl_df.empty:
+        return pd.DataFrame()
+    valid = pnl_df.dropna(subset=["final_ret_pct"]).copy()
+    if valid.empty:
+        return pd.DataFrame()
+    if "detected_at" in valid.columns:
+        valid["detected_at"] = pd.to_datetime(valid["detected_at"], errors="coerce")
+    valid["trade_label"] = valid.apply(
+        lambda row: f"{row.get('ticker', '')} {str(row.get('headline', ''))[:24]}".strip(),
+        axis=1,
+    )
+    return _with_equity_and_drawdown(valid, pnl_col="final_ret_pct", order_col="detected_at")
 
 
 def load_multi_day_events(n_days: int = 7) -> pd.DataFrame:
@@ -279,4 +323,188 @@ def compute_multi_day_pnl(n_days: int = 7) -> pd.DataFrame:
             "total_ret_pct": day_total,
             "cum_ret_pct": cum_pnl,
         })
+    return _with_equity_and_drawdown(pd.DataFrame(rows), pnl_col="total_ret_pct", order_col="date")
+
+
+def load_shadow_trade_pnl(date_str: str) -> pd.DataFrame:
+    """차단된 BUY의 shadow snapshot 결과를 가상 PnL로 재구성."""
+    events_df = load_events(date_str)
+    snaps_df = load_price_snapshots(date_str)
+    if events_df.empty or snaps_df.empty:
+        return pd.DataFrame()
+
+    blocked = events_df[
+        (events_df.get("decision_action") == "BUY")
+        & (events_df.get("skip_stage") == "GUARDRAIL")
+        & (events_df.get("guardrail_result").notna())
+    ].copy()
+    if blocked.empty:
+        return pd.DataFrame()
+
+    shadow_snaps = snaps_df[
+        snaps_df["event_id"].astype(str).str.startswith("shadow_", na=False)
+    ].copy()
+    if shadow_snaps.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for _, ev in blocked.iterrows():
+        original_eid = ev.get("event_id")
+        shadow_eid = f"shadow_{original_eid}"
+        ev_snaps = shadow_snaps[shadow_snaps["event_id"] == shadow_eid]
+        if ev_snaps.empty:
+            continue
+        t0_row = ev_snaps[ev_snaps["horizon"] == "t0"]
+        entry_px = t0_row.iloc[0]["px"] if not t0_row.empty and t0_row.iloc[0].get("px") else None
+        best_ret = None
+        final_ret = None
+        final_horizon = None
+        for _, snap in ev_snaps.iterrows():
+            ret = _safe_float(snap.get("ret_long_vs_t0"))
+            if ret is None:
+                continue
+            if best_ret is None or ret > best_ret:
+                best_ret = ret
+            final_ret = ret
+            final_horizon = snap.get("horizon")
+
+        rows.append({
+            "event_id": original_eid,
+            "shadow_event_id": shadow_eid,
+            "ticker": ev.get("ticker"),
+            "corp_name": ev.get("corp_name"),
+            "headline": ev.get("headline", "")[:60],
+            "confidence": ev.get("decision_confidence"),
+            "size_hint": ev.get("decision_size_hint"),
+            "bucket": ev.get("bucket"),
+            "detected_at": ev.get("detected_at"),
+            "guardrail_result": ev.get("guardrail_result"),
+            "entry_px": entry_px,
+            "best_ret_pct": round(best_ret * 100, 2) if best_ret is not None else None,
+            "final_ret_pct": round(final_ret * 100, 2) if final_ret is not None else None,
+            "final_horizon": final_horizon,
+        })
+
+    shadow_df = pd.DataFrame(rows)
+    if shadow_df.empty:
+        return shadow_df
+    shadow_df["detected_at"] = pd.to_datetime(shadow_df["detected_at"], errors="coerce")
+    return shadow_df.sort_values("detected_at", kind="stable")
+
+
+def summarize_shadow_trade_pnl(date_str: str) -> dict[str, Any]:
+    """shadow snapshot KPI 요약."""
+    events_df = load_events(date_str)
+    blocked = events_df[
+        (events_df.get("decision_action") == "BUY")
+        & (events_df.get("skip_stage") == "GUARDRAIL")
+        & (events_df.get("guardrail_result").notna())
+    ].copy() if not events_df.empty else pd.DataFrame()
+    shadow_df = load_shadow_trade_pnl(date_str)
+
+    if shadow_df.empty:
+        return {
+            "blocked_buy_count": int(len(blocked)) if not blocked.empty else 0,
+            "shadow_trade_count": 0,
+            "win_rate": 0.0,
+            "avg_ret_pct": 0.0,
+            "total_ret_pct": 0.0,
+            "best_trade_pct": None,
+            "top_guardrail_reason": blocked["guardrail_result"].value_counts().index[0]
+            if not blocked.empty else None,
+        }
+
+    valid = shadow_df["final_ret_pct"].dropna()
+    wins = int((valid > 0).sum())
+    top_reason = (
+        shadow_df["guardrail_result"].value_counts().index[0]
+        if "guardrail_result" in shadow_df.columns and not shadow_df["guardrail_result"].dropna().empty
+        else None
+    )
+    return {
+        "blocked_buy_count": int(len(blocked)) if not blocked.empty else 0,
+        "shadow_trade_count": int(len(shadow_df)),
+        "win_rate": wins / len(valid) * 100 if len(valid) else 0.0,
+        "avg_ret_pct": float(valid.mean()) if len(valid) else 0.0,
+        "total_ret_pct": float(valid.sum()) if len(valid) else 0.0,
+        "best_trade_pct": float(valid.max()) if len(valid) else None,
+        "top_guardrail_reason": top_reason,
+    }
+
+
+def load_live_feed(limit: int = 40, n_days: int = 3) -> pd.DataFrame:
+    """최근 이벤트를 실시간 피드용으로 반환."""
+    feed_df = load_multi_day_events(n_days)
+    if feed_df.empty:
+        return pd.DataFrame()
+    if "detected_at" in feed_df.columns:
+        feed_df["detected_at"] = pd.to_datetime(feed_df["detected_at"], errors="coerce")
+    feed_df["feed_action"] = feed_df.get("effective_action", feed_df.get("decision_action"))
+    feed_df["feed_action"] = feed_df["feed_action"].fillna(
+        feed_df.get("skip_stage", pd.Series(index=feed_df.index, dtype="object")).fillna("FILTERED")
+    )
+    ordered = feed_df.sort_values("detected_at", ascending=False, kind="stable").copy()
+    cols = [
+        "date",
+        "detected_at",
+        "source",
+        "ticker",
+        "corp_name",
+        "headline",
+        "bucket",
+        "feed_action",
+        "decision_confidence",
+        "guardrail_result",
+    ]
+    available = [col for col in cols if col in ordered.columns]
+    return ordered[available].head(limit)
+
+
+def load_version_trend() -> pd.DataFrame:
+    """v64-v65-v66 비교용 릴리스 baseline."""
+    latest_metrics = {
+        "version": "v66",
+        "win_rate": None,
+        "total_ret_pct": None,
+        "mdd_pct": None,
+        "sample_size": 0,
+        "source": "latest runtime logs",
+        "notes": "최신 실행 BUY 기준 동적 계산",
+    }
+    dates = available_dates()
+    if dates:
+        latest_date = dates[0]
+        equity_df = compute_daily_equity_curve(latest_date)
+        valid = equity_df["final_ret_pct"].dropna() if not equity_df.empty else pd.Series(dtype=float)
+        if len(valid):
+            latest_metrics.update({
+                "win_rate": float((valid > 0).mean() * 100),
+                "total_ret_pct": float(valid.sum()),
+                "mdd_pct": float(equity_df["drawdown_pct"].min()) if "drawdown_pct" in equity_df.columns else None,
+                "sample_size": int(len(valid)),
+                "source": f"latest runtime logs ({latest_date})",
+                "notes": "로컬 최신 실행 BUY 표본 기준",
+            })
+
+    rows = [
+        {
+            "version": "v64",
+            "win_rate": 21.4,
+            "total_ret_pct": -17.77,
+            "mdd_pct": None,
+            "sample_size": 14,
+            "source": "docs/reports/performance_analysis_20260327.md",
+            "notes": "0310-0327 baseline report",
+        },
+        {
+            "version": "v65",
+            "win_rate": 35.7,
+            "total_ret_pct": -3.66,
+            "mdd_pct": -5.04,
+            "sample_size": 14,
+            "source": "git show 485238d",
+            "notes": "v66 release note에 기록된 v65 baseline",
+        },
+        latest_metrics,
+    ]
     return pd.DataFrame(rows)
