@@ -54,3 +54,11 @@ def test_render_report_includes_reason_hour_and_flat_sections():
     assert "Flat-price / stale 의심 건" in report
     assert "MARKET_CLOSE_CUTOFF" in report
     assert "16:00" in report
+
+    # v67: 뉴스 카테고리 분류 및 리포트 섹션
+    assert "뉴스 카테고리별 분석" in report
+    # 주식소각 → shareholder_return, 임상 3상 → clinical_regulatory
+    flat_trade = [t for t in trades if t.event_id == "shadow_evt_flat"][0]
+    move_trade = [t for t in trades if t.event_id == "shadow_evt_move"][0]
+    assert flat_trade.news_type == "other"  # "주식소각" ≠ "자사주소각"
+    assert move_trade.news_type == "clinical_regulatory"  # "임상 3상 승인"

@@ -800,3 +800,76 @@ def get_kill_switch_size_hint(
     if state.consecutive_stop_losses >= config.consecutive_loss_size_down:
         return downgrade_size_hint(original_hint)
     return original_hint
+
+
+# ── v67: 변동성 레짐 기반 동적 confidence 임계값 ──────────────
+
+
+def detect_volatility_regime(
+    *,
+    kospi_change_pct: float | None = None,
+    kosdaq_change_pct: float | None = None,
+    vol_pct_20d: float | None = None,
+    atr_14: float | None = None,
+) -> str:
+    """시장 변동성 레짐 감지.
+
+    Returns:
+        "high", "normal", "low" 중 하나.
+
+    판단 기준 (OR 조건):
+      high: |지수 변동| >= 1.5%  OR  vol_pct_20d >= 35  OR  atr_14 >= 4.0
+      low:  |지수 변동| < 0.3%  AND (vol_pct_20d < 15 if available)
+      normal: 그 외
+    """
+    # 지수 일중 변동폭
+    idx_changes = [abs(v) for v in (kospi_change_pct, kosdaq_change_pct) if v is not None]
+    max_idx_change = max(idx_changes) if idx_changes else 0.0
+
+    # 고변동성 체크
+    if max_idx_change >= 1.5:
+        return "high"
+    if vol_pct_20d is not None and vol_pct_20d >= 35.0:
+        return "high"
+    if atr_14 is not None and atr_14 >= 4.0:
+        return "high"
+
+    # 저변동성 체크
+    if max_idx_change < 0.3:
+        if vol_pct_20d is None or vol_pct_20d < 15.0:
+            return "low"
+
+    return "normal"
+
+
+def apply_volatility_confidence_adjustment(
+    confidence: int,
+    regime: str,
+) -> int:
+    """변동성 레짐 기반 confidence 보정.
+
+    v67: 시장 변동성에 따라 진입 문턱 자동 조정.
+      high:   -3 (노이즈 많고, 스프레드 확대, 슬리피지 위험)
+      normal:  0
+      low:    +2 (안정적 시장, 기회 확대)
+    """
+    if regime == "high":
+        return max(0, confidence - 3)
+    if regime == "low":
+        return min(confidence + 2, 100)
+    return confidence
+
+
+def apply_news_category_confidence_adjustment(
+    confidence: int,
+    category: str,
+) -> int:
+    """뉴스 카테고리별 confidence 보정.
+
+    v67: 카테고리별 과거 성과 데이터 기반 차등 보정.
+    """
+    from kindshot.news_category import get_category_confidence_adjustment
+    adj = get_category_confidence_adjustment(category)
+    if adj == 0:
+        return confidence
+    return max(0, min(confidence + adj, 100))

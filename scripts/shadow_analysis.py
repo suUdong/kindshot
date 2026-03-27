@@ -24,6 +24,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from kindshot.news_category import classify_news_type
 from kindshot.tz import KST as _KST
 
 # 기본 TP/SL (config.py 기본값)
@@ -41,6 +42,7 @@ class ShadowTrade:
     bucket: str
     confidence: int
     skip_reason: str
+    news_type: str = "other"  # v67: 뉴스 카테고리 (contract, mna, etc.)
     t0_price: float = 0.0
     snapshots: dict[str, float] = field(default_factory=dict)  # horizon -> price
     returns: dict[str, float] = field(default_factory=dict)    # horizon -> return %
@@ -208,14 +210,18 @@ def build_shadow_trades(
         observed_prices = [float(px) for px in snaps.values() if px is not None and px > 0]
         flat_price = len(observed_prices) >= 2 and len({round(px, 6) for px in observed_prices}) == 1
 
+        full_headline = ev.get("headline", "")
+        news_type = classify_news_type(full_headline)
+
         trade = ShadowTrade(
             event_id=shadow_eid,
             date=shadow_dates.get(shadow_eid, ""),
             ticker=ev.get("ticker", "?"),
-            headline=ev.get("headline", "")[:60],
+            headline=full_headline[:60],
             bucket=ev.get("bucket", "?"),
             confidence=int(ev.get("decision_confidence", 0)),
             skip_reason=ev.get("skip_reason", ""),
+            news_type=news_type,
             t0_price=t0,
             snapshots=snaps,
             returns=returns,
@@ -330,9 +336,24 @@ def render_report(trades: list[ShadowTrade], tp_pct: float, sl_pct: float) -> st
         avg_p = sum(t.virtual_exit_pnl for t in group) / n
         lines.append(f"  {reason[:25]:<25} {n:>4} {wr:>7.1f}% {avg_p:>+8.2f}%")
 
-    # 6. 시간대별 분석
+    # 6. v67: 뉴스 카테고리별 분석
     lines.append(f"\n{'─' * 70}")
-    lines.append("  6. 시간대별 분석 (KST)")
+    lines.append("  6. 뉴스 카테고리별 분석")
+    lines.append(f"{'─' * 70}")
+    cat_groups: dict[str, list[ShadowTrade]] = defaultdict(list)
+    for t in trades:
+        cat_groups[t.news_type].append(t)
+    lines.append(f"  {'카테고리':<22} {'건수':>4} {'가상승률':>8} {'평균P&L':>9} {'평균max↑':>9}")
+    for cat, group in sorted(cat_groups.items(), key=lambda x: -len(x[1])):
+        n = len(group)
+        wr = len([t for t in group if t.virtual_exit_type == "TP"]) / n * 100
+        avg_p = sum(t.virtual_exit_pnl for t in group) / n
+        avg_g = sum(t.max_gain_pct for t in group) / n
+        lines.append(f"  {cat:<22} {n:>4} {wr:>7.1f}% {avg_p:>+8.2f}% {avg_g:>+8.2f}%")
+
+    # 7. 시간대별 분석
+    lines.append(f"\n{'─' * 70}")
+    lines.append("  7. 시간대별 분석 (KST)")
     lines.append(f"{'─' * 70}")
     hour_groups: dict[str, list[ShadowTrade]] = defaultdict(list)
     for t in trades:
@@ -345,11 +366,11 @@ def render_report(trades: list[ShadowTrade], tp_pct: float, sl_pct: float) -> st
         avg_p = sum(t.virtual_exit_pnl for t in group) / n
         lines.append(f"  {hour}:00   {n:>4} {wr:>7.1f}% {avg_p:>+8.2f}%")
 
-    # 7. Flat/stale 의심 건
+    # 8. Flat/stale 의심 건
     flat_trades = [t for t in trades if t.flat_price]
     if flat_trades:
         lines.append(f"\n{'─' * 70}")
-        lines.append("  7. Flat-price / stale 의심 건")
+        lines.append("  8. Flat-price / stale 의심 건")
         lines.append(f"{'─' * 70}")
         lines.append("  동일 가격이 여러 horizon에서 반복된 건입니다. after-close/VTS 환경이면 기회비용 해석을 보수적으로 해야 합니다.")
         lines.append(f"  {'날짜':<12} {'종목':<10} {'conf':>4} {'차단사유':<20} {'source':<12}")
@@ -360,14 +381,14 @@ def render_report(trades: list[ShadowTrade], tp_pct: float, sl_pct: float) -> st
                 f"{t.skip_reason[:20]:<20} {sources[:12]:<12}"
             )
 
-    # 8. 개별 트레이드 상세
+    # 9. 개별 트레이드 상세
     lines.append(f"\n{'─' * 70}")
-    lines.append("  8. 개별 트레이드 상세")
+    lines.append("  9. 개별 트레이드 상세")
     lines.append(f"{'─' * 70}")
     for t in trades:
         lines.append(f"\n  [{t.event_id}]")
         hour_label = f"{t.detected_hour_kst:02d}:00 KST" if t.detected_hour_kst >= 0 else "unknown hour"
-        lines.append(f"    {t.date} | {t.ticker} | conf={t.confidence} | {t.bucket} | {hour_label}")
+        lines.append(f"    {t.date} | {t.ticker} | conf={t.confidence} | {t.bucket} | {t.news_type} | {hour_label}")
         lines.append(f"    헤드라인: {t.headline}")
         lines.append(f"    차단사유: {t.skip_reason}")
         lines.append(f"    진입가: {t.t0_price:,.0f}")

@@ -24,7 +24,8 @@ from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, Llm
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
 from kindshot.headline_parser import normalize_analysis_headline
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile, detect_volatility_regime, apply_volatility_confidence_adjustment, apply_news_category_confidence_adjustment
+from kindshot.news_category import classify_news_type
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -556,6 +557,27 @@ async def execute_bucket_path(
                         raw.ticker, before, decision.confidence, best, worst,
                         f"{_br:.2f}" if _br is not None else "N/A")
 
+        # 6. v67: 변동성 레짐 기반 confidence 보정
+        vol_regime = detect_volatility_regime(
+            kospi_change_pct=market_snapshot.kospi_change_pct,
+            kosdaq_change_pct=market_snapshot.kosdaq_change_pct,
+            vol_pct_20d=ctx.vol_pct_20d if ctx else None,
+            atr_14=ctx.atr_14 if ctx else None,
+        )
+        before = decision.confidence
+        decision.confidence = apply_volatility_confidence_adjustment(decision.confidence, vol_regime)
+        if decision.confidence != before:
+            logger.info("Volatility regime adj [%s]: %d → %d (regime=%s)",
+                        raw.ticker, before, decision.confidence, vol_regime)
+
+        # 7. v67: 뉴스 카테고리별 confidence 보정
+        news_cat = classify_news_type(analysis_headline, keyword_hits)
+        before = decision.confidence
+        decision.confidence = apply_news_category_confidence_adjustment(decision.confidence, news_cat)
+        if decision.confidence != before:
+            logger.info("News category adj [%s]: %d → %d (category=%s)",
+                        raw.ticker, before, decision.confidence, news_cat)
+
         # graduated penalty cap: 강한 시그널은 보호, 약한 시그널은 감점 허용
         # LLM 88+ (대형촉매): cap 8 → 최악 80 (BUY 유지)
         # LLM 83-87 (강한촉매): cap 10 → 최악 73-77 (경계선)
@@ -656,8 +678,9 @@ async def execute_bucket_path(
         event_rec.guardrail_result = gr.reason
         await log.write(event_rec)
         _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason=gr.reason)
-        # 고확신 BUY가 guardrail에서 차단되면 텔레그램 알림 (false negative 모니터링)
-        if decision.action == Action.BUY and decision.confidence >= 75:
+        # BUY guardrail 차단은 텔레그램으로 운영자에게 즉시 알림
+        shadow_scheduled = decision.action == Action.BUY and decision.confidence >= 75
+        if decision.action == Action.BUY:
             from kindshot.telegram_ops import try_send_high_conf_skip
             try_send_high_conf_skip(
                 ticker=raw.ticker,
@@ -665,11 +688,12 @@ async def execute_bucket_path(
                 headline=raw.title,
                 confidence=decision.confidence,
                 skip_reason=gr.reason or "UNKNOWN",
+                shadow_scheduled=shadow_scheduled,
                 decision_source=decision.decision_source,
                 mode=mode,
             )
         # v66: 차단된 BUY의 shadow snapshot — 기회비용 추적
-        if decision.action == Action.BUY and decision.confidence >= 75:
+        if shadow_scheduled:
             scheduler.schedule_t0(
                 event_id=f"shadow_{processed.event_id}",
                 ticker=raw.ticker,
