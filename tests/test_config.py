@@ -161,3 +161,23 @@ def test_recent_pattern_defaults_and_overrides():
         assert cfg.recent_pattern_profit_min_win_rate == 0.6
         assert cfg.recent_pattern_loss_max_win_rate == 0.2
         assert cfg.recent_pattern_loss_max_total_pnl_pct == -0.7
+
+
+def test_dynamic_daily_loss_recent_win_rate_defaults_and_overrides():
+    with patch.dict(
+        os.environ,
+        {
+            "DYNAMIC_DAILY_LOSS_RECENT_TRADE_WINDOW": "5",
+            "DYNAMIC_DAILY_LOSS_RECENT_TRADE_MIN_SAMPLES": "4",
+            "DYNAMIC_DAILY_LOSS_LOW_WIN_RATE_THRESHOLD": "0.4",
+            "DYNAMIC_DAILY_LOSS_LOW_WIN_RATE_MULT": "0.8",
+            "DYNAMIC_DAILY_LOSS_ZERO_WIN_RATE_MULT": "0.6",
+        },
+        clear=False,
+    ):
+        cfg = Config()
+        assert cfg.dynamic_daily_loss_recent_trade_window == 5
+        assert cfg.dynamic_daily_loss_recent_trade_min_samples == 4
+        assert cfg.dynamic_daily_loss_low_win_rate_threshold == 0.4
+        assert cfg.dynamic_daily_loss_low_win_rate_multiplier == 0.8
+        assert cfg.dynamic_daily_loss_zero_win_rate_multiplier == 0.6

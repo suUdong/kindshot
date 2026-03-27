@@ -119,6 +119,11 @@ class Config:
     dynamic_daily_loss_size_down_multiplier: float = field(default_factory=lambda: _env_float("DYNAMIC_DAILY_LOSS_SIZE_DOWN_MULT", 0.75))
     dynamic_daily_loss_halt_multiplier: float = field(default_factory=lambda: _env_float("DYNAMIC_DAILY_LOSS_HALT_MULT", 0.5))
     dynamic_daily_loss_profit_lock_ratio: float = field(default_factory=lambda: _env_float("DYNAMIC_DAILY_LOSS_PROFIT_LOCK_RATIO", 0.5))
+    dynamic_daily_loss_recent_trade_window: int = field(default_factory=lambda: _env_int("DYNAMIC_DAILY_LOSS_RECENT_TRADE_WINDOW", 4))
+    dynamic_daily_loss_recent_trade_min_samples: int = field(default_factory=lambda: _env_int("DYNAMIC_DAILY_LOSS_RECENT_TRADE_MIN_SAMPLES", 3))
+    dynamic_daily_loss_low_win_rate_threshold: float = field(default_factory=lambda: _env_float("DYNAMIC_DAILY_LOSS_LOW_WIN_RATE_THRESHOLD", 0.5))
+    dynamic_daily_loss_low_win_rate_multiplier: float = field(default_factory=lambda: _env_float("DYNAMIC_DAILY_LOSS_LOW_WIN_RATE_MULT", 0.75))
+    dynamic_daily_loss_zero_win_rate_multiplier: float = field(default_factory=lambda: _env_float("DYNAMIC_DAILY_LOSS_ZERO_WIN_RATE_MULT", 0.5))
     # 킬 스위치: 연패 기반 size 축소 & 당일 중단
     consecutive_loss_size_down: int = field(default_factory=lambda: _env_int("CONSECUTIVE_LOSS_SIZE_DOWN", 2))  # N연패 시 size 한단계 다운
     consecutive_loss_halt: int = field(default_factory=lambda: _env_int("CONSECUTIVE_LOSS_HALT", 3))  # N연패 시 당일 BUY 중단
@@ -317,6 +322,18 @@ class Config:
             raise ValueError(
                 f"dynamic_daily_loss_profit_lock_ratio must be between 0 and 1, got {self.dynamic_daily_loss_profit_lock_ratio}"
             )
+        if self.dynamic_daily_loss_recent_trade_window <= 0:
+            raise ValueError("dynamic_daily_loss_recent_trade_window must be positive")
+        if self.dynamic_daily_loss_recent_trade_min_samples <= 0:
+            raise ValueError("dynamic_daily_loss_recent_trade_min_samples must be positive")
+        if self.dynamic_daily_loss_recent_trade_min_samples > self.dynamic_daily_loss_recent_trade_window:
+            raise ValueError("dynamic_daily_loss_recent_trade_min_samples must be <= dynamic_daily_loss_recent_trade_window")
+        if not (0 <= self.dynamic_daily_loss_low_win_rate_threshold <= 1):
+            raise ValueError("dynamic_daily_loss_low_win_rate_threshold must be within 0..1")
+        if not (0 < self.dynamic_daily_loss_low_win_rate_multiplier <= 1):
+            raise ValueError("dynamic_daily_loss_low_win_rate_multiplier must be within (0, 1]")
+        if not (0 < self.dynamic_daily_loss_zero_win_rate_multiplier <= 1):
+            raise ValueError("dynamic_daily_loss_zero_win_rate_multiplier must be within (0, 1]")
         if self.chase_buy_pct <= 0:
             raise ValueError(f"chase_buy_pct must be positive, got {self.chase_buy_pct}")
         if not (0 <= self.min_buy_confidence <= 100):

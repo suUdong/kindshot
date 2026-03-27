@@ -59,6 +59,9 @@ class DailyLossBudgetSnapshot:
     effective_floor_pct: float | None
     remaining_budget_pct: float | None
     streak_multiplier: float
+    recent_win_rate_multiplier: float = 1.0
+    recent_win_rate: float | None = None
+    recent_closed_trades: int = 0
 
 
 class GuardrailState:
@@ -69,8 +72,10 @@ class GuardrailState:
         self._daily_pnl: float = 0.0  # accumulated realized P&L (won)
         self._bought_tickers: set[str] = set()  # tickers bought today
         self._sector_positions: dict[str, int] = {}  # sector -> count of open positions
+        self._ticker_sectors: dict[str, str] = {}  # open ticker -> sector
         self._position_count: int = 0
         self._consecutive_stop_losses: int = 0  # 연속 손절 카운터
+        self._recent_trade_outcomes: list[bool] = []  # same-day fully closed trade outcomes
         self._last_kst_date: Optional[str] = None  # YYYY-MM-DD
         self._state_dir = state_dir
         self._account_balance: float = account_balance  # 계좌 잔고 (비율 기반 손실 제한용)
@@ -82,6 +87,7 @@ class GuardrailState:
         self._bought_tickers.add(ticker)
         self._position_count += 1
         if sector:
+            self._ticker_sectors[ticker] = sector
             self._sector_positions[sector] = self._sector_positions.get(sector, 0) + 1
         self._persist_state()
 
@@ -93,11 +99,13 @@ class GuardrailState:
     def record_stop_loss(self) -> None:
         """Record a stop-loss exit. Increments consecutive counter."""
         self._consecutive_stop_losses += 1
+        self._recent_trade_outcomes.append(False)
         self._persist_state()
 
     def record_profitable_exit(self) -> None:
         """Record a profitable exit. Resets consecutive stop-loss counter."""
         self._consecutive_stop_losses = 0
+        self._recent_trade_outcomes.append(True)
         self._persist_state()
 
     def reset_daily(self) -> None:
@@ -105,8 +113,10 @@ class GuardrailState:
         self._daily_pnl = 0.0
         self._bought_tickers.clear()
         self._sector_positions.clear()
+        self._ticker_sectors.clear()
         self._position_count = 0
         self._consecutive_stop_losses = 0
+        self._recent_trade_outcomes.clear()
 
     def check_daily_reset(self) -> None:
         """Auto-reset if KST date changed since last check."""
@@ -119,8 +129,13 @@ class GuardrailState:
     def record_sell(self, ticker: str, sector: str = "") -> None:
         """Record a position close for state tracking."""
         self._position_count = max(0, self._position_count - 1)
-        if sector and self._sector_positions.get(sector, 0) > 0:
-            self._sector_positions[sector] -= 1
+        resolved_sector = sector or self._ticker_sectors.pop(ticker, "")
+        if resolved_sector and self._sector_positions.get(resolved_sector, 0) > 0:
+            remaining = self._sector_positions[resolved_sector] - 1
+            if remaining > 0:
+                self._sector_positions[resolved_sector] = remaining
+            else:
+                self._sector_positions.pop(resolved_sector, None)
         self._persist_state()
 
     def _state_file(self) -> Optional[Path]:
@@ -143,7 +158,9 @@ class GuardrailState:
             self._bought_tickers = set(data.get("bought_tickers", []))
             self._position_count = data.get("position_count", 0)
             self._sector_positions = data.get("sector_positions", {})
+            self._ticker_sectors = data.get("ticker_sectors", {})
             self._consecutive_stop_losses = data.get("consecutive_stop_losses", 0)
+            self._recent_trade_outcomes = [bool(value) for value in data.get("recent_trade_outcomes", [])]
             self._last_kst_date = today
             logger.info("Loaded guardrail state: pnl=%.0f, positions=%d, bought=%d",
                         self._daily_pnl, self._position_count, len(self._bought_tickers))
@@ -162,7 +179,9 @@ class GuardrailState:
                 "bought_tickers": sorted(self._bought_tickers),
                 "position_count": self._position_count,
                 "sector_positions": self._sector_positions,
+                "ticker_sectors": self._ticker_sectors,
                 "consecutive_stop_losses": self._consecutive_stop_losses,
+                "recent_trade_outcomes": self._recent_trade_outcomes,
             }
             # Atomic write: tmp file + rename to prevent corruption on crash
             tmp_path = path.with_suffix(".tmp")
@@ -182,6 +201,23 @@ class GuardrailState:
     @property
     def sector_positions(self) -> dict[str, int]:
         return self._sector_positions
+
+    @property
+    def recent_trade_outcomes(self) -> list[bool]:
+        return list(self._recent_trade_outcomes)
+
+    @property
+    def recent_closed_trade_count(self) -> int:
+        window = max(1, self._config.dynamic_daily_loss_recent_trade_window)
+        return len(self._recent_trade_outcomes[-window:])
+
+    @property
+    def recent_win_rate(self) -> float | None:
+        window = max(1, self._config.dynamic_daily_loss_recent_trade_window)
+        outcomes = self._recent_trade_outcomes[-window:]
+        if not outcomes:
+            return None
+        return sum(1 for outcome in outcomes if outcome) / len(outcomes)
 
     @property
     def position_count(self) -> int:
@@ -206,6 +242,14 @@ class GuardrailState:
     @property
     def dynamic_daily_loss_remaining_won(self) -> float:
         return self.daily_loss_budget.remaining_budget_won
+
+    @property
+    def recent_win_rate_multiplier(self) -> float:
+        return self.daily_loss_budget.recent_win_rate_multiplier
+
+    @property
+    def consecutive_loss_halt_threshold(self) -> int:
+        return self._config.consecutive_loss_halt
 
 
 # Well-known restricted stock markers from KRX
@@ -279,13 +323,28 @@ def resolve_dynamic_guardrail_profile(
 def resolve_daily_loss_budget(config: Config, state: GuardrailState) -> DailyLossBudgetSnapshot:
     base_limit_won = max(0.0, config.daily_loss_limit)
     streak_multiplier = 1.0
+    recent_win_rate_multiplier = 1.0
+    recent_outcomes = state.recent_trade_outcomes[-max(1, config.dynamic_daily_loss_recent_trade_window):]
+    recent_win_rate = None
     if config.dynamic_daily_loss_enabled:
         if state.consecutive_stop_losses >= config.consecutive_loss_halt:
             streak_multiplier = min(streak_multiplier, config.dynamic_daily_loss_halt_multiplier)
         elif state.consecutive_stop_losses >= config.consecutive_loss_size_down:
             streak_multiplier = min(streak_multiplier, config.dynamic_daily_loss_size_down_multiplier)
+        if len(recent_outcomes) >= config.dynamic_daily_loss_recent_trade_min_samples:
+            recent_win_rate = sum(1 for outcome in recent_outcomes if outcome) / len(recent_outcomes)
+            if recent_win_rate <= 0:
+                recent_win_rate_multiplier = min(
+                    recent_win_rate_multiplier,
+                    config.dynamic_daily_loss_zero_win_rate_multiplier,
+                )
+            elif recent_win_rate < config.dynamic_daily_loss_low_win_rate_threshold:
+                recent_win_rate_multiplier = min(
+                    recent_win_rate_multiplier,
+                    config.dynamic_daily_loss_low_win_rate_multiplier,
+                )
 
-    effective_limit_won = base_limit_won * streak_multiplier
+    effective_limit_won = base_limit_won * min(streak_multiplier, recent_win_rate_multiplier)
     effective_floor_won = -effective_limit_won
     if config.dynamic_daily_loss_enabled and state.daily_pnl > 0 and effective_limit_won > 0:
         locked_floor = min(
@@ -298,7 +357,7 @@ def resolve_daily_loss_budget(config: Config, state: GuardrailState) -> DailyLos
     remaining_budget_pct: float | None = None
     if state.account_balance > 0:
         realized_pct = (state.daily_pnl / state.account_balance) * 100
-        effective_limit_pct = abs(config.daily_loss_limit_pct) * streak_multiplier
+        effective_limit_pct = abs(config.daily_loss_limit_pct) * min(streak_multiplier, recent_win_rate_multiplier)
         effective_floor_pct = -effective_limit_pct
         if config.dynamic_daily_loss_enabled:
             if realized_pct > 0 and effective_limit_pct > 0:
@@ -315,6 +374,9 @@ def resolve_daily_loss_budget(config: Config, state: GuardrailState) -> DailyLos
         effective_floor_pct=effective_floor_pct,
         remaining_budget_pct=remaining_budget_pct,
         streak_multiplier=streak_multiplier,
+        recent_win_rate_multiplier=recent_win_rate_multiplier,
+        recent_win_rate=recent_win_rate,
+        recent_closed_trades=len(recent_outcomes),
     )
 
 

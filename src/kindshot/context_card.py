@@ -283,6 +283,7 @@ async def build_context_card(
         intraday_value_vs_adv20d=intraday_value_vs_adv20d,
         quote_risk_state=price_info.risk_state if kis and price_info else None,
         orderbook_snapshot=price_info.orderbook if kis and price_info else None,
+        sector=price_info.sector if kis and price_info else "",
     )
     return card, raw
 

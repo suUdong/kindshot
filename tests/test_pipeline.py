@@ -29,6 +29,7 @@ async def _run_pipeline_once(
     market_snapshot_overrides=None,
     capture_guardrail_calls=False,
     recent_pattern_profile=None,
+    guardrail_state=None,
 ):
     """Helper: run one iteration of the pipeline and return logged records."""
     from kindshot.event_registry import EventRegistry
@@ -100,6 +101,7 @@ async def _run_pipeline_once(
                     "test_run",
                     None,
                     mode=mode,
+                    guardrail_state=guardrail_state,
                     recent_pattern_profile=recent_pattern_profile,
                 ),
                 timeout=1.0,
@@ -210,6 +212,45 @@ async def test_guardrail_block_logged(tmp_path):
     # No decision record should be written when guardrail blocks
     decision_records = [r for r in records if r.get("type") == "decision"]
     assert len(decision_records) == 0
+
+
+async def test_pipeline_records_buy_with_sector_metadata(tmp_path):
+    from kindshot.models import DecisionRecord, Action, SizeHint
+    from kindshot.guardrails import GuardrailState
+    from kindshot.config import Config
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=82,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+    raw = _make_raw()
+    guardrail_state = GuardrailState(Config())
+    guardrail_state.record_buy = MagicMock(wraps=guardrail_state.record_buy)
+
+    await _run_pipeline_once(
+        tmp_path,
+        [raw],
+        decision_side_effect=[mock_decision],
+        paper=True,
+        ctx_raw=ContextCardData(
+            adv_value_20d=10e9,
+            spread_bps=10.0,
+            ret_today=1.0,
+            sector="반도체",
+        ),
+        guardrail_state=guardrail_state,
+    )
+
+    guardrail_state.record_buy.assert_called_once_with("005930", sector="반도체")
 
 
 async def test_pipeline_passes_time_and_hold_profile_to_guardrails(tmp_path):

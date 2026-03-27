@@ -168,9 +168,14 @@ class HealthState:
                 "daily_pnl": getattr(gs, "daily_pnl", 0.0),
                 "position_count": getattr(gs, "position_count", 0),
                 "consecutive_stop_losses": getattr(gs, "consecutive_stop_losses", 0),
+                "consecutive_loss_halt_threshold": getattr(gs, "consecutive_loss_halt_threshold", 0),
                 "bought_tickers_count": len(getattr(gs, "bought_tickers", set())),
+                "sector_positions": dict(getattr(gs, "sector_positions", {})),
                 "dynamic_daily_loss_floor_won": getattr(gs, "dynamic_daily_loss_floor_won", 0.0),
                 "dynamic_daily_loss_remaining_won": getattr(gs, "dynamic_daily_loss_remaining_won", 0.0),
+                "recent_closed_trades": getattr(gs, "recent_closed_trade_count", 0),
+                "recent_win_rate": getattr(gs, "recent_win_rate", None),
+                "recent_win_rate_multiplier": getattr(gs, "recent_win_rate_multiplier", 1.0),
             }
 
         if self.guardrail_blocks:

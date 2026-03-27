@@ -356,6 +356,15 @@ def test_record_sell_decrements():
     assert state.sector_positions.get("반도체", 0) == 0
 
 
+def test_record_sell_recovers_persisted_sector_when_not_provided():
+    cfg = _cfg()
+    state = GuardrailState(cfg)
+    state.record_buy("005930", sector="반도체")
+    state.record_sell("005930")
+    assert state.position_count == 0
+    assert state.sector_positions == {}
+
+
 def test_persistence_survives_restart(tmp_path):
     cfg = _cfg()
     state_dir = tmp_path / "state"
@@ -594,7 +603,9 @@ def test_guardrail_state_reload(tmp_path):
         "bought_tickers": ["005930", "035720"],
         "position_count": 2,
         "sector_positions": {},
+        "ticker_sectors": {"005930": "반도체"},
         "consecutive_stop_losses": 1,
+        "recent_trade_outcomes": [True, False],
     }
     state_file.write_text(json.dumps(data))
 
@@ -604,6 +615,66 @@ def test_guardrail_state_reload(tmp_path):
     assert "005930" in state2.bought_tickers
     assert state2.daily_pnl == -100000
     assert state2.consecutive_stop_losses == 1
+    assert state2.recent_trade_outcomes == [True, False]
+
+
+def test_resolve_daily_loss_budget_tightens_after_low_recent_win_rate():
+    cfg = _cfg(
+        daily_loss_limit=1_000_000,
+        dynamic_daily_loss_enabled=True,
+        dynamic_daily_loss_recent_trade_window=4,
+        dynamic_daily_loss_recent_trade_min_samples=3,
+        dynamic_daily_loss_low_win_rate_threshold=0.5,
+        dynamic_daily_loss_low_win_rate_multiplier=0.75,
+        dynamic_daily_loss_zero_win_rate_multiplier=0.5,
+    )
+    state = GuardrailState(cfg)
+    state.record_profitable_exit()
+    state.record_stop_loss()
+    state.record_stop_loss()
+    budget = resolve_daily_loss_budget(cfg, state)
+    assert budget.recent_closed_trades == 3
+    assert budget.recent_win_rate == pytest.approx(1 / 3)
+    assert budget.recent_win_rate_multiplier == pytest.approx(0.75)
+    assert budget.effective_floor_won == pytest.approx(-750000)
+
+
+def test_resolve_daily_loss_budget_tightens_harder_after_zero_recent_win_rate():
+    cfg = _cfg(
+        daily_loss_limit=1_000_000,
+        dynamic_daily_loss_enabled=True,
+        dynamic_daily_loss_recent_trade_window=4,
+        dynamic_daily_loss_recent_trade_min_samples=3,
+        dynamic_daily_loss_low_win_rate_threshold=0.5,
+        dynamic_daily_loss_low_win_rate_multiplier=0.75,
+        dynamic_daily_loss_zero_win_rate_multiplier=0.5,
+    )
+    state = GuardrailState(cfg)
+    state.record_stop_loss()
+    state.record_stop_loss()
+    state.record_stop_loss()
+    budget = resolve_daily_loss_budget(cfg, state)
+    assert budget.recent_win_rate == pytest.approx(0.0)
+    assert budget.recent_win_rate_multiplier == pytest.approx(0.5)
+    assert budget.effective_floor_won == pytest.approx(-500000)
+
+
+def test_resolve_daily_loss_budget_ignores_recent_win_rate_without_enough_samples():
+    cfg = _cfg(
+        daily_loss_limit=1_000_000,
+        dynamic_daily_loss_enabled=True,
+        dynamic_daily_loss_recent_trade_window=4,
+        dynamic_daily_loss_recent_trade_min_samples=3,
+        dynamic_daily_loss_low_win_rate_threshold=0.5,
+        dynamic_daily_loss_low_win_rate_multiplier=0.75,
+    )
+    state = GuardrailState(cfg)
+    state.record_stop_loss()
+    state.record_profitable_exit()
+    budget = resolve_daily_loss_budget(cfg, state)
+    assert budget.recent_closed_trades == 2
+    assert budget.recent_win_rate_multiplier == pytest.approx(1.0)
+    assert budget.effective_floor_won == pytest.approx(-1_000_000)
 
 
 # ── 킬 스위치 테스트 ──────────────────

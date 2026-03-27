@@ -820,7 +820,7 @@ async def execute_bucket_path(
         counters.totals[f"decision_source_{decision.decision_source}"] += 1
 
     if decision.action == Action.BUY and guardrail_state is not None:
-        guardrail_state.record_buy(raw.ticker)
+        guardrail_state.record_buy(raw.ticker, sector=raw_data.sector if ctx else "")
 
     # Live mode: 실주문 매수
     if mode == "live" and order_executor is not None and decision.action == Action.BUY:

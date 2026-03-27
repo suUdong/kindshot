@@ -7,6 +7,7 @@ from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from kindshot.health import HealthState, _health_handler, start_health_server
+from kindshot.guardrails import GuardrailState
 from kindshot.performance import PerformanceTracker
 from kindshot.pattern_profile import RecentPatternProfile
 
@@ -94,6 +95,29 @@ def test_health_snapshot_exposes_recent_pattern_profile():
     snap = state.snapshot()
     assert snap["recent_pattern_profile"]["enabled"] is True
     assert snap["recent_pattern_profile"]["analysis_dates"] == ["20260320", "20260327"]
+
+
+def test_health_snapshot_exposes_extended_guardrail_state():
+    from kindshot.config import Config
+
+    cfg = Config(
+        dynamic_daily_loss_recent_trade_window=4,
+        dynamic_daily_loss_recent_trade_min_samples=3,
+    )
+    guardrail_state = GuardrailState(cfg)
+    guardrail_state.record_buy("005930", sector="반도체")
+    guardrail_state.record_profitable_exit()
+    guardrail_state.record_stop_loss()
+    guardrail_state.record_stop_loss()
+
+    state = HealthState()
+    state.set_guardrail_state(guardrail_state)
+    snap = state.snapshot()
+
+    assert snap["guardrail_state"]["sector_positions"] == {"반도체": 1}
+    assert snap["guardrail_state"]["recent_closed_trades"] == 3
+    assert snap["guardrail_state"]["recent_win_rate"] == pytest.approx(1 / 3)
+    assert snap["guardrail_state"]["consecutive_loss_halt_threshold"] == cfg.consecutive_loss_halt
 
 
 def test_health_server_default_bind_is_localhost():

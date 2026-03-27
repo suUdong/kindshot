@@ -36,6 +36,7 @@ class PriceInfo:
     listed_shares: Optional[float] = None
     volume_turnover_rate: Optional[float] = None
     prior_volume_rate: Optional[float] = None
+    sector: str = ""
 
 
 @dataclass(frozen=True)
@@ -382,6 +383,7 @@ class KisClient:
                 if prior_volume_rate_raw not in ("", None)
                 else None
             )
+            sector = str(output.get("bstp_kor_isnm", "")).strip()
             risk_state = QuoteRiskState(
                 temp_stop_yn=str(output.get("temp_stop_yn", "")).strip(),
                 sltr_yn=str(output.get("sltr_yn", "")).strip(),
@@ -411,6 +413,7 @@ class KisClient:
             listed_shares=listed_shares,
             volume_turnover_rate=volume_turnover_rate,
             prior_volume_rate=prior_volume_rate,
+            sector=sector,
         )
 
     async def fetch_minute_candles(self, ticker: str, period: int = 5) -> list[dict]:
