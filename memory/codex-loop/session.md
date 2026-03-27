@@ -3,9 +3,9 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `v66 Historical Analysis Automation`
-- Focus: turn `scripts/backtest_analysis.py` into a full-history matrix/report surface and produce an analysis-driven auto-tuning artifact for the next bounded strategy hypothesis.
-- Active hypothesis: richer local trade-history reconstruction can identify reliable entry/exit cohorts and tell us when the correct v66 tuning recommendation is "keep current defaults" rather than forcing a parameter change.
+- Phase: `Guardrail Recalibration Deployed`
+- Focus: use live `2026-03-26` / `2026-03-27` evidence to reduce confidence-driven overblocking with a small supportive-market dynamic guardrail profile and a durable blocked-vs-passed analysis surface.
+- Active hypothesis: a market-aware relaxation on confidence-based guardrails and fast-profile cutoff can admit stronger borderline setups while leaving chase-buy, liquidity, and market-close hard stops intact.
 - Blocker: none.
 
 ## Environment
@@ -15,26 +15,30 @@
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
   - `python3 -m compileall src/kindshot tests scripts` passed
-  - `.venv/bin/python -m pytest tests/test_backtest_analysis.py tests/test_auto_tune_strategy.py -q` passed (`7 passed`)
-  - `.venv/bin/python -m pytest -q` passed (`827 passed, 1 skipped, 1 warning`)
-  - affected-file diagnostics returned 0 issues
-  - `.venv/bin/python scripts/backtest_analysis.py --format both --output logs/daily_analysis/backtest_v66_deep_report.txt` passed
-  - `.venv/bin/python scripts/auto_tune_strategy.py --analysis logs/daily_analysis/backtest_v66_deep_report.json --format json --output logs/daily_analysis/auto_tune_v66.json` passed
+  - `.venv/bin/python -m pytest tests/test_guardrails.py tests/test_pipeline.py tests/test_backtest_analysis.py -q` passed (`182 passed`)
+  - `.venv/bin/python -m pytest -q` passed (`834 passed, 1 skipped, 1 warning`)
+  - affected-file diagnostics returned 0 issues for the changed guardrail/analysis files
+  - `.venv/bin/python scripts/backtest_analysis.py --dates 20260326 20260327 --format both --output logs/daily_analysis/guardrail_recalibration_20260326_20260327.txt` passed
+  - remote `python3 -m compileall src/kindshot scripts tests` passed on `kindshot-server`
+  - remote `pip install -e . --quiet` passed on `kindshot-server`
+  - remote `systemctl restart kindshot` succeeded and service returned active at `2026-03-27 17:42:56 KST`
+  - remote `trading_log_report.py`, `shadow_analysis.py`, and `backtest_analysis.py` smoke runs passed
 
 ## Last Completed Step
 
-- Wrote the Ralph context snapshot, PRD, and test spec for the v66 trading-analysis/tuning slice.
-- Expanded `scripts/backtest_analysis.py` to reconstruct full local BUY history, classify news types, emit ticker/hour/news-type matrices, rank entry conditions, and sweep candidate exit parameters.
-- Added `scripts/auto_tune_strategy.py` plus regression tests, generated fresh artifacts under `logs/daily_analysis/`, and verified that the current sparse local sample does not justify changing the v66 defaults yet.
+- Wrote the Ralph context snapshot, PRD, and test spec for the guardrail recalibration slice.
+- Extended `scripts/backtest_analysis.py` with a guardrail review surface that reports passed vs blocked BUY counts, blocker mix, confidence bands, hour buckets, and shadow coverage.
+- Added a supportive-market dynamic guardrail profile in runtime so confidence thresholds and fast-profile late-entry cutoff can relax modestly without weakening chase-buy, liquidity, or global market-close hard stops.
+- Committed (`652e414`), pushed to `origin/main`, synced the changed files to `kindshot-server`, restarted the service, and ran remote smoke checks.
 
 ## Next Intended Step
 
-- Use the generated matrices and recommendation artifacts to choose one next bounded trading-rule hypothesis once more history accumulates or a stronger negative cohort appears.
-- If broader evidence is needed quickly, extend the historical collection foundation so more dates become reconstructable than the current `14` executed BUY trades.
-- Keep runtime strategy defaults unchanged until a future slice produces a clearly superior, sample-supported recommendation.
+- Observe the next full runtime day to see whether supportive-market relaxation admits new `76-77` confidence BUYs and whether their realized paths justify keeping the change.
+- Increase blocked-BUY shadow coverage so future relax/tighten decisions rely on more than the current `2` server-side shadow traces.
+- If `LOW_CONFIDENCE` remains dominant even after dynamic relaxation, inspect upstream LLM confidence collapse separately from guardrail policy.
 
 ## Notes
 
-- This slice changes analysis/reporting tooling only; runtime strategy execution, deploy paths under `deploy/`, secrets, and live-order behavior remain unchanged.
+- This slice changes runtime guardrail behavior and analysis/reporting, but still leaves `deploy/`, secrets, and live-order behavior untouched.
 - Full-suite warning remains in `tests/test_health.py` as `NotAppKeyWarning`; no new warnings were introduced by this slice.
-- Current analysis caveat: the local reconstructable BUY sample is still small enough that the auto-tuner currently recommends holding the existing v66 exit/default entry thresholds.
+- Remote venv does not currently include `pytest`, so server-side verification used compile/install/restart/script smoke checks instead of remote unit tests.
