@@ -28,6 +28,31 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 08:16 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `d75c540`
+- Deployer: Codex manual `rsync` + direct `ssh kindshot-server`
+- Summary:
+  1. **dashboard semantic reader upgrade** — flattened deployed `news_signal` metadata in the dashboard reader path so signal/operator views now expose impact score, extracted amounts, and cluster size directly
+  2. **operator validation surface** — added a `뉴스 시맨틱 신호` section in the signal-status tab so the next live session can validate NLP enrichment without raw JSONL inspection
+  3. **dashboard-only restart** — recompiled the remote dashboard tree, restarted only `kindshot-dashboard`, and confirmed fresh HTTP reachability
+- Validation:
+  - local `python3 -m compileall dashboard tests/test_dashboard.py`
+  - local `.venv/bin/python -m pytest tests/test_dashboard.py -q` → `22 passed`
+  - `git push origin main` → `d75c540` pushed to `origin/main`
+  - remote `rsync --delete dashboard/` → `/opt/kindshot/dashboard/`
+  - remote `rsync tests/test_dashboard.py` → `/opt/kindshot/tests/`
+  - remote `./.venv/bin/python -m compileall dashboard tests/test_dashboard.py`
+  - remote `sudo -n systemctl restart kindshot-dashboard`
+  - remote `systemctl is-active kindshot-dashboard` → `active`
+  - remote `systemctl status kindshot-dashboard --no-pager -l` → active since `2026-03-28 08:15:47 KST`
+  - remote dashboard probe `HEAD http://127.0.0.1:8501/` → `200 text/html`
+- Rollback: re-sync the prior known-good `dashboard/` tree to `/opt/kindshot/dashboard/` and restart `kindshot-dashboard`
+- Result: 성공
+- Notes: this was a dashboard-only observability deploy; runtime trading behavior, `deploy/`, secrets, `.env`, and live-order wiring were unchanged
+
 ### 2026-03-28 07:52 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)
