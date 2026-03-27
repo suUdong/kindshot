@@ -15,6 +15,8 @@ from typing import Optional
 
 import aiohttp
 
+import aiohttp
+
 from kindshot.config import Config
 from kindshot.kis_client import KisClient
 from kindshot.models import AlphaSignalContext, ContextCard
@@ -266,6 +268,38 @@ async def _fetch_alpha_scanner_signal(
     )
 
 
+async def _fetch_alpha_scanner_signal(
+    base_url: str,
+    timeout_s: float,
+    ticker: str,
+) -> AlphaSignalContext | None:
+    """Fetch a fresh STRONG_BUY signal from alpha-scanner."""
+    if not base_url:
+        return None
+
+    url = f"{base_url.rstrip('/')}/kindshot/signals/current"
+    timeout = aiohttp.ClientTimeout(total=timeout_s)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url, params={"ticker": ticker}) as response:
+            response.raise_for_status()
+            payload = await response.json()
+
+    if payload.get("status") != "ok" or not payload.get("has_signal"):
+        return None
+
+    return AlphaSignalContext(
+        ticker=payload.get("ticker") or ticker,
+        signal_type=payload.get("signal_type") or "",
+        score_current=payload.get("score_current"),
+        confidence=payload.get("confidence"),
+        size_hint=payload.get("size_hint"),
+        score_delta=payload.get("score_delta"),
+        regime=payload.get("regime"),
+        created_at=payload.get("created_at"),
+        age_hours=payload.get("age_hours"),
+    )
+
+
 async def build_context_card(
     ticker: str,
     kis: Optional[KisClient] = None,
@@ -288,6 +322,7 @@ async def build_context_card(
     top_ask_notional: Optional[float] = None
     quote_temp_stop: Optional[bool] = None
     quote_liquidation_trade: Optional[bool] = None
+    alpha_signal: AlphaSignalContext | None = None
     alpha_signal: AlphaSignalContext | None = None
 
     if kis:

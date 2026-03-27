@@ -115,6 +115,18 @@ class AlphaSignalContext(BaseModel):
     age_hours: Optional[float] = None
 
 
+class AlphaSignalContext(BaseModel):
+    ticker: str
+    signal_type: str
+    score_current: Optional[float] = None
+    confidence: Optional[int] = None
+    size_hint: Optional[str] = None
+    score_delta: Optional[float] = None
+    regime: Optional[str] = None
+    created_at: Optional[str] = None
+    age_hours: Optional[float] = None
+
+
 class ContextCard(BaseModel):
     ret_today: Optional[float] = None
     ret_1d: Optional[float] = None
@@ -136,6 +148,7 @@ class ContextCard(BaseModel):
     support_price_5d: Optional[float] = None
     support_price_20d: Optional[float] = None
     support_reference_px: Optional[float] = None
+    alpha_signal: Optional[AlphaSignalContext] = None
     alpha_signal: Optional[AlphaSignalContext] = None
 
 
