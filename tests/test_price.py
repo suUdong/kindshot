@@ -597,6 +597,33 @@ def test_close_snapshot_near_market_close_uses_remaining_seconds():
     assert close_snap.fire_at < t10_snap.fire_at
 
 
+def test_close_snapshot_after_cutoff_uses_zero_delay():
+    """장 마감 fetch cutoff 이후 진입이면 close snapshot을 즉시 발화 가능 상태로 둔다."""
+    cfg = Config(close_snapshot_delay_s=300.0)
+    fetcher = PriceFetcher(kis=None)
+    scheduler = SnapshotScheduler(cfg, fetcher, MagicMock())
+    kst = timezone(timedelta(hours=9))
+    after_cutoff = datetime(2026, 3, 27, 15, 36, 0, tzinfo=kst)
+
+    with patch("kindshot.price.datetime") as mock_dt:
+        mock_dt.now.return_value = after_cutoff
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        scheduler.schedule_t0(
+            event_id="evt1",
+            ticker="005930",
+            t0_basis=T0Basis.DETECTED_AT,
+            t0_ts=after_cutoff,
+            run_id="run1",
+        )
+
+    t0_snap = [s for s in scheduler._heap if s.event_id == "evt1" and s.horizon == "t0"][0]
+    close_snap = [s for s in scheduler._heap if s.event_id == "evt1" and s.horizon == "close"][0]
+    t30_snap = [s for s in scheduler._heap if s.event_id == "evt1" and s.horizon == "t+30s"][0]
+
+    assert close_snap.fire_at == pytest.approx(t0_snap.fire_at)
+    assert close_snap.fire_at < t30_snap.fire_at
+
+
 async def test_t5m_gap_down_hits_stop_loss_before_loss_checkpoint():
     """t+5m 갭 하락이 SL 아래면 loss checkpoint보다 SL 경로가 우선한다."""
     cfg = Config(
