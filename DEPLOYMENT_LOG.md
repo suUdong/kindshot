@@ -28,6 +28,65 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 03:38 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `f1f583d`
+- Deployer: Codex manual SSH + `rsync`
+- Summary:
+  1. **support composite 보정** — support reference가 최근 5일 저점으로 붕괴되지 않도록, 최근 5세션 저점과 그 이전 20세션 구간 저점을 분리해 stronger floor를 선택
+  2. **partial target ratio 복원** — `PARTIAL_TAKE_PROFIT_TARGET_RATIO`를 다시 런타임에 연결하고 기본값을 `1.0`으로 맞춰 target-hit partial semantics와 설정 의미를 일치시킴
+  3. **문서/설정 정합성 회복** — exit 설계 문서와 config validation을 실제 런타임 동작과 다시 동기화
+- Validation:
+  - local `python3 -m compileall src tests`
+  - local `.venv/bin/python -m pytest tests/test_config.py tests/test_context_card.py tests/test_price.py tests/test_pipeline.py tests/test_performance.py tests/test_telegram_ops.py -q` → `130 passed, 1 skipped`
+  - local `.venv/bin/python -m pytest -q` → `981 passed, 1 skipped, 1 warning`
+  - diagnostics `lsp_diagnostics_directory` → `0 errors`, `0 warnings`
+  - remote `./.venv/bin/python -m compileall src/kindshot`
+  - remote `./.venv/bin/python -m pip install -e . --quiet`
+  - remote `systemctl is-active kindshot` → `active`
+  - remote `systemctl status kindshot --no-pager -l` → active since `2026-03-28 03:37:57 KST`, `ExecStart=/opt/kindshot/.venv/bin/python -m kindshot --paper`
+  - remote `curl -fsS http://127.0.0.1:8080/health` → `status=healthy`, `started_at=2026-03-28T03:37:59.058179+09:00`
+- Rollback: re-sync the prior known-good `src/kindshot/{config.py,context_card.py,price.py}` slice to `/opt/kindshot/src/`, reinstall with the remote venv, and restart `kindshot`
+- Result: 성공
+- Notes: 재시작 직후 첫 `/health` 조회는 포트 warm-up 전에 실패했지만, 수 초 후 재확인에서 정상 `healthy`로 수렴
+
+---
+
+### 2026-03-28 03:12 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `2d06abd`
+- Deployer: Codex manual SSH + `rsync -R` (`src/kindshot/decision.py`, `src/kindshot/pipeline.py`, `src/kindshot/prompts/decision_strategy.txt`, `scripts/llm_prompt_eval.py`) + remote venv reinstall + `kindshot` restart
+- Summary:
+  1. **LLM optimization runtime sync** — re-synced the prompt-optimization runtime slice (`decision.py`, `pipeline.py`, `decision_strategy.txt`, `llm_prompt_eval.py`) to `/opt/kindshot` using the established non-git rsync lane
+  2. **service restart** — recompiled the remote runtime, reinstalled the package into the remote venv, and restarted `kindshot` under systemd
+  3. **health confirmation** — verified the post-restart service state, recent journal, and `/health` payload remained healthy with the expected guardrail and pattern-profile fields
+- Validation:
+  - local baseline from the immediately preceding validated run: `.venv/bin/python -m pytest -q` → `977 passed, 1 skipped, 1 warning`
+  - remote `./.venv/bin/python -m compileall src/kindshot scripts`
+  - remote `./.venv/bin/python -m pip install -e . --quiet`
+  - remote `systemctl is-active kindshot` → `active`
+  - remote `systemctl status kindshot --no-pager -l` showed:
+    - `Active: active (running) since Sat 2026-03-28 03:11:19 KST`
+    - `ExecStart=/opt/kindshot/.venv/bin/python -m kindshot --paper`
+  - remote `journalctl -u kindshot -n 20 --no-pager` showed:
+    - `kindshot 0.1.3 starting`
+    - `RecentPatternProfile loaded: dates=20260319,20260320,20260327 trades=14 boost=1 loss=2`
+    - `Health server started on 127.0.0.1:8080`
+  - remote `curl -sf http://127.0.0.1:8080/health` returned:
+    - `status: "healthy"`
+    - `started_at: "2026-03-28T03:11:20.479452+09:00"`
+    - `last_poll_source: "feed"`
+    - `last_poll_age_seconds: 0`
+    - `guardrail_state.configured_max_positions: 4`
+    - `recent_pattern_profile.total_trades: 14`
+- Rollback: re-sync the prior known-good runtime files for this slice (for example from the previous validated main tree), reinstall with the remote venv, and restart `kindshot`
+- Result: 성공
+- Notes: this was a deploy-only run on a clean local tree, so local test evidence was reused from the immediately preceding validated LLM optimization run while fresh remote compile/restart/health evidence was collected in this deployment; the `Commit` field reflects the local HEAD at deploy time, while the deployed runtime slice itself was last fully runtime-validated in the prior `425c07d` entry
+
 ### 2026-03-28 03:05 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)
@@ -394,6 +453,36 @@ Kindshot 운영 배포 이력 기록용 문서.
 - Rollback: re-sync prior known-good `dashboard/` tree to `/opt/kindshot/dashboard/` and restart `kindshot-dashboard`
 - Result: 성공
 - Notes: dashboard service needed a short warm-up after restart; first immediate `curl` failed before Streamlit finished binding `:8501`
+
+---
+
+### 2026-03-28 03:32 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `8492d13`
+- Deployer: Codex manual SSH + `rsync`
+- Summary:
+  1. **뉴스 즉시 청산 추가** — `NEG_STRONG` 및 correction/withdrawal 이벤트가 같은 티커의 열린 포지션을 `news_exit` / `correction_exit`로 즉시 청산 요청
+  2. **기술적 지지선 청산 추가** — buy 시점에 5일/20일 완료봉 저점을 기반으로 support reference를 저장하고, 이후 가격 스냅샷이 buffer 아래로 이탈하면 `support_breach`로 청산
+  3. **부분 익절 의미 수정** — 목표가 도달 시 전량 익절 대신 50%만 `partial_take_profit` 처리하고 잔여 물량은 tighter trailing으로 관리
+- Validation:
+  - local `python3 -m compileall src tests`
+  - local `.venv/bin/python -m pytest tests/test_context_card.py tests/test_price.py tests/test_pipeline.py tests/test_performance.py tests/test_telegram_ops.py -q` → `110 passed, 1 skipped`
+  - local `.venv/bin/python -m pytest -q` → `981 passed, 1 skipped, 1 warning`
+  - diagnostics `lsp_diagnostics_directory` → `0 errors`, `0 warnings`
+  - remote `./.venv/bin/python -m compileall src/kindshot`
+  - remote `./.venv/bin/python -m pip install -e . --quiet`
+  - remote `systemctl is-active kindshot` → `active`
+  - remote `systemctl status kindshot --no-pager -l` → active since `2026-03-28 03:32:00 KST`, `ExecStart=/opt/kindshot/.venv/bin/python -m kindshot --paper`
+  - remote `journalctl -u kindshot -n 20 --no-pager` showed:
+    - `kindshot 0.1.3 starting`
+    - `RecentPatternProfile loaded: dates=20260319,20260320,20260327 trades=14 boost=1 loss=2`
+    - `Health server started on 127.0.0.1:8080`
+  - remote `curl -fsS http://127.0.0.1:8080/health` → `status=healthy`, `configured_max_positions=4`, `position_count=0`
+- Rollback: re-sync the prior known-good `src/kindshot/{config.py,context_card.py,models.py,pipeline.py,price.py}` tree to `/opt/kindshot/src/`, reinstall with the remote venv, and restart `kindshot`
+- Result: 성공
+- Notes: 서버는 여전히 VTS 가격 모드라서 실시간 시세 기반 trailing/T5M/support 동작의 시장중 검증은 다음 거래일에 다시 확인해야 함
 
 ---
 

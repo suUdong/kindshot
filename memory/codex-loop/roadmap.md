@@ -15,10 +15,10 @@
 
 ## Current Focus
 
-- Track: User-Directed LLM Prompt Optimization
-- Phase: Decision Prompt Calibration
+- Track: User-Directed Exit Strategy Optimization
+- Phase: Multi-Trigger Exit Upgrade
 - Status: In Progress (user override)
-- Reason: The user explicitly redirected the loop after the v70 deploy to measure current LLM decision accuracy, improve prompt confidence semantics, and cut unnecessary LLM calls. The latest slice added offline prompt-eval tooling, tightened short-hold contract confidence guidance, and moved `FAST_PROFILE_LATE_ENTRY` ahead of the LLM call, pushed `425c07d`, and deployed it to `kindshot-server`.
+- Reason: The user explicitly redirected the loop to improve liquidation behavior beyond trailing-stop plus time-based exits. The latest slice added bad-news forced liquidation, support-breach liquidation, corrected target-hit 50% partial take profit semantics, then followed with a truthfulness fix for the support composite and partial-target config knob, pushed `8492d13` and `f1f583d`, and deployed both to `kindshot-server`.
 
 ## Phases
 
@@ -92,9 +92,9 @@
 
 ## Next Run Candidates
 
-1. Restore prompt-replay provider credits and rerun `scripts/llm_prompt_eval.py --prompt ...` to get a true baseline-vs-variant replay comparison on the balanced historical sample.
-2. Observe the next live paper session to confirm `FAST_PROFILE_LATE_ENTRY` blocks now happen before the LLM path and reduce runtime `llm_calls` without changing healthy startup behavior.
-3. Use the next replay artifact to choose one narrow false-negative hypothesis for prompt tuning instead of broad BUY threshold relaxation.
+1. Observe the next live paper session and confirm the new exit reasons (`news_exit`, `correction_exit`, `support_breach`, corrected `partial_take_profit`) appear coherently in runtime logs and Telegram/operator surfaces.
+2. Decide whether the support anchor should stay as the stronger completed-day 5d/20d floor or be tightened/loosened with one narrow follow-up hypothesis based on live behavior.
+3. Restore real quote keys on `kindshot-server` if support/trailing/T5M behavior needs market-grade validation instead of VTS-mode smoke coverage.
 
 ## Deferred
 

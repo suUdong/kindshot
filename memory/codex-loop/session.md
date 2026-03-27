@@ -3,39 +3,38 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `User-Directed LLM Prompt Optimization`
-- Focus: measure the current post-v70 LLM decision-path quality, tighten prompt confidence semantics, and cut avoidable late-entry LLM calls without touching deploy/live-order surfaces.
-- Active hypothesis: if short-hold fast-profile late entries are blocked before the LLM and the prompt is stricter about confidence over the actual hold profile, then the runtime path will waste fewer calls while keeping prompt behavior reviewable through the new offline evaluator.
-- Blocker: live Anthropic prompt replay is blocked on this host by `invalid_request_error: credit balance is too low`; historical baseline measurement and runtime rollout are complete.
+- Phase: `Exit Strategy Optimization`
+- Focus: the requested exit-strategy upgrade was implemented and deployed: bad-news immediate exits, support-breach exits, and target-hit 50% partial take profit with trailing remainder.
+- Active hypothesis: if the new multi-trigger exit path is now live on `kindshot-server`, then the paper runtime should stay healthy after restart while being ready to emit `news_exit`, `correction_exit`, `support_breach`, and corrected `partial_take_profit` / trailing behavior on the next market session.
+- Blocker: it is `2026-03-28` (Saturday, KST) and the server is still in VTS quote mode, so same-session live market validation of the new exit reasons is not possible yet.
 
 ## Environment
 
 - Host: local workspace
 - Runtime target: AWS Lightsail `kindshot-server` (`/opt/kindshot`, paper mode)
-- Local note: runtime fix was committed as `425c07d`, pushed to `origin/main`, then `src/kindshot/decision.py`, `src/kindshot/pipeline.py`, `src/kindshot/prompts/decision_strategy.txt`, and `scripts/llm_prompt_eval.py` were rsynced to `/opt/kindshot/` before restarting `kindshot`
 - Validation status:
-  - local `python3 -m compileall src scripts tests dashboard` passed
-  - local targeted pytest (`tests/test_llm_prompt_eval.py tests/test_pipeline.py tests/test_decision.py`) passed (`87 passed`)
-  - local full `pytest -q` passed (`977 passed, 1 skipped, 1 warning`)
-  - local diagnostics on changed files returned `0 errors`
-  - local prompt-eval artifact recorded `accuracy=0.625` on a balanced `16`-case historical sample, with `8 / 10` fast-profile cases happening after the late-entry cutoff
-  - remote `python3 -m compileall src/kindshot scripts` passed
+  - local `python3 -m compileall src tests` passed
+  - local targeted pytest passed: `130 passed, 1 skipped`
+  - local full pytest passed: `981 passed, 1 skipped, 1 warning`
+  - diagnostics returned `0 errors`, `0 warnings`
   - remote `systemctl is-active kindshot` returned `active`
-  - remote `/health` returned `healthy` with `last_poll_source=feed`, `last_poll_age_seconds=11`, and `guardrail_state.configured_max_positions=4`
-  - remote journal after restart showed `Health server started` and `RecentPatternProfile loaded: dates=20260319,20260320,20260327 trades=14 boost=1 loss=2`
+  - remote `systemctl status kindshot --no-pager -l` showed active since `2026-03-28 03:37:57 KST`
+  - remote `curl -fsS http://127.0.0.1:8080/health` returned `status=healthy`, `configured_max_positions=4`, `position_count=0`
+  - remote journal on `2026-03-28` showed `kindshot 0.1.3 starting`, `RecentPatternProfile loaded`, and `Health server started on 127.0.0.1:8080`
+  - remote deploy used `rsync` to refresh `config.py`, `context_card.py`, `models.py`, `pipeline.py`, and `price.py`, then a follow-up `rsync` refreshed `config.py`, `context_card.py`, and `price.py` for the config/support truthfulness fix
 
 ## Last Completed Step
 
-- Added the offline prompt-eval script, updated prompt confidence guidance, moved `FAST_PROFILE_LATE_ENTRY` ahead of the LLM call, pushed `425c07d`, deployed the runtime patch, and re-verified remote `kindshot` health.
+- Implemented, tested, committed (`8492d13`, `f1f583d`), pushed, and deployed the exit-strategy upgrade in Ralph mode, then re-verified remote service health after restart.
 
 ## Next Intended Step
 
-- Restore provider credits (or switch to an available prompt-replay provider) and rerun `scripts/llm_prompt_eval.py --prompt ...` to get an actual baseline-vs-variant replay comparison instead of the current blocked status.
-- Observe the next Korean market session to confirm `FAST_PROFILE_LATE_ENTRY` now suppresses avoidable LLM calls before runtime decision records would otherwise be generated.
-- If replay evidence supports it, choose one narrower prompt variant for the current false-negative cluster rather than broadening BUY behavior globally.
+- On the next Korean market session, confirm that fresh runtime events can actually produce `news_exit`, `correction_exit`, `support_breach`, and the corrected `partial_take_profit` flow under market data rather than only test fixtures.
+- Decide whether real quote keys should be restored on `kindshot-server` so support/trailing/T5M behavior can be validated without VTS stale-price constraints.
+- If exit behavior is too sensitive or too loose in practice, tune the support buffer or support anchor selection with a single narrow follow-up hypothesis.
 
 ## Notes
 
-- `2026-03-28` is a Saturday in KST, so same-day prompt-path execution could not be observed on fresh market events.
-- This run changed prompt/runtime decision-path code only; it did not alter `deploy/`, secrets, `.env`, or live-order enablement.
-- Fresh evidence is recorded in `DEPLOYMENT_LOG.md` and `memory/codex-loop/latest.md`.
+- `2026-03-28` is a Saturday in KST, so this run could validate deployment health and test coverage but not live same-session market exits.
+- This run did not alter `deploy/`, secrets, `.env`, or live-order enablement.
+- Partial take profit remains paper-safe; true live partial sells were intentionally left out because the sell executor has no fraction-aware interface.
