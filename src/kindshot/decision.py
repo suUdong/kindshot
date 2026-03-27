@@ -46,6 +46,12 @@ def _load_strategy_prompt() -> str:
     return _STRATEGY_PROMPT
 
 
+def _resolve_strategy_prompt(strategy_override: str | None = None) -> str:
+    if strategy_override is not None:
+        return strategy_override
+    return _load_strategy_prompt()
+
+
 # Re-export from llm_client for backward compatibility
 # LlmTimeoutError and LlmCallError are imported above
 class LlmParseError(Exception):
@@ -81,6 +87,7 @@ def _build_prompt(
     hold_minutes: int | None = None,
     risk_budget: DailyLossBudgetSnapshot | None = None,
     consecutive_stop_losses: int = 0,
+    strategy_override: str | None = None,
 ) -> str:
     # Truncate headline to prevent prompt injection via excessively long input
     headline = headline[:_MAX_HEADLINE_LEN]
@@ -166,7 +173,7 @@ def _build_prompt(
             risk_parts.append(f"loss_floor_pct={risk_budget.effective_floor_pct:.2f}")
         risk_line = f"\nctx_risk: {' '.join(risk_parts)}"
 
-    strategy = _load_strategy_prompt()
+    strategy = _resolve_strategy_prompt(strategy_override)
 
     return f"""event: [{bucket.value}] {corp_name}, {headline}
 corp: {corp_name}({ticker})
@@ -739,6 +746,7 @@ class DecisionEngine:
         market_ctx: Optional[MarketContext] = None,
         risk_budget: Optional[DailyLossBudgetSnapshot] = None,
         consecutive_stop_losses: int = 0,
+        strategy_override: str | None = None,
     ) -> DecisionRecord:
         """Call LLM for BUY/SKIP decision.
 
@@ -802,6 +810,7 @@ class DecisionEngine:
                 hold_minutes=hold_minutes,
                 risk_budget=risk_budget,
                 consecutive_stop_losses=consecutive_stop_losses,
+                strategy_override=strategy_override,
             )
 
             raw_text, latency_ms = await self._llm.call(prompt, max_tokens=200)

@@ -256,13 +256,13 @@ async def test_pipeline_records_buy_with_sector_metadata(tmp_path):
 async def test_pipeline_passes_time_and_hold_profile_to_guardrails(tmp_path):
     from kindshot.models import DecisionRecord, Action, SizeHint
 
-    detected_at = datetime(2026, 3, 24, 5, 10, 0, tzinfo=timezone.utc)
-    decided_at = datetime(2026, 3, 24, 5, 10, 5, tzinfo=timezone.utc)
+    detected_at = datetime(2026, 3, 24, 4, 10, 0, tzinfo=timezone.utc)
+    decided_at = datetime(2026, 3, 24, 4, 10, 5, tzinfo=timezone.utc)
     raw = RawDisclosure(
         title="삼성전자(005930) - 공급계약 체결",
         link="https://kind.krx.co.kr/?rcpNo=20260305000001",
         rss_guid="guid1",
-        published="2026-03-24T14:10:00+09:00",
+        published="2026-03-24T13:10:00+09:00",
         ticker="005930",
         corp_name="삼성전자",
         detected_at=detected_at,
@@ -345,6 +345,30 @@ async def test_pipeline_passes_supportive_dynamic_guardrail_profile(tmp_path):
     assert (profile.fast_profile_no_buy_after_kst_hour, profile.fast_profile_no_buy_after_kst_minute) == (15, 0)
 
 
+async def test_pipeline_skips_fast_profile_late_entry_before_llm(tmp_path):
+    raw = RawDisclosure(
+        title="삼성전자(005930) - 공급계약 체결",
+        link="https://kind.krx.co.kr/?rcpNo=20260305000001",
+        rss_guid="guid1",
+        published="2026-03-24T13:10:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=datetime(2026, 3, 24, 5, 10, 0, tzinfo=timezone.utc),
+    )
+
+    records, guardrail_calls = await _run_pipeline_once(
+        tmp_path,
+        [raw],
+        paper=True,
+        capture_guardrail_calls=True,
+    )
+
+    event_records = [r for r in records if r.get("type") == "event"]
+    assert len(event_records) == 1
+    assert event_records[0]["skip_reason"] == "FAST_PROFILE_LATE_ENTRY"
+    assert guardrail_calls == []
+
+
 async def test_pipeline_passes_normalized_analysis_headline_to_decision(tmp_path):
     from kindshot.event_registry import EventRegistry
     from kindshot.logger import JsonlLogger
@@ -361,13 +385,13 @@ async def test_pipeline_passes_normalized_analysis_headline_to_decision(tmp_path
         published="2026-03-24T14:10:00+09:00",
         ticker="005930",
         corp_name="삼성전자",
-        detected_at=datetime(2026, 3, 24, 5, 10, 0, tzinfo=timezone.utc),
+        detected_at=datetime(2026, 3, 24, 4, 10, 0, tzinfo=timezone.utc),
     )
     mock_decision = DecisionRecord(
         schema_version="0.1.2",
         run_id="test_run",
         event_id="",
-        decided_at=datetime(2026, 3, 24, 5, 10, 5, tzinfo=timezone.utc),
+        decided_at=datetime(2026, 3, 24, 4, 10, 5, tzinfo=timezone.utc),
         llm_model="test",
         llm_latency_ms=10,
         action=Action.SKIP,
@@ -720,6 +744,7 @@ async def test_unknown_paper_promotion_logs_promoted_pos_strong_and_decision(tmp
     market._initialized = True
     market._halted = False
     scheduler = SnapshotScheduler(cfg, PriceFetcher(kis=None), log)
+    promotion_detected_at = datetime(2026, 3, 24, 4, 10, 0, tzinfo=timezone.utc)
 
     decision_engine = MagicMock()
     decision_engine.decide = AsyncMock(
@@ -727,7 +752,7 @@ async def test_unknown_paper_promotion_logs_promoted_pos_strong_and_decision(tmp
             schema_version="0.1.2",
             run_id="test_run",
             event_id="",
-            decided_at=datetime.now(timezone.utc),
+            decided_at=promotion_detected_at + timedelta(seconds=5),
             llm_model="test",
             llm_latency_ms=10,
             action=Action.BUY,
@@ -739,7 +764,7 @@ async def test_unknown_paper_promotion_logs_promoted_pos_strong_and_decision(tmp
     )
     request = UnknownReviewRequest(
         event_id="evt_unknown",
-        detected_at=datetime.now(timezone.utc),
+        detected_at=promotion_detected_at,
         runtime_mode="paper",
         ticker="005930",
         corp_name="삼성전자",
@@ -751,7 +776,7 @@ async def test_unknown_paper_promotion_logs_promoted_pos_strong_and_decision(tmp
     )
     review = UnknownReviewRecord(
         event_id=request.event_id,
-        reviewed_at=datetime.now(timezone.utc),
+        reviewed_at=promotion_detected_at + timedelta(minutes=1),
         runtime_mode="paper",
         headline_only=True,
         review_status=ReviewStatus.OK,

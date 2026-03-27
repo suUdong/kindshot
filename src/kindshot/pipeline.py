@@ -133,6 +133,27 @@ def _hour_bucket_from_datetime(dt: datetime) -> str:
     return "late"
 
 
+def _is_fast_profile_late_entry(
+    *,
+    config: Config,
+    hold_minutes: int,
+    detected_at: datetime,
+    guardrail_profile,
+) -> bool:
+    if hold_minutes != config.fast_profile_hold_minutes:
+        return False
+    if guardrail_profile.fast_profile_no_buy_after_kst_hour >= 24:
+        return False
+    detected_at_kst = detected_at.astimezone(_KST) if detected_at.tzinfo else detected_at.replace(tzinfo=_KST)
+    cutoff = detected_at_kst.replace(
+        hour=guardrail_profile.fast_profile_no_buy_after_kst_hour,
+        minute=guardrail_profile.fast_profile_no_buy_after_kst_minute,
+        second=0,
+        microsecond=0,
+    )
+    return detected_at_kst >= cutoff
+
+
 def _parse_disclosure_meta(raw: RawDisclosure, detected_at: datetime) -> tuple[Optional[datetime], bool, Optional[int]]:
     disclosed_at: Optional[datetime] = None
     disclosed_at_missing = True
@@ -377,6 +398,15 @@ async def execute_bucket_path(
         _mark_skip(counters, stage="DRY_RUN", reason="DRY_RUN")
         return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason="DRY_RUN")
 
+    decision_hold_minutes = get_max_hold_minutes(analysis_headline, keyword_hits, config)
+    guardrail_profile = resolve_dynamic_guardrail_profile(
+        config,
+        kospi_change_pct=market.snapshot.kospi_change_pct,
+        kosdaq_change_pct=market.snapshot.kosdaq_change_pct,
+        kospi_breadth_ratio=market.snapshot.kospi_breadth_ratio,
+        kosdaq_breadth_ratio=market.snapshot.kosdaq_breadth_ratio,
+    )
+
     # Pre-LLM guardrail checks (LLM 비용 절감)
     if guardrail_state is not None:
         if raw.ticker in guardrail_state.bought_tickers:
@@ -391,6 +421,21 @@ async def execute_bucket_path(
             await log.write(event_rec)
             _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MAX_POSITIONS")
             return ProcessOutcome(event_id=processed.event_id, skip_stage=SkipStage.GUARDRAIL, skip_reason="MAX_POSITIONS")
+    if _is_fast_profile_late_entry(
+        config=config,
+        hold_minutes=decision_hold_minutes,
+        detected_at=detected_at,
+        guardrail_profile=guardrail_profile,
+    ):
+        event_rec.skip_stage = SkipStage.GUARDRAIL
+        event_rec.skip_reason = "FAST_PROFILE_LATE_ENTRY"
+        await log.write(event_rec)
+        _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="FAST_PROFILE_LATE_ENTRY")
+        return ProcessOutcome(
+            event_id=processed.event_id,
+            skip_stage=SkipStage.GUARDRAIL,
+            skip_reason="FAST_PROFILE_LATE_ENTRY",
+        )
 
     try:
         risk_budget = resolve_daily_loss_budget(config, guardrail_state) if guardrail_state is not None else None
@@ -717,14 +762,6 @@ async def execute_bucket_path(
     event_rec.decision_size_hint = decision.size_hint.value
     event_rec.decision_reason = decision.reason
 
-    hold_minutes = get_max_hold_minutes(analysis_headline, keyword_hits, config) if decision.action == Action.BUY else 0
-    guardrail_profile = resolve_dynamic_guardrail_profile(
-        config,
-        kospi_change_pct=market_snapshot.kospi_change_pct,
-        kosdaq_change_pct=market_snapshot.kosdaq_change_pct,
-        kospi_breadth_ratio=market_snapshot.kospi_breadth_ratio,
-        kosdaq_breadth_ratio=market_snapshot.kosdaq_breadth_ratio,
-    )
     if decision.action == Action.BUY and guardrail_profile.supportive_market:
         logger.info(
             "Dynamic guardrail profile [%s]: min=%d opening=%d afternoon=%d fast_cutoff=%02d:%02d",
@@ -774,7 +811,7 @@ async def execute_bucket_path(
         decision_action=decision.action,
         decision_confidence=decision.confidence,
         decision_time_kst=decision.decided_at,
-        decision_hold_minutes=hold_minutes,
+        decision_hold_minutes=decision_hold_minutes if decision.action == Action.BUY else 0,
         adv_threshold=config.adv_threshold_for_bucket(bucket.value),
         decision_size_hint=decision.size_hint.value,
         dynamic_profile=guardrail_profile,
@@ -838,6 +875,7 @@ async def execute_bucket_path(
 
     # 보유시간 차등화: 키워드 기반 hold profile
     is_buy = decision.action == Action.BUY
+    hold_minutes = decision_hold_minutes if is_buy else 0
 
     scheduler.schedule_t0(
         event_id=processed.event_id,

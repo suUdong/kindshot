@@ -5,6 +5,8 @@
 2. `direct_disclosure=true` + `commentary=false` + `broker_note=false`는 확정 공시 판단에 강한 근거다.
 3. `commentary=true` 또는 `broker_note=true`이면 headline에 "체결/수주/공급계약"이 있어도 기사/리포트로 보고 매우 보수적으로 판단하라.
 4. `news_category`, `hold_profile`, `contract_amount_eok`, `ctx_risk`를 함께 읽어라.
+5. confidence는 "headline이 강해 보이는 정도"가 아니라 "선택한 action이 실제 hold_profile 동안 맞을 확률"이다.
+6. `hold_profile=20m`이면 빠르게 소화되는 촉매다. 장초반/장후반에는 headline 강도보다 체결 가능성과 추격 리스크를 더 크게 반영하라.
 
 규칙: BUY confidence는 반드시 75 이상이어야 한다.
 confidence 74 이하로 BUY를 출력하지 마라. 확신이 부족하면 SKIP을 출력하라.
@@ -19,8 +21,15 @@ HARD_RULES (예외 없음):
 7. 금액<100억 소규모 계약: SKIP(45).
 8. `ctx_signal.commentary=true` or `ctx_signal.broker_note=true`: 원칙적 SKIP(35~45).
 9. `ctx_risk.remaining_loss_budget_won<=0` 또는 `ctx_risk.loss_floor_won` 근처면 공격적 BUY 금지.
+10. `hold_profile=20m` + 09:00~09:30 또는 14:00 이후는 체결 직후 모멘텀 소화/반전 리스크가 크다. `direct_disclosure=true` + 대형 확정 촉매가 아니면 SKIP 쪽으로 기울어라.
 
 ===== 의사결정 트리 (순서대로) =====
+
+STEP 0: 이 뉴스가 실제 hold_profile 동안 수익을 줄 가능성이 높은가?
+- confidence는 "선택한 action이 맞을 확률"이다.
+- BUY confidence는 "이 뉴스가 실제 hold_profile 동안 플러스 종료/TP/추세 유지로 이어질 확률"로 해석하라.
+- SKIP confidence는 "BUY하지 않는 판단이 맞을 확률"이다.
+- headline이 세 보여도 hold_profile이 짧고 체결 리스크가 높으면 confidence를 낮춰라.
 
 STEP 1: 기사인가 공시인가?
 - `ctx_signal.direct_disclosure=true` and `commentary=false` and `broker_note=false`면 공시 쪽으로 강하게 본다.
@@ -58,9 +67,12 @@ strategy_guide (감점 -5~-15 감안한 충분한 점수):
 - `news_category=clinical_regulatory` + direct_disclosure=true → 높은 conf 허용
 - `news_category=policy_funding` 또는 `product_technology`는 headline이 약하면 쉽게 BUY하지 마라
 - `hold_profile=EOD`는 장기효과 촉매 가능성이 높고, `hold_profile=20m`은 단기 모멘텀/반전 리스크가 큰 촉매다
+- `hold_profile=20m` + `09:00~09:30`은 confidence를 쉽게 주지 마라. `direct_disclosure=true` + `contract_amount_eok>=1000` 또는 `매출액대비 10%+`급이 아니면 보통 SKIP(55~68)이다.
+- `hold_profile=20m` + `14:00 이후`는 BORDERLINE BUY 금지. 매우 강한 직접공시가 아니면 SKIP.
 - 수주·공급계약: 매출 대비 15%+ → BUY(93,L), 10-15% → BUY(90,L), 5-10% → BUY(85,M), 3-5% → BUY(80,S)
 - 수주·공급계약 금액 5000억+ → BUY(90,L), 1000-5000억 → BUY(86,M), 500-1000억 → BUY(82,S), <100억 → SKIP(45)
 - 수주·공급계약 금액 100-500억 + 소/중형주 → BUY(80,S). 대형주면 SKIP.
+- routine contract headline은 80-82를 남발하지 마라. `직접공시 + 금액규모 + 미반영 + 적정 시간대`가 동시에 맞을 때만 80대 BUY를 사용하라.
 - 바이오: FDA허가·임상3상 성공 → BUY(93,L), 임상2상 완료 → BUY(85,M), 임상1상 → SKIP(55)
 - 품목허가 승인/취득 → BUY(85,M). 해외(FDA/EMA) → BUY(88,M).
 - 자사주 소각·취득 "결정/공시" → BUY(86,M). "추진/검토" → SKIP(50)
@@ -99,11 +111,12 @@ technical_indicators (있을 때만):
 
 time_session_rules:
 - 06:00~08:30 (장전 공시): 최고 기회. confidence +5.
-- 09:00~09:30: 변동성 최고. size_hint 최대 M.
+- 09:00~09:30: 변동성 최고. size_hint 최대 M. `hold_profile=20m`이면 대형 직접공시가 아니면 confidence를 크게 주지 마라.
 - 09:30~11:00: 최적 진입 구간.
 - 11:00~13:00: confidence -3. spread_bps>35이면 SKIP.
 - 13:00~14:30: confidence -2.
 - 14:30~15:00: confidence -5. conf>85만 BUY.
+- 14:00 이후 `hold_profile=20m`: direct_disclosure=true + 대형확정촉매가 아니면 SKIP(55~65).
 
 market_adjustment:
 - KOSPI<-2%: confidence -5, size 하향
@@ -118,8 +131,10 @@ confidence_매핑 (변별력 극대화 — 점수를 아끼지 마라):
 - 75-77: 약한 촉매 (매출3-5% 계약, 소규모 확정 공시) → S
 - 60-74: SKIP 전용 구간.
 - <60: 불충분 → SKIP
+- SKIP confidence 55-68: 애매하지만 BUY edge 부족. 기사/리포트/짧은 hold_profile 고위험 구간에 사용.
+- SKIP confidence 70+: BUY하면 손실/추격/late-entry 위험이 높아 SKIP이 거의 확실.
 ★ 핵심: 감점 파이프라인(-5~-15)이 후속 적용된다. 진짜 강한 촉매는 88+ 줘야 감점 후에도 BUY 유지. ★
-★ 80-82에 몰리지 마라. 확정공시+중형주+미반영이면 85+, FDA/대형수주면 90+. ★
+★ 80-82에 몰리지 마라. 확정공시+중형주+미반영이면 85+, FDA/대형수주면 90+. routine contract/open-tape headline은 80대 남발 금지. ★
 ★ 확신 없으면 SKIP(50). 75-79 BUY는 금지 — 감점 후 반드시 SKIP된다. ★
 
 hold_profile (시스템이 자동 적용, 참고용):
