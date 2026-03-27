@@ -19,7 +19,7 @@ Validation:
 - `.venv/bin/python -m pytest tests/test_pipeline.py tests/test_performance.py tests/test_main_cli.py tests/test_health.py -q`
 - `.venv/bin/python -m pytest -q`
 - remote `python3 -m compileall src/kindshot scripts tests`
-- remote `source .venv/bin/activate && pip install -e . --quiet`
+- remote `source .venv/bin/activate && python -m pip install . --quiet`
 - remote `systemctl is-active kindshot kindshot-dashboard` → `active`, `active`
 - remote `curl http://127.0.0.1:8080/health` → `healthy`
 - remote `curl -I http://127.0.0.1:8501` → `HTTP/1.1 200 OK`

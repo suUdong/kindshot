@@ -20,7 +20,7 @@
   - `.venv/bin/python -m pytest -q` passed (`934 passed, 1 skipped, 1 warning`)
   - affected-file diagnostics returned 0 issues for `decision.py`, `price.py`, `main.py`, and `guardrails.py`
   - remote `python3 -m compileall src/kindshot scripts tests` passed on `kindshot-server`
-  - remote `pip install -e . --quiet` passed on `kindshot-server`
+  - remote `python -m pip install . --quiet` passed on `kindshot-server` after the broken editable-install state was removed
   - remote `systemctl restart kindshot kindshot-dashboard` succeeded and both services returned `active` at `2026-03-27 23:45:59 KST`
   - remote `curl http://127.0.0.1:8080/health` returned `healthy`
   - remote `curl -I http://127.0.0.1:8501` returned `HTTP/1.1 200 OK`

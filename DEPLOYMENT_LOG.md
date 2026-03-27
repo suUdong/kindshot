@@ -44,7 +44,7 @@ Kindshot 운영 배포 이력 기록용 문서.
   - local `.venv/bin/python -m pytest -q` → `934 passed, 1 skipped, 1 warning`
   - local affected-file diagnostics → `0 errors`, `0 warnings`
   - remote `python3 -m compileall src/kindshot scripts tests`
-  - remote `pip install -e . --quiet`
+  - remote `python -m pip install . --quiet`
   - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
   - remote `curl http://127.0.0.1:8080/health` → `healthy`
   - remote `curl http://127.0.0.1:8501` → `200`
