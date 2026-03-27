@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 
 from data_loader import (
     available_dates,
+    compute_multi_day_pnl,
     compute_trade_pnl,
     load_context_cards,
     load_events,
@@ -39,6 +40,14 @@ selected_date = st.sidebar.selectbox(
 )
 multi_day_n = st.sidebar.slider("멀티데이 분석 (일수)", 1, min(14, len(dates)), min(7, len(dates)))
 
+# 자동 새로고침
+auto_refresh = st.sidebar.checkbox("자동 새로고침 (30초)", value=False)
+if auto_refresh:
+    st.sidebar.caption("30초마다 데이터를 갱신합니다.")
+    import time
+    time.sleep(30)
+    st.rerun()
+
 # ── 데이터 로드 ──────────────────────────────────────
 
 @st.cache_data(ttl=60)
@@ -56,6 +65,10 @@ def _load_pnl(d: str) -> pd.DataFrame:
 @st.cache_data(ttl=60)
 def _load_multi(n: int) -> pd.DataFrame:
     return load_multi_day_events(n)
+
+@st.cache_data(ttl=60)
+def _load_multi_pnl(n: int) -> pd.DataFrame:
+    return compute_multi_day_pnl(n)
 
 events_df = _load_events(selected_date)
 ctx_df = _load_ctx(selected_date)
@@ -270,6 +283,61 @@ with tab2:
             fig_conf_trend.update_layout(height=350)
             st.plotly_chart(fig_conf_trend, use_container_width=True)
 
+        # 누적 PnL 곡선
+        multi_pnl_df = _load_multi_pnl(multi_day_n)
+        if not multi_pnl_df.empty and multi_pnl_df["trades"].sum() > 0:
+            st.subheader("누적 수익률 곡선")
+
+            col_pnl1, col_pnl2 = st.columns(2)
+            with col_pnl1:
+                fig_cum = go.Figure()
+                fig_cum.add_trace(go.Scatter(
+                    x=multi_pnl_df["date"], y=multi_pnl_df["cum_ret_pct"],
+                    mode="lines+markers", name="누적 수익률",
+                    line=dict(color="#3498db", width=3),
+                    fill="tozeroy",
+                    fillcolor="rgba(52,152,219,0.1)",
+                ))
+                fig_cum.add_hline(y=0, line_dash="dash", line_color="gray")
+                fig_cum.update_layout(
+                    title="누적 수익률 (%)",
+                    height=400, yaxis_title="수익률 (%)", xaxis_title="날짜",
+                )
+                st.plotly_chart(fig_cum, use_container_width=True)
+
+            with col_pnl2:
+                fig_daily_pnl = go.Figure()
+                colors = ["#2ecc71" if v >= 0 else "#e74c3c"
+                          for v in multi_pnl_df["total_ret_pct"]]
+                fig_daily_pnl.add_trace(go.Bar(
+                    x=multi_pnl_df["date"], y=multi_pnl_df["total_ret_pct"],
+                    name="일별 수익률", marker_color=colors,
+                    text=[f"{v:.2f}%" for v in multi_pnl_df["total_ret_pct"]],
+                    textposition="outside",
+                ))
+                fig_daily_pnl.add_hline(y=0, line_dash="dash", line_color="gray")
+                fig_daily_pnl.update_layout(
+                    title="일별 수익률 (%)",
+                    height=400, yaxis_title="수익률 (%)", xaxis_title="날짜",
+                )
+                st.plotly_chart(fig_daily_pnl, use_container_width=True)
+
+            # 승률 추이
+            wr_data = multi_pnl_df[multi_pnl_df["trades"] > 0]
+            if not wr_data.empty:
+                fig_wr = px.bar(
+                    wr_data, x="date", y="win_rate",
+                    text=[f"{v:.0f}%" for v in wr_data["win_rate"]],
+                    title="일별 승률 (%)",
+                    color="win_rate",
+                    color_continuous_scale=["#e74c3c", "#f39c12", "#2ecc71"],
+                    range_color=[0, 100],
+                )
+                fig_wr.add_hline(y=50, line_dash="dash", line_color="orange",
+                                 annotation_text="50%")
+                fig_wr.update_layout(height=350)
+                st.plotly_chart(fig_wr, use_container_width=True)
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # TAB 3: 기술지표
@@ -463,7 +531,7 @@ with tab4:
             st.subheader("로그 기반 시스템 현황")
 
             total_ev = len(events_df)
-            error_ev = len(events_df[events_df.get("skip_stage") == "LLM_ERROR"]) if "skip_stage" in events_df.columns else 0
+            error_ev = len(events_df[events_df["skip_stage"] == "LLM_ERROR"]) if "skip_stage" in events_df.columns else 0
             buy_ev = len(events_df[events_df["decision_action"] == "BUY"])
 
             c1, c2, c3 = st.columns(3)

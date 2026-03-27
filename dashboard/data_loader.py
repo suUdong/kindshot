@@ -199,3 +199,37 @@ def load_multi_day_events(n_days: int = 7) -> pd.DataFrame:
             df["date"] = d
             frames.append(df)
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def compute_multi_day_pnl(n_days: int = 7) -> pd.DataFrame:
+    """최근 n일의 일별 PnL 요약 (누적 수익률 포함)."""
+    dates = sorted(available_dates()[:n_days])
+    rows = []
+    cum_pnl = 0.0
+    for d in dates:
+        pnl = compute_trade_pnl(d)
+        if pnl.empty:
+            rows.append({
+                "date": f"{d[:4]}-{d[4:6]}-{d[6:]}",
+                "trades": 0, "wins": 0, "losses": 0,
+                "win_rate": 0.0, "avg_ret_pct": 0.0,
+                "total_ret_pct": 0.0, "cum_ret_pct": cum_pnl,
+            })
+            continue
+        valid = pnl["final_ret_pct"].dropna()
+        wins = int((valid > 0).sum())
+        losses = int((valid <= 0).sum())
+        n_trades = wins + losses
+        day_total = float(valid.sum()) if len(valid) else 0.0
+        cum_pnl += day_total
+        rows.append({
+            "date": f"{d[:4]}-{d[4:6]}-{d[6:]}",
+            "trades": n_trades,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": wins / n_trades * 100 if n_trades else 0.0,
+            "avg_ret_pct": float(valid.mean()) if len(valid) else 0.0,
+            "total_ret_pct": day_total,
+            "cum_ret_pct": cum_pnl,
+        })
+    return pd.DataFrame(rows)

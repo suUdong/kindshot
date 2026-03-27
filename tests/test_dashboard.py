@@ -15,12 +15,13 @@ from data_loader import (  # noqa: E402
     _read_jsonl,
     _read_json,
     available_dates,
-    load_events,
-    load_context_cards,
-    load_price_snapshots,
+    compute_multi_day_pnl,
     compute_trade_pnl,
-    load_multi_day_events,
+    load_context_cards,
+    load_events,
     load_health,
+    load_multi_day_events,
+    load_price_snapshots,
 )
 
 
@@ -196,6 +197,25 @@ def test_load_multi_day_events(fake_logs):
     df = load_multi_day_events(7)
     assert len(df) == 3
     assert "date" in df.columns
+
+
+def test_compute_multi_day_pnl(fake_logs):
+    df = compute_multi_day_pnl(7)
+    assert len(df) == 1  # 1 date available
+    row = df.iloc[0]
+    assert row["trades"] == 1
+    assert row["wins"] == 1
+    assert row["losses"] == 0
+    assert row["win_rate"] == 100.0
+    assert row["cum_ret_pct"] == 0.5  # 0.005 * 100
+
+
+def test_compute_multi_day_pnl_empty(fake_logs, monkeypatch):
+    import data_loader
+    monkeypatch.setattr(data_loader, "LOGS_DIR", fake_logs / "empty_logs")
+    (fake_logs / "empty_logs").mkdir()
+    df = compute_multi_day_pnl(7)
+    assert df.empty
 
 
 def test_load_health_offline():
