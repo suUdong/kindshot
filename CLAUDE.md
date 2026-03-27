@@ -65,6 +65,12 @@ rsync -avz --exclude='__pycache__' dashboard/ kindshot-server:/opt/kindshot/dash
 ks "sudo systemctl restart kindshot-dashboard"
 ```
 
+### 대시보드 접근 (SSH 터널)
+```bash
+# 로컬에서 SSH 터널 → http://localhost:8501 접속
+ssh -L 8501:localhost:8501 kindshot-server
+```
+
 ### 배포 확인
 ```bash
 ks "sudo systemctl status kindshot --no-pager"

@@ -298,10 +298,14 @@ with tab2:
         st.plotly_chart(fig_pnl, use_container_width=True)
 
         # 상세 테이블
-        st.dataframe(
-            pnl_df[["ticker", "corp_name", "headline", "confidence", "size_hint",
-                     "bucket", "entry_px", "best_ret_pct", "final_ret_pct", "final_horizon"]],
-            use_container_width=True, hide_index=True,
+        pnl_display = pnl_df[["ticker", "corp_name", "headline", "confidence", "size_hint",
+                               "bucket", "entry_px", "best_ret_pct", "final_ret_pct", "final_horizon"]]
+        st.dataframe(pnl_display, use_container_width=True, hide_index=True)
+        st.download_button(
+            "CSV 다운로드 (당일 매매)",
+            pnl_display.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"kindshot_trades_{selected_date}.csv",
+            mime="text/csv",
         )
 
         # ── 수익성 심층 분석 ──
