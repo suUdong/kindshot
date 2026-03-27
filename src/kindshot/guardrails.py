@@ -425,8 +425,9 @@ def check_guardrails(
     if decision_action == Action.BUY and decision_confidence is not None and config.no_buy_after_kst_hour < 24:
         now_kst = _resolve_decision_time_kst(decision_time_kst)
         h, m = now_kst.hour, now_kst.minute
-        # v65: 08:30~09:00 장 직전 — 08시대 worst(-0.49%) 데이터, 높은 확신만
-        if h == 8 and m >= 30 and decision_confidence < profile.opening_min_confidence:
+        # v71: 08:00~09:00 장전/직전 — 08시대 worst(-0.49%), spread=None, 호가 없음
+        # 기존 08:30+ → 08:00+로 확장 (08:00~08:30도 시장 미개장)
+        if h == 8 and decision_confidence < profile.opening_min_confidence:
             return GuardrailResult(passed=False, reason="PRE_OPENING_LOW_CONFIDENCE")
         # 09:00~09:30: 변동성 최고, 높은 확신만 진입
         if h == 9 and m < 30 and decision_confidence < profile.opening_min_confidence:
@@ -834,13 +835,14 @@ def calculate_position_size(
     account_balance: float = 0.0,
     minute_volume: float = 0.0,
     ask_depth_notional: float = 0.0,
+    macro_position_multiplier: float = 1.0,
 ) -> float:
     """포지션 사이즈 계산: min(hint 기반, 계좌리스크, 거래대금, 호가잔량).
 
     Returns:
         주문 금액 (won). 0이면 진입 불가.
     """
-    hint_size = config.order_size_for_hint(size_hint)
+    hint_size = config.order_size_for_hint(size_hint) * macro_position_multiplier
     candidates = [hint_size]
 
     if account_balance > 0 and config.account_risk_pct > 0:

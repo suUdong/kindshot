@@ -46,6 +46,13 @@ async def _fetch_macro_regime(base_url: str, timeout_s: float) -> dict[str, Any]
     return payload
 
 
+_MACRO_REGIME_MULTIPLIERS: dict[str, float] = {
+    "expansionary": 1.2,
+    "neutral": 1.0,
+    "contractionary": 0.6,
+}
+
+
 class MarketMonitor:
     """Monitors KOSPI/KOSDAQ for halt condition and captures macro snapshot.
 
@@ -71,6 +78,7 @@ class MarketMonitor:
         self._macro_overall_confidence: Optional[float] = None
         self._macro_kr_regime: Optional[str] = None
         self._macro_crypto_regime: Optional[str] = None
+        self._macro_position_multiplier: Optional[float] = None
         self._last_ts: Optional[datetime] = None
 
     def _runtime_market_context_path(self, ts: datetime) -> Path:
@@ -104,6 +112,7 @@ class MarketMonitor:
             macro_overall_confidence=self._macro_overall_confidence,
             macro_kr_regime=self._macro_kr_regime,
             macro_crypto_regime=self._macro_crypto_regime,
+            macro_position_multiplier=self._macro_position_multiplier,
         )
 
     async def append_runtime_snapshot(self) -> None:
@@ -137,6 +146,24 @@ class MarketMonitor:
         if info.down_issue_count <= 0:
             return float(info.up_issue_count) if info.up_issue_count > 0 else 1.0
         return round(info.up_issue_count / info.down_issue_count, 3)
+
+    def _compute_position_multiplier(self) -> float:
+        """Compute regime-based position multiplier from current macro state."""
+        base = _MACRO_REGIME_MULTIPLIERS.get(self._macro_overall_regime or "", 1.0)
+
+        # Korea-specific caution: if kr_regime is contractionary but overall isn't, reduce by 0.1
+        if self._macro_kr_regime == "contractionary" and self._macro_overall_regime != "contractionary":
+            base -= 0.1
+
+        # Dampen toward 1.0 when confidence is low
+        confidence = self._macro_overall_confidence
+        if confidence is not None and confidence < 0.3:
+            # Linear blend: at confidence=0 → multiplier=1.0, at confidence=0.3 → full effect
+            blend = confidence / 0.3
+            base = 1.0 + (base - 1.0) * blend
+
+        # Clamp to [0.5, 1.5]
+        return round(max(0.5, min(1.5, base)), 3)
 
     async def update(self) -> None:
         """Check KOSPI/KOSDAQ and update halt status + macro snapshot."""
@@ -199,6 +226,7 @@ class MarketMonitor:
                     layers = macro.get("layers", {})
                     self._macro_kr_regime = layers.get("kr", {}).get("regime")
                     self._macro_crypto_regime = layers.get("crypto", {}).get("regime")
+                    self._macro_position_multiplier = self._compute_position_multiplier()
             except Exception:
                 logger.warning("Macro regime update failed", exc_info=True)
 

@@ -100,6 +100,7 @@ class MarketContext(BaseModel):
     macro_overall_confidence: Optional[float] = None
     macro_kr_regime: Optional[str] = None
     macro_crypto_regime: Optional[str] = None
+    macro_position_multiplier: Optional[float] = None
 
 
 class ContextCard(BaseModel):

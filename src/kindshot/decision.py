@@ -123,6 +123,8 @@ def _build_prompt(
                 f" kr_macro={market_ctx.macro_kr_regime or 'N/A'}"
                 f" crypto_macro={market_ctx.macro_crypto_regime or 'N/A'}"
             )
+            if market_ctx.macro_position_multiplier is not None:
+                market_line += f" macro_size_mult={market_ctx.macro_position_multiplier:.2f}x"
 
     derived_hold_minutes = hold_minutes
     hold_match = None
@@ -174,7 +176,7 @@ ctx_price: {ctx_price}
 ctx_micro: {ctx_micro}{market_line}
 ctx_signal: {' '.join(signal_parts)}{risk_line}
 
-constraints: no_overnight=true respond_with_json_only=true prefer_ctx_signal_over_headline_tone=true
+constraints: no_overnight=true respond_with_json_only=true prefer_ctx_signal_over_headline_tone=true macro_regime_guides_size=true
 
 {strategy}"""
 

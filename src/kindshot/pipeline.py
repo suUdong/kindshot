@@ -764,10 +764,12 @@ async def execute_bucket_path(
     # Live mode: 실주문 매수
     if mode == "live" and order_executor is not None and decision.action == Action.BUY:
         try:
+            _macro_mult = market.snapshot.macro_position_multiplier or 1.0
+            _base_order_won = config.order_size_for_hint(decision.size_hint.value)
             _buy_result = await order_executor.buy_market(
                 event_id=processed.event_id,
                 ticker=raw.ticker,
-                target_won=config.order_size_for_hint(decision.size_hint.value),
+                target_won=_base_order_won * _macro_mult,
                 current_price=raw_data.px if raw_data.px else 0,
             )
         except Exception:
