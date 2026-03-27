@@ -1430,3 +1430,113 @@ async def test_market_hours_intraday_thin_not_deferred(tmp_path):
 
     # 장중이므로 pending에 추가되지 않아야 함
     assert len(premarket_pending) == 0
+
+
+# ── v66: shadow snapshot tests ──────────────────────────────────
+
+
+async def test_guardrail_block_schedules_shadow_snapshot_for_high_conf_buy(tmp_path):
+    """차단된 BUY(conf>=75)는 shadow snapshot을 스케줄링해야 한다."""
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=80,
+        size_hint=SizeHint.M,
+        reason="test",
+        decision_source="LLM",
+    )
+    raw = _make_raw()
+
+    with patch("kindshot.price.SnapshotScheduler.schedule_t0") as mock_schedule:
+        records = await _run_pipeline_once(
+            tmp_path, [raw],
+            decision_side_effect=[mock_decision],
+            guardrail_passed=False,
+        )
+
+        # shadow snapshot이 스케줄링되었는지 확인
+        assert mock_schedule.call_count >= 1
+        # shadow_ prefix로 호출되었는지 확인
+        shadow_calls = [
+            c for c in mock_schedule.call_args_list
+            if str(c).find("shadow_") != -1
+        ]
+        assert len(shadow_calls) >= 1
+        # is_buy_decision=False 확인
+        for call in shadow_calls:
+            assert call.kwargs.get("is_buy_decision") is False
+
+
+async def test_guardrail_block_no_shadow_for_low_conf_buy(tmp_path):
+    """차단된 BUY(conf<75)는 shadow snapshot을 스케줄링하지 않아야 한다."""
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=70,
+        size_hint=SizeHint.S,
+        reason="test",
+        decision_source="LLM",
+    )
+    raw = _make_raw()
+
+    with patch("kindshot.price.SnapshotScheduler.schedule_t0") as mock_schedule:
+        records = await _run_pipeline_once(
+            tmp_path, [raw],
+            decision_side_effect=[mock_decision],
+            guardrail_passed=False,
+        )
+
+        # conf<75이므로 shadow snapshot 호출 없어야 함
+        shadow_calls = [
+            c for c in mock_schedule.call_args_list
+            if str(c).find("shadow_") != -1
+        ]
+        assert len(shadow_calls) == 0
+
+
+async def test_guardrail_block_no_shadow_for_skip_action(tmp_path):
+    """SKIP 결정이 guardrail에서 차단되면 shadow snapshot 미생성."""
+    from kindshot.models import DecisionRecord, Action, SizeHint
+
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime.now(timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.SKIP,
+        confidence=85,
+        size_hint=SizeHint.S,
+        reason="test",
+        decision_source="LLM",
+    )
+    raw = _make_raw()
+
+    with patch("kindshot.price.SnapshotScheduler.schedule_t0") as mock_schedule:
+        records = await _run_pipeline_once(
+            tmp_path, [raw],
+            decision_side_effect=[mock_decision],
+            guardrail_passed=False,
+        )
+
+        # SKIP이므로 shadow snapshot 호출 없어야 함
+        shadow_calls = [
+            c for c in mock_schedule.call_args_list
+            if str(c).find("shadow_") != -1
+        ]
+        assert len(shadow_calls) == 0

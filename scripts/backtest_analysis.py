@@ -458,6 +458,142 @@ def render_report(stats: dict[str, Any], trades: list[Trade]) -> str:
         w(f"  {t.date:<10} {t.ticker:<8} {t.confidence:>4} {t.size_hint:>4} {t.entry_price:>10.0f} {pnl_str} {t.max_gain_pct:>+6.2f}% {t.max_drawdown_pct:>+6.2f}% {t.exit_type:<10} {t.headline[:35]}")
     w("")
 
+    # Shadow snapshot 기회비용 분석 (v66)
+    shadow_section = _render_shadow_section(trades, stats.get("_shadow_trades", []))
+    if shadow_section:
+        w("")
+        w(shadow_section)
+
+    return "\n".join(lines)
+
+
+def build_shadow_trades(
+    events: list[dict],
+    snapshots: list[dict],
+    date_str: str,
+    tp_pct: float = 2.0,
+    sl_pct: float = -1.5,
+) -> list[Trade]:
+    """shadow_ prefix 스냅샷에서 가상 트레이드 구성."""
+    # shadow_ prefix 스냅샷만 필터링
+    shadow_snaps: dict[str, dict[str, float]] = defaultdict(dict)
+    for s in snapshots:
+        eid = s.get("event_id", "")
+        if not eid.startswith("shadow_"):
+            continue
+        horizon = s.get("horizon", "")
+        px = s.get("px")
+        if eid and horizon and px is not None:
+            shadow_snaps[eid][horizon] = float(px)
+
+    if not shadow_snaps:
+        return []
+
+    # 원본 event_id로 이벤트 정보 매칭
+    event_map: dict[str, dict] = {}
+    for ev in events:
+        event_map[ev.get("event_id", "")] = ev
+
+    trades: list[Trade] = []
+    horizons = ["t+30s", "t+1m", "t+2m", "t+5m", "t+10m", "t+15m", "t+20m", "t+30m", "close"]
+
+    for shadow_eid, snaps in shadow_snaps.items():
+        t0 = snaps.get("t0", 0.0)
+        if t0 <= 0:
+            continue
+
+        original_eid = shadow_eid.replace("shadow_", "", 1)
+        ev = event_map.get(original_eid, {})
+
+        returns: dict[str, float] = {}
+        max_gain = 0.0
+        max_dd = 0.0
+        for h in horizons:
+            px = snaps.get(h)
+            if px and px > 0:
+                ret = (px - t0) / t0 * 100
+                returns[h] = ret
+                max_gain = max(max_gain, ret)
+                max_dd = min(max_dd, ret)
+
+        # 가상 TP/SL 판정
+        exit_type = "HOLD"
+        exit_pnl = 0.0
+        for h in horizons:
+            if h not in returns:
+                continue
+            ret = returns[h]
+            if ret >= tp_pct:
+                exit_type = "TP"
+                exit_pnl = ret
+                break
+            elif ret <= sl_pct:
+                exit_type = "SL"
+                exit_pnl = ret
+                break
+            exit_pnl = ret
+
+        trade = Trade(
+            event_id=shadow_eid,
+            date=date_str,
+            ticker=ev.get("ticker", "?"),
+            headline=ev.get("headline", "")[:60],
+            bucket=ev.get("bucket", "?"),
+            confidence=int(ev.get("decision_confidence", 0)),
+            size_hint=ev.get("decision_size_hint", "?"),
+            reason=ev.get("skip_reason", ""),
+            decision_source="SHADOW",
+            detected_at=ev.get("detected_at", ""),
+            entry_price=t0,
+            snapshots=returns,
+            exit_type=exit_type,
+            exit_pnl_pct=exit_pnl,
+            max_gain_pct=max_gain,
+            max_drawdown_pct=max_dd,
+        )
+        trades.append(trade)
+
+    return trades
+
+
+def _render_shadow_section(real_trades: list[Trade], shadow_trades: list[Trade]) -> str:
+    """Shadow 기회비용 분석 섹션 렌더링."""
+    if not shadow_trades:
+        return ""
+
+    lines: list[str] = []
+    w = lines.append
+
+    total = len(shadow_trades)
+    tp_trades = [t for t in shadow_trades if t.exit_type == "TP"]
+    sl_trades = [t for t in shadow_trades if t.exit_type == "SL"]
+    virtual_wr = len(tp_trades) / total * 100 if total else 0
+    avg_pnl = sum(t.exit_pnl_pct for t in shadow_trades) / total if total else 0
+
+    w("## 11. Shadow Snapshot 기회비용 분석 (차단된 BUY)")
+    w(f"  차단된 BUY 시그널: {total}건")
+    w(f"  가상 승률: {virtual_wr:.1f}% (TP: {len(tp_trades)}, SL: {len(sl_trades)}, HOLD: {total - len(tp_trades) - len(sl_trades)})")
+    w(f"  가상 평균 P&L: {avg_pnl:+.3f}%")
+    avg_max_gain = sum(t.max_gain_pct for t in shadow_trades) / total
+    w(f"  평균 최대 수익: {avg_max_gain:+.3f}%")
+    w("")
+    w(f"  {'Date':<10} {'Ticker':<8} {'Conf':>4} {'PnL':>8} {'MaxG':>7} {'MaxDD':>7} {'Exit':<8} {'Reason'}")
+    w(f"  {'-'*10} {'-'*8} {'-'*4} {'-'*8} {'-'*7} {'-'*7} {'-'*8} {'-'*20}")
+    for t in shadow_trades:
+        w(f"  {t.date:<10} {t.ticker:<8} {t.confidence:>4} {t.exit_pnl_pct:>+7.2f}% {t.max_gain_pct:>+6.2f}% {t.max_drawdown_pct:>+6.2f}% {t.exit_type:<8} {t.reason[:30]}")
+    w("")
+
+    # 실제 트레이드와 비교
+    if real_trades:
+        real_wr = len([t for t in real_trades if t.exit_pnl_pct > 0]) / len(real_trades) * 100
+        real_avg = sum(t.exit_pnl_pct for t in real_trades) / len(real_trades)
+        w(f"  비교: 실제 승률 {real_wr:.1f}% / 가상 승률 {virtual_wr:.1f}%")
+        w(f"  비교: 실제 평균 P&L {real_avg:+.3f}% / 가상 평균 P&L {avg_pnl:+.3f}%")
+        if virtual_wr > real_wr and avg_pnl > real_avg:
+            w("  ⚠ WARNING: guardrail이 수익 기회를 과도하게 차단하고 있을 수 있음")
+        elif virtual_wr < real_wr:
+            w("  ✓ guardrail이 정상 작동 — 차단된 시그널이 실제보다 낮은 성과")
+
     return "\n".join(lines)
 
 
@@ -477,21 +613,41 @@ def main() -> None:
         paths = sorted(log_dir.glob("kindshot_*.jsonl"))
 
     all_trades: list[Trade] = []
+    all_shadow_trades: list[Trade] = []
+    snapshot_dir = PROJECT_ROOT / "data" / "runtime" / "price_snapshots"
     for path in paths:
         if not path.exists():
             print(f"  SKIP (not found): {path}", file=sys.stderr)
             continue
         date_str = path.stem.replace("kindshot_", "")
         events, decisions, snapshots = load_day(path)
+        # snapshot 디렉토리에서 추가 snapshot 로드 (shadow 포함)
+        snap_file = snapshot_dir / f"{date_str}.jsonl"
+        if snap_file.exists():
+            for line in snap_file.read_text(encoding="utf-8").strip().split("\n"):
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("type") == "price_snapshot":
+                    snapshots.append(rec)
         day_trades = build_trades(events, decisions, snapshots, date_str)
-        print(f"  {date_str}: {len(day_trades)} executed BUY trades", file=sys.stderr)
+        day_shadow = build_shadow_trades(events, snapshots, date_str)
+        print(f"  {date_str}: {len(day_trades)} executed BUY, {len(day_shadow)} shadow trades", file=sys.stderr)
         all_trades.extend(day_trades)
+        all_shadow_trades.extend(day_shadow)
 
-    if not all_trades:
-        print("No executed trades found.", file=sys.stderr)
+    if not all_trades and not all_shadow_trades:
+        print("No trades found.", file=sys.stderr)
         return
 
-    stats = analyze_trades(all_trades)
+    if all_trades:
+        stats = analyze_trades(all_trades)
+    else:
+        stats = {"total": 0, "message": "No executed trades"}
+    stats["_shadow_trades"] = all_shadow_trades
     report = render_report(stats, all_trades)
 
     if args.output:
