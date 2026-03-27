@@ -50,6 +50,13 @@ class OrderbookSnapshot:
 
 
 @dataclass(frozen=True)
+class OrderResponse:
+    success: bool
+    order_no: str
+    message: str
+
+
+@dataclass(frozen=True)
 class QuoteRiskState:
     temp_stop_yn: str = ""
     sltr_yn: str = ""
@@ -696,6 +703,74 @@ class KisClient:
     async def get_kospi_index(self) -> Optional[float]:
         """Get current KOSPI change %. Compat wrapper."""
         return await self.get_index_change("0001")
+
+    async def place_order(
+        self,
+        ticker: str,
+        qty: int,
+        *,
+        side: str = "BUY",
+        ord_dvsn: str = "01",
+    ) -> OrderResponse:
+        """주식 현금 주문 (매수/매도). side='BUY' or 'SELL', ord_dvsn='01'=시장가."""
+        token = await self._ensure_token()
+        if not token:
+            return OrderResponse(success=False, order_no="", message="no auth token")
+
+        account_no = self._config.kis_account_no.replace("-", "").strip()
+        if len(account_no) < 10:
+            return OrderResponse(
+                success=False, order_no="",
+                message=f"invalid account_no length: {len(account_no)}",
+            )
+
+        cano = account_no[:8]
+        acnt_prdt_cd = account_no[8:10]
+
+        if side == "BUY":
+            tr_id = "VTTC0802U" if self._config.kis_is_paper else "TTTC0802U"
+        else:
+            tr_id = "VTTC0801U" if self._config.kis_is_paper else "TTTC0801U"
+
+        body = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
+            "PDNO": ticker,
+            "ORD_DVSN": ord_dvsn,
+            "ORD_QTY": str(qty),
+            "ORD_UNPR": "0",
+        }
+
+        await self._rate_limit_wait()
+        try:
+            async with self._session.post(
+                f"{self._base}/uapi/domestic-stock/v1/trading/order-cash",
+                headers=self._headers(token, tr_id),
+                json=body,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                data = await resp.json()
+        except Exception:
+            logger.exception("KIS order failed (side=%s, ticker=%s, qty=%d)", side, ticker, qty)
+            return OrderResponse(success=False, order_no="", message="request exception")
+
+        rt_cd = str(data.get("rt_cd", ""))
+        msg1 = str(data.get("msg1", ""))
+        output = data.get("output", {})
+        order_no = str(output.get("ODNO", "")) if isinstance(output, dict) else ""
+
+        if rt_cd == "0":
+            logger.info(
+                "KIS order OK: side=%s ticker=%s qty=%d order_no=%s",
+                side, ticker, qty, order_no,
+            )
+            return OrderResponse(success=True, order_no=order_no, message=msg1)
+
+        logger.warning(
+            "KIS order rejected: side=%s ticker=%s qty=%d msg=%s (rt_cd=%s)",
+            side, ticker, qty, msg1, rt_cd,
+        )
+        return OrderResponse(success=False, order_no="", message=f"[{rt_cd}] {msg1}")
 
     def stats_snapshot(self) -> dict[str, dict[str, int]]:
         return {

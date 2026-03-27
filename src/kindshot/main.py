@@ -13,6 +13,7 @@ from typing import Optional
 import aiohttp
 
 from kindshot.config import Config, load_config
+from kindshot.order import OrderExecutor
 from kindshot.context_card import configure_cache as configure_context_card_cache
 from kindshot.decision import DecisionEngine
 from kindshot.event_registry import EventRegistry
@@ -255,6 +256,12 @@ async def run() -> None:
 
         guardrail_state = GuardrailState(config, state_dir=state_dir)
 
+        # Order executor (live mode only)
+        order_executor: Optional[OrderExecutor] = None
+        if mode == "live" and kis is not None:
+            order_executor = OrderExecutor(kis, config)
+            logger.info("OrderExecutor enabled (micro_live_max=%.0f won)", config.micro_live_max_order_won)
+
         def _on_close_pnl(ticker: str, pnl_won: float) -> None:
             guardrail_state.record_pnl(pnl_won)
             guardrail_state.record_sell(ticker)
@@ -268,6 +275,7 @@ async def run() -> None:
             config, fetcher, log,
             stop_event=stop_event,
             pnl_callback=_on_close_pnl,
+            order_executor=order_executor,
         )
         unknown_review_queue: Optional[asyncio.Queue] = None
         if config.unknown_shadow_review_enabled:
@@ -340,6 +348,7 @@ async def run() -> None:
                 feed_source=feed_source,
                 unknown_review_queue=unknown_review_queue,
                 health_state=health_state,
+                order_executor=order_executor,
             ), name="pipeline"),
             asyncio.create_task(scheduler.run(), name="snapshots"),
             asyncio.create_task(_market_loop(), name="market"),

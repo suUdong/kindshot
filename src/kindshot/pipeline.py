@@ -154,6 +154,7 @@ async def execute_bucket_path(
     guardrail_state: Optional[GuardrailState],
     feed_source: str,
     health_state: Optional[object] = None,
+    order_executor: Optional[object] = None,
     analysis_tag_override: Optional[str] = None,
     promotion_original_event_id: Optional[str] = None,
     promotion_original_bucket: Optional[Bucket] = None,
@@ -646,6 +647,18 @@ async def execute_bucket_path(
     if decision.action == Action.BUY and guardrail_state is not None:
         guardrail_state.record_buy(raw.ticker)
 
+    # Live mode: 실주문 매수
+    if mode == "live" and order_executor is not None and decision.action == Action.BUY:
+        try:
+            _buy_result = await order_executor.buy_market(
+                event_id=processed.event_id,
+                ticker=raw.ticker,
+                target_won=config.order_size_for_hint(decision.size_hint.value),
+                current_price=raw_data.px if raw_data.px else 0,
+            )
+        except Exception:
+            logger.exception("LIVE BUY order error [%s]", raw.ticker)
+
     # 보유시간 차등화: 키워드 기반 hold profile
     is_buy = decision.action == Action.BUY
 
@@ -776,6 +789,7 @@ async def process_registered_event(
     feed_source: str = "KIND",
     unknown_review_queue: Optional[asyncio.Queue] = None,
     health_state: Optional[object] = None,
+    order_executor: Optional[object] = None,
     registry: Optional[EventRegistry] = None,
     premarket_pending: Optional[list] = None,
 ) -> None:
@@ -859,6 +873,7 @@ async def process_registered_event(
             guardrail_state=guardrail_state,
             feed_source=feed_source,
             health_state=health_state,
+            order_executor=order_executor,
         )
     except (LlmTimeoutError, LlmCallError, LlmParseError) as llm_exc:
         err_type = type(llm_exc).__name__
@@ -893,6 +908,7 @@ async def process_registered_event(
                     guardrail_state=guardrail_state,
                     feed_source=feed_source,
                     health_state=health_state,
+                    order_executor=order_executor,
                 )
             except Exception:
                 logger.warning("Rule fallback retry also failed for [%s]", raw.ticker, exc_info=True)
@@ -1097,6 +1113,7 @@ async def pipeline_loop(
     feed_source: str = "KIND",
     unknown_review_queue: Optional[asyncio.Queue] = None,
     health_state: Optional[object] = None,
+    order_executor: Optional[object] = None,
 ) -> None:
     """Main pipeline: feed/registry + queue/worker event processing."""
     worker_count = max(1, config.pipeline_workers)
@@ -1130,6 +1147,7 @@ async def pipeline_loop(
                     feed_source=feed_source,
                     unknown_review_queue=unknown_review_queue,
                     health_state=health_state,
+                    order_executor=order_executor,
                     registry=registry,
                     premarket_pending=premarket_pending,
                 )

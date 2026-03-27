@@ -119,6 +119,8 @@ class Config:
     account_risk_pct: float = field(default_factory=lambda: _env_float("ACCOUNT_RISK_PCT", 2.0))  # 계좌 대비 최대 리스크 %
     minute_volume_cap_pct: float = field(default_factory=lambda: _env_float("MINUTE_VOLUME_CAP_PCT", 5.0))  # 1분 거래대금의 5%
     ask_depth_cap_pct: float = field(default_factory=lambda: _env_float("ASK_DEPTH_CAP_PCT", 10.0))  # 매도 5호가 잔량의 10%
+    # 마이크로 라이브: 1건당 주문 금액 상한 (안전장치)
+    micro_live_max_order_won: float = field(default_factory=lambda: _env_float("MICRO_LIVE_MAX_ORDER_WON", 1_000_000))
     # 시간대별 confidence 문턱
     opening_min_confidence: int = field(default_factory=lambda: _env_int("OPENING_MIN_CONFIDENCE", 80))  # 09:00-09:30 BUY 최소 confidence
     afternoon_min_confidence: int = field(default_factory=lambda: _env_int("AFTERNOON_MIN_CONFIDENCE", 80))  # 13:00-14:30 BUY 최소 confidence (오후 승률 저조)

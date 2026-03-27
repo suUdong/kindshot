@@ -81,6 +81,7 @@ class SnapshotScheduler:
         *,
         stop_event: Optional[asyncio.Event] = None,
         pnl_callback: Optional[object] = None,
+        order_executor: Optional[object] = None,
     ) -> None:
         self._config = config
         self._fetcher = fetcher
@@ -88,6 +89,7 @@ class SnapshotScheduler:
         self._heap: list[ScheduledSnapshot] = []
         self._stop_event = stop_event or asyncio.Event()
         self._pnl_callback = pnl_callback  # callable(ticker, pnl_won) for guardrail state
+        self._order_executor = order_executor  # OrderExecutor for live sell
         # Track effective t0 prices per event_id for return calculation
         self._t0_prices: dict[str, tuple[Optional[float], Optional[float]]] = {}
         # Track ticker per event_id for pnl callback
@@ -111,6 +113,8 @@ class SnapshotScheduler:
         # Stale position 감지: 3분 경과 후 모멘텀 소멸 시 exit (5분→3분 타이트닝)
         self._stale_threshold_pct_default: float = 0.2
         self._stale_min_elapsed_s: float = 180.0  # 3분
+        # Live sell 추적: 이미 매도 주문한 event_id (close P&L 중복 방지)
+        self._sell_triggered: set[str] = set()
 
     def _get_trailing_stop_pct(self, event_id: str) -> float:
         """시간대 + hold profile별 trailing stop 폭 반환.
@@ -313,7 +317,7 @@ class SnapshotScheduler:
                 self._max_hold_minutes.pop(snap.event_id, None)
                 self._event_confidence.pop(snap.event_id, None)
                 # Report close P&L to guardrail state (BUY decisions only)
-                if snap.is_buy_decision and ret_long is not None and self._pnl_callback and t0_px:
+                if snap.is_buy_decision and ret_long is not None and self._pnl_callback and t0_px and snap.event_id not in self._sell_triggered:
                     actual_size = self._event_order_size.get(snap.event_id, self._config.order_size)
                     pnl_won = ret_long * actual_size
                     self._pnl_callback(snap.ticker, pnl_won)
@@ -451,6 +455,24 @@ class SnapshotScheduler:
                                 snap.ticker, snap.event_id[:8], ret_pct, snap.horizon,
                                 elapsed_s,
                             )
+
+        # Live mode: 가상 청산 시 실매도 주문 실행
+        if (
+            snap.is_buy_decision
+            and snap.event_id in self._virtual_exits
+            and snap.event_id not in self._sell_triggered
+            and self._order_executor is not None
+        ):
+            self._sell_triggered.add(snap.event_id)
+            try:
+                _sell_result = await self._order_executor.sell_position(snap.event_id, snap.ticker)
+                if _sell_result and _sell_result.success and ret_long is not None:
+                    actual_size = self._event_order_size.get(snap.event_id, self._config.order_size)
+                    pnl_won = ret_long * actual_size
+                    if self._pnl_callback:
+                        self._pnl_callback(snap.ticker, pnl_won)
+            except Exception:
+                logger.exception("LIVE SELL order error [%s]", snap.ticker)
 
     async def flush_close_on_shutdown(self) -> int:
         """Fire pending close snapshots if shutdown happens after close fetch time."""
