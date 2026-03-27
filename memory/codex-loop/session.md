@@ -3,9 +3,9 @@
 ## Current Session
 
 - Branch: `main`
-- Phase: `v66 Shadow Snapshot Verification`
-- Focus: validate live `shadow_` snapshot collection, quantify opportunity-cost reporting on collected data, and harden shutdown behavior so already-due snapshots are not dropped during restart.
-- Active hypothesis: shadow snapshot collection is already live on the paper server, but shutdown-time due-snapshot loss and weak operator reporting reduce trust in the collected data; fixing those two gaps should make v66 monitoring actionable.
+- Phase: `Dashboard Observability Upgrade`
+- Focus: make the dashboard usable for live monitoring by surfacing equity/drawdown, blocked-BUY shadow outcomes, version trends, and a recent news feed, then deploy the updated Streamlit surface to the paper server.
+- Active hypothesis: a stronger operator-facing dashboard can improve review speed and trust without changing trading logic, as long as the loader contracts stay regression-covered and the deployed Streamlit service remains healthy.
 - Blocker: none.
 
 ## Environment
@@ -14,28 +14,29 @@
 - Runtime target: Python `3.11+`
 - Current local venv: `.venv` uses Python `3.12.3`
 - Validation status:
-  - `python3 -m compileall src/kindshot tests scripts` passed
-  - `.venv/bin/python -m pytest tests/test_price.py tests/test_shadow_analysis.py -q` passed (`31 passed, 1 skipped`)
-  - `.venv/bin/python -m pytest -q` passed (`811 passed, 1 skipped, 1 warning`)
-  - `.venv/bin/python -m pytest -q` passed again after the shadow-snapshot slice (`815 passed, 1 skipped, 1 warning`)
-  - remote `/opt/kindshot/data/runtime/price_snapshots/20260327.jsonl` contains `shadow_7c47fb630764e6b2` with 7 collected horizons
-  - remote journal confirms live `Normalized analysis headline [...]`, `Technical indicator adj [...]`, and `Confidence graduated cap [...]` entries after the `2026-03-27 16:42 KST` restart
-  - updated `scripts/shadow_analysis.py` correctly reports the copied remote shadow event as `MARKET_CLOSE_CUTOFF`, hour `16:00`, and flat-price/stale suspect
+  - `python3 -m compileall dashboard tests scripts src` passed
+  - `.venv/bin/python -m pytest tests/test_dashboard.py -q` passed (`21 passed`)
+  - `.venv/bin/python -m pytest -q` passed (`820 passed, 1 skipped, 1 warning`)
+  - affected-file diagnostics returned 0 issues
+  - pushed `main` with dashboard commit `fa47b64`
+  - remote `kindshot-dashboard` restart completed; `systemctl is-active kindshot-dashboard` returned `active`
+  - remote `curl -I http://127.0.0.1:8501` returned `HTTP/1.1 200 OK`
+  - remote `curl http://127.0.0.1:8080/health` returned `healthy`
 
 ## Last Completed Step
 
-- Verified that live paper runtime is emitting real `shadow_` snapshot data for guardrail-blocked `BUY` decisions.
-- Replaced close-only shutdown flush with ready-snapshot flush so already-due snapshots are preserved on shutdown/restart.
-- Expanded `scripts/shadow_analysis.py` with skip-reason breakdown, hour breakdown, and flat-price / stale-suspect reporting, then covered the slice with targeted tests and a passing full suite.
+- Extended `dashboard/data_loader.py` with daily equity/drawdown, shadow snapshot, live feed, and version trend helpers.
+- Upgraded `dashboard/app.py` to surface intraday/weekly P&L + drawdown, blocked-BUY shadow KPIs, v64-v65-v66 comparison, live news feed monitoring, and tighter responsive styling.
+- Added dashboard regression coverage in `tests/test_dashboard.py`, passed the full local suite, pushed commit `fa47b64`, and deployed the updated dashboard to the paper server.
 
 ## Next Intended Step
 
-- Keep monitoring live paper flow for a higher-volume sample of shadow events, especially intraday cases that are not `MARKET_CLOSE_CUTOFF`.
-- If flat-price shadow events continue dominating, treat VTS/stale-price limitations as an operational blocker for deeper opportunity-cost conclusions and decide whether real-price snapshot sourcing can be enabled without touching secret-handling automation.
-- After enough shadow and live v66 evidence accumulates, resume the roadmap-backed historical collection / real-environment validation slice.
+- Monitor live paper flow to see real shadow snapshot rows populate the new dashboard section and confirm the operator value of the empty-state/pending-state handling.
+- If the dashboard remains stable under live use, return to the roadmap-backed historical collection / real-environment validation slice.
+- If operators need deeper version benchmarking, persist the v64/v65/v66 comparison baseline in a dedicated structured artifact instead of curated loader constants.
 
 ## Notes
 
-- This slice changes shutdown snapshot handling and operator analysis/reporting only; raw deploy paths, secrets, and live-order behavior remain unchanged.
+- This slice changes dashboard analysis/reporting only; strategy execution, deploy paths under `deploy/`, secrets, and live-order behavior remain unchanged.
 - Full-suite warning remains in `tests/test_health.py` as `NotAppKeyWarning`; no new warnings were introduced by this slice.
-- Current live monitoring caveat: paper runtime still warns that price snapshots use VTS/stale pricing when real KIS keys are absent, so after-close shadow events can look flat even when collection itself is working.
+- Current dashboard caveat: v64/v65 comparison rows are curated from prior reports/release notes, while v66 is calculated from the latest runtime log sample.

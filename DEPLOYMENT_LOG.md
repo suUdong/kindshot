@@ -28,6 +28,54 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-27 17:19 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `fa47b64`
+- Deployer: Codex manual SSH + `rsync`
+- Summary:
+  1. **대시보드 관측면 확장** — 당일 equity curve / drawdown, 주간 cumulative curve / drawdown, live news feed monitor 추가
+  2. **shadow snapshot 가시화** — 차단 BUY 가상 수익률 KPI/테이블과 version trend(v64/v65/v66) 비교 표면 추가
+  3. **모바일 가독성 강화** — Streamlit metric/table/card spacing과 responsive CSS 정리
+- Validation:
+  - local `python3 -m compileall dashboard tests scripts src`
+  - local `.venv/bin/python -m pytest tests/test_dashboard.py -q` → `21 passed`
+  - local `.venv/bin/python -m pytest -q` → `820 passed, 1 skipped, 1 warning`
+  - remote `/opt/kindshot/dashboard/app.py` contains `compute_daily_equity_curve`, `load_shadow_trade_pnl`, `load_version_trend`, `실시간 뉴스 피드 모니터`
+  - remote `systemctl is-active kindshot-dashboard` → `active`
+  - remote `curl http://127.0.0.1:8080/health` → `healthy`
+  - remote `curl -I http://127.0.0.1:8501` → `HTTP/1.1 200 OK`
+- Rollback: re-sync prior known-good `dashboard/` tree to `/opt/kindshot/dashboard/` and restart `kindshot-dashboard`
+- Result: 성공
+- Notes: dashboard service needed a short warm-up after restart; first immediate `curl` failed before Streamlit finished binding `:8501`
+
+---
+
+### 2026-03-27 16:45 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `485238d` runtime changes deployed from local `73ed7cb`
+- Deployer: Codex manual SSH + `rsync`
+- Summary:
+  1. **v66 confidence 개선 반영** — opening gate `80→82`, 11시대 부스트 `+2`, 12시대 감점 유지, graduated cap 보호 강화
+  2. **뉴스 시그널 강화 반영** — `headline_parser` 기반 analysis headline normalization, 계약/기사형 preflight 강화, `rule_fallback:article_pattern` 및 disclosure-source `dorg` 판별 개선
+  3. **운영 관측성 유지** — 차단 BUY shadow snapshot 코드 포함, 대시보드 서비스 재시작 및 HTTP 응답 확인
+- Validation:
+  - local `python3 -m compileall src/kindshot tests scripts`
+  - local `.venv/bin/python -m pytest tests/test_headline_parser.py tests/test_decision.py tests/test_guardrails.py tests/test_pipeline.py -q` → `225 passed`
+  - remote `pip install -e . --quiet`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `curl http://127.0.0.1:8080/health` → `healthy`
+  - remote live journal after restart: `2026-03-27 16:45:18` `Normalized analysis headline [000660] ...`
+  - remote dashboard `curl -I http://127.0.0.1:8501` → `HTTP/1.1 200 OK`
+- Rollback: re-sync prior known-good tree or revert the v66/news-signal commits and restart `kindshot` + `kindshot-dashboard`
+- Result: 성공
+- Notes: remote git worktree was dirty, so deployment used `rsync` instead of `git pull`
+
+---
+
 ### 2026-03-13 (배포 예정)
 
 - Environment: AWS Lightsail (production, paper mode)
