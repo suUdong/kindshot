@@ -886,6 +886,7 @@ async def _run_replay(
             adv_value_20d=ctx.adv_value_20d,
             ret_today=ctx.ret_today,
             intraday_value_vs_adv20d=ctx.intraday_value_vs_adv20d,
+            volume_ratio_vs_avg20d=getattr(ctx, "volume_ratio_vs_avg20d", None),
             quote_temp_stop=ctx.quote_temp_stop,
             quote_liquidation_trade=ctx.quote_liquidation_trade,
             top_ask_notional=ctx.top_ask_notional,

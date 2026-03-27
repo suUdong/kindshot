@@ -146,6 +146,9 @@ class Config:
     max_entry_delay_ms: int = field(default_factory=lambda: _env_int("MAX_ENTRY_DELAY_MS", 60_000))
     orderbook_bid_ask_ratio_min: float = field(default_factory=lambda: _env_float("ORDERBOOK_BID_ASK_RATIO_MIN", 0.8))
     min_prior_volume_rate: float = field(default_factory=lambda: _env_float("MIN_PRIOR_VOLUME_RATE", 70.0))
+    # 20일 평균거래량 대비 당일 누적거래량 비율 (0.1 = 10%)
+    min_volume_ratio_vs_avg20d: float = field(default_factory=lambda: _env_float("MIN_VOLUME_RATIO_VS_AVG20D", 0.05))  # 5% 미만 → 유동성 스킵
+    volume_ratio_surge_threshold: float = field(default_factory=lambda: _env_float("VOLUME_RATIO_SURGE_THRESHOLD", 2.0))  # 200% → 급증 부스트
     prior_volume_gate_start_kst_hour: int = field(default_factory=lambda: _env_int("PRIOR_VOLUME_GATE_START_KST_HOUR", 10))
     prior_volume_gate_start_kst_minute: int = field(default_factory=lambda: _env_int("PRIOR_VOLUME_GATE_START_KST_MINUTE", 0))
     chase_buy_pct: float = field(default_factory=lambda: _env_float("CHASE_BUY_PCT", 3.0))  # 당일 3%+ 상승 시 BUY 차단 (추격매수 방지)

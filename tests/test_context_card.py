@@ -204,50 +204,6 @@ async def test_context_card_preserves_participation_fields(monkeypatch):
     assert raw.prior_volume_rate == 180.2
     assert raw.intraday_value_vs_adv20d == 0.005
 
-async def test_context_card_fetches_alpha_scanner_signal(monkeypatch):
-    cc._pykrx_cache.clear()
-    monkeypatch.setattr(cc, "_PYKRX_CACHE_TTL", 300)
-    monkeypatch.setattr(cc, "_PYKRX_CACHE_MAX_SIZE", 512)
-
-    async def _fake_to_thread(func, *args, **kwargs):
-        return {"prev_close": 50000, "adv_value_20d": 20_000_000_000}
-
-    monkeypatch.setattr(cc.asyncio, "to_thread", _fake_to_thread)
-    monkeypatch.setattr(
-        cc,
-        "_fetch_alpha_scanner_signal",
-        AsyncMock(
-            return_value=cc.AlphaSignalContext(
-                ticker="005930",
-                signal_type="STRONG_BUY",
-                score_current=84.0,
-                confidence=88,
-                size_hint="full",
-                age_hours=0.5,
-            )
-        ),
-    )
-
-    mock_kis = AsyncMock()
-    mock_kis.get_price = AsyncMock(return_value=PriceInfo(
-        px=52000,
-        open_px=51000,
-        spread_bps=12.0,
-        cum_value=100_000_000.0,
-        fetch_latency_ms=50,
-    ))
-
-    card, raw = await cc.build_context_card(
-        "005930",
-        kis=mock_kis,
-        config=Config(alpha_scanner_api_base_url="http://alpha.local", alpha_scanner_api_timeout_s=2.0),
-    )
-
-    assert card.alpha_signal is not None
-    assert card.alpha_signal.signal_type == "STRONG_BUY"
-    assert raw.alpha_signal is not None
-    assert raw.alpha_signal["confidence"] == 88
-
 
 async def test_context_card_fetches_alpha_scanner_signal(monkeypatch):
     cc._pykrx_cache.clear()
@@ -292,6 +248,7 @@ async def test_context_card_fetches_alpha_scanner_signal(monkeypatch):
     assert card.alpha_signal.signal_type == "STRONG_BUY"
     assert raw.alpha_signal is not None
     assert raw.alpha_signal["confidence"] == 88
+
 
 async def test_context_card_surfaces_support_reference(monkeypatch):
     cc._pykrx_cache.clear()
@@ -357,6 +314,7 @@ async def test_context_card_normalizes_quote_and_liquidity_flags(monkeypatch):
     assert card.quote_temp_stop is True
     assert card.quote_liquidation_trade is False
     assert card.top_ask_notional == 4_168_000.0
+    assert card.orderbook_bid_ask_ratio == 1.25
 
 
 def test_context_card_data_defaults():
@@ -378,6 +336,7 @@ async def test_append_runtime_context_card_writes_jsonl(tmp_path):
         adv_value_20d=10e9,
         spread_bps=10.0,
         ret_today=5.0,
+        orderbook_bid_ask_ratio=1.2,
         quote_risk_state=QuoteRiskState(temp_stop_yn="Y", vi_cls_code="D"),
         orderbook_snapshot=OrderbookSnapshot(
             ask_price1=50_100.0,
@@ -424,6 +383,7 @@ async def test_append_runtime_context_card_writes_jsonl(tmp_path):
     assert rows[0]["ctx"]["spread_bps"] == 10.0
     assert rows[0]["raw"]["quote_risk_state"]["temp_stop_yn"] == "Y"
     assert rows[0]["raw"]["orderbook_snapshot"]["ask_price1"] == 50100.0
+    assert rows[0]["raw"]["orderbook_bid_ask_ratio"] == 1.2
     assert rows[0]["promotion_original_event_id"] == "evt0"
     assert rows[0]["promotion_original_bucket"] == "UNKNOWN"
 

@@ -130,6 +130,7 @@ class ContextCard(BaseModel):
     quote_temp_stop: Optional[bool] = None
     quote_liquidation_trade: Optional[bool] = None
     prior_volume_rate: Optional[float] = None  # 전일대비 거래량 비율 (e.g. 200.0 = 2배)
+    volume_ratio_vs_avg20d: Optional[float] = None  # 당일 누적거래량 / 20일 평균거래량
     rsi_14: Optional[float] = None
     macd_hist: Optional[float] = None
     bb_position: Optional[float] = None  # 볼린저밴드 위치 (0=하단, 100=상단)

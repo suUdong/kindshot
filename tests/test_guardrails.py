@@ -9,7 +9,7 @@ from kindshot.guardrails import (
     get_dynamic_stop_loss_pct, get_dynamic_tp_pct,
     apply_adv_confidence_adjustment, apply_market_confidence_adjustment,
     apply_delay_confidence_adjustment, apply_price_reaction_adjustment,
-    apply_volume_confidence_adjustment,
+    apply_volume_confidence_adjustment, apply_volume_ratio_confidence_adjustment,
     apply_dorg_confidence_adjustment,
     apply_time_session_confidence_adjustment,
     apply_trend_confidence_adjustment,
@@ -1513,6 +1513,94 @@ def test_volume_zero_no_change():
     """volume_rate 0.0 → 조정 없음 (None과 동일 처리)."""
     from kindshot.guardrails import apply_volume_confidence_adjustment
     assert apply_volume_confidence_adjustment(80, 0.0) == 80
+
+
+# ── Volume ratio vs avg20d confidence adjustment ──
+
+
+def test_volume_ratio_surge_extreme():
+    """avg20d 대비 300%+: +5 부스트."""
+    assert apply_volume_ratio_confidence_adjustment(80, 3.5) == 85
+
+
+def test_volume_ratio_surge_strong():
+    """avg20d 대비 200~300%: +3 부스트."""
+    assert apply_volume_ratio_confidence_adjustment(80, 2.5) == 83
+
+
+def test_volume_ratio_above_avg():
+    """avg20d 대비 100~200%: +1 부스트."""
+    assert apply_volume_ratio_confidence_adjustment(80, 1.2) == 81
+
+
+def test_volume_ratio_normal():
+    """avg20d 대비 50~100%: 조정 없음."""
+    assert apply_volume_ratio_confidence_adjustment(80, 0.7) == 80
+
+
+def test_volume_ratio_low():
+    """avg20d 대비 30~50%: -2."""
+    assert apply_volume_ratio_confidence_adjustment(80, 0.4) == 78
+
+
+def test_volume_ratio_very_low():
+    """avg20d 대비 30% 미만: -3."""
+    assert apply_volume_ratio_confidence_adjustment(80, 0.2) == 77
+
+
+def test_volume_ratio_none():
+    """None: 조정 없음."""
+    assert apply_volume_ratio_confidence_adjustment(80, None) == 80
+
+
+def test_volume_ratio_zero():
+    """0.0: 조정 없음."""
+    assert apply_volume_ratio_confidence_adjustment(80, 0.0) == 80
+
+
+def test_volume_ratio_cap_at_100():
+    """상한 100 초과 방지."""
+    assert apply_volume_ratio_confidence_adjustment(98, 4.0) == 100
+
+
+def test_volume_ratio_guardrail_skip():
+    """10시 이후 volume_ratio < min_volume_ratio_vs_avg20d → VOLUME_RATIO_TOO_THIN."""
+    cfg = _cfg(min_volume_ratio_vs_avg20d=0.05, no_buy_after_kst_hour=24)
+    r = check_guardrails(
+        "005930", cfg,
+        volume_ratio_vs_avg20d=0.02,
+        decision_action=Action.BUY,
+        decision_time_kst=_kst_dt(10, 30),
+        **_base_args(),
+    )
+    assert not r.passed
+    assert r.reason == "VOLUME_RATIO_TOO_THIN"
+
+
+def test_volume_ratio_guardrail_pass_before_10am():
+    """10시 이전엔 volume ratio 체크 비활성."""
+    cfg = _cfg(min_volume_ratio_vs_avg20d=0.05, no_buy_after_kst_hour=24)
+    r = check_guardrails(
+        "005930", cfg,
+        volume_ratio_vs_avg20d=0.02,
+        decision_action=Action.BUY,
+        decision_time_kst=_kst_dt(9, 15),
+        **_base_args(),
+    )
+    assert r.passed
+
+
+def test_volume_ratio_guardrail_pass_above_threshold():
+    """volume_ratio >= threshold → 통과."""
+    cfg = _cfg(min_volume_ratio_vs_avg20d=0.05, no_buy_after_kst_hour=24)
+    r = check_guardrails(
+        "005930", cfg,
+        volume_ratio_vs_avg20d=0.15,
+        decision_action=Action.BUY,
+        decision_time_kst=_kst_dt(11, 0),
+        **_base_args(),
+    )
+    assert r.passed
 
 
 # ── Technical confidence adjustment (RSI/MACD/BB/ATR) ──

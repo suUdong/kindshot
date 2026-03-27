@@ -400,6 +400,7 @@ def check_guardrails(
     intraday_value_vs_adv20d: Optional[float] = None,
     delay_ms: Optional[int] = None,
     prior_volume_rate: Optional[float] = None,
+    volume_ratio_vs_avg20d: Optional[float] = None,
     quote_temp_stop: Optional[bool] = None,
     quote_liquidation_trade: Optional[bool] = None,
     top_ask_notional: Optional[float] = None,
@@ -566,6 +567,14 @@ def check_guardrails(
         )
         if now_kst >= volume_gate_start and prior_volume_rate < config.min_prior_volume_rate:
             return GuardrailResult(passed=False, reason="PRIOR_VOLUME_TOO_THIN")
+
+    # 7c. Volume ratio vs 20-day average (유동성 확인)
+    if decision_action == Action.BUY and volume_ratio_vs_avg20d is not None and config.min_volume_ratio_vs_avg20d > 0:
+        now_kst = _resolve_decision_time_kst(decision_time_kst)
+        h = now_kst.hour
+        # 장전/개장 직후는 누적 거래량이 자연히 낮으므로 10시 이후에만 적용
+        if h >= 10 and volume_ratio_vs_avg20d < config.min_volume_ratio_vs_avg20d:
+            return GuardrailResult(passed=False, reason="VOLUME_RATIO_TOO_THIN")
 
     # 8-11: Portfolio-level guardrails (require state tracking)
     if state is not None:
@@ -806,6 +815,31 @@ def apply_volume_confidence_adjustment(confidence: int, prior_volume_rate: float
         return max(0, confidence - 3)
     if prior_volume_rate < 80.0:
         return max(0, confidence - 1)
+    return confidence
+
+
+def apply_volume_ratio_confidence_adjustment(confidence: int, volume_ratio: float | None) -> int:
+    """20일 평균거래량 대비 당일 누적거래량 비율 기반 confidence 조정.
+
+    volume_ratio: cum_volume / avg_volume_20d (e.g. 1.5 = 150%)
+    - >=3.0: +5 (거래량 폭증, 매우 강한 시장 반응)
+    - >=2.0: +3 (거래량 급증, 강한 반응)
+    - >=1.0: +1 (평균 이상 거래)
+    - <0.3: -3 (거래량 극도로 부족, 유동성 리스크)
+    - <0.5: -2 (거래량 부족)
+    """
+    if volume_ratio is None or volume_ratio <= 0:
+        return confidence
+    if volume_ratio >= 3.0:
+        return min(confidence + 5, 100)
+    if volume_ratio >= 2.0:
+        return min(confidence + 3, 100)
+    if volume_ratio >= 1.0:
+        return min(confidence + 1, 100)
+    if volume_ratio < 0.3:
+        return max(0, confidence - 3)
+    if volume_ratio < 0.5:
+        return max(0, confidence - 2)
     return confidence
 
 

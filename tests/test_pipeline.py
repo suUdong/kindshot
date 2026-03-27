@@ -121,7 +121,11 @@ async def _run_pipeline_once(
     return records
 
 
-def _make_raw(title="삼성전자(005930) - 공급계약 체결", link="https://kind.krx.co.kr/?rcpNo=20260305000001"):
+def _make_raw(
+    title="삼성전자(005930) - 공급계약 체결",
+    link="https://kind.krx.co.kr/?rcpNo=20260305000001",
+    detected_at=None,
+):
     from kindshot.feed import RawDisclosure
     return RawDisclosure(
         title=title,
@@ -130,7 +134,7 @@ def _make_raw(title="삼성전자(005930) - 공급계약 체결", link="https://
         published="2026-03-05T09:12:04+09:00",
         ticker="005930",
         corp_name="삼성전자",
-        detected_at=datetime.now(timezone.utc),
+        detected_at=detected_at or datetime(2026, 3, 5, 1, 30, tzinfo=timezone.utc),
     )
 
 

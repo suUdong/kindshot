@@ -25,7 +25,7 @@ from kindshot.entry_filter_analysis import compute_effective_entry_delay_ms
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
 from kindshot.headline_parser import normalize_analysis_headline
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile, detect_volatility_regime, apply_volatility_confidence_adjustment, apply_news_category_confidence_adjustment, apply_mtf_confidence_adjustment, resolve_daily_loss_budget
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_volume_ratio_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile, detect_volatility_regime, apply_volatility_confidence_adjustment, apply_news_category_confidence_adjustment, apply_mtf_confidence_adjustment, resolve_daily_loss_budget
 from kindshot.news_category import classify_news_type
 from kindshot.pattern_profile import match_loss_guardrail, match_profit_boost
 from kindshot.ticker_learning import TickerLearner
@@ -725,6 +725,16 @@ async def execute_bucket_path(
                 logger.info("Volume confidence adj [%s]: %d → %d (vol_rate=%.0f%%)",
                             raw.ticker, before, decision.confidence, raw_data.prior_volume_rate)
 
+        # 3b. 거래량 비율 확인 (20일 평균 대비 당일 누적)
+        if raw_data.volume_ratio_vs_avg20d is not None:
+            before = decision.confidence
+            decision.confidence = apply_volume_ratio_confidence_adjustment(
+                decision.confidence, raw_data.volume_ratio_vs_avg20d,
+            )
+            if decision.confidence != before:
+                logger.info("Volume ratio adj [%s]: %d → %d (ratio=%.2fx avg20d)",
+                            raw.ticker, before, decision.confidence, raw_data.volume_ratio_vs_avg20d)
+
         # 4. Detection delay
         effective_entry_delay_ms = compute_effective_entry_delay_ms(disclosed_at, decision.decided_at)
         if effective_entry_delay_ms is not None:
@@ -932,6 +942,7 @@ async def execute_bucket_path(
         orderbook_snapshot=raw_data.orderbook_snapshot if ctx else None,
         intraday_value_vs_adv20d=raw_data.intraday_value_vs_adv20d if ctx else None,
         prior_volume_rate=raw_data.prior_volume_rate if ctx else None,
+        volume_ratio_vs_avg20d=raw_data.volume_ratio_vs_avg20d if ctx else None,
         decision_action=decision.action,
         decision_confidence=decision.confidence,
         decision_time_kst=decision.decided_at,

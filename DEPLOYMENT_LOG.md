@@ -28,6 +28,45 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 04:27 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `7612ec2` + local worktree sync (`scripts/entry_filter_analysis.py`, `tests/test_context_card.py`)
+- Deployer: Codex manual `rsync` + direct `ssh kindshot-server`
+- Summary:
+  1. **latest runtime/reporting tree sync** — re-synced the validated local `src/`, `dashboard/`, `scripts/`, `tests/`, `config/`, and package metadata so the server reflects the current backtest, entry, exit, and performance-related code paths
+  2. **remote venv recovery install** — remote `./.venv/bin/pip` failed because its shebang still pointed at `.venv.new`, so the deploy completed with `./.venv/bin/python -m pip install -e . --quiet`
+  3. **service restart + health sign-off** — restarted both `kindshot` and `kindshot-dashboard`, confirmed `/health` returned `healthy`, and verified the dashboard served `200 text/html`
+- Validation:
+  - local `python3 -m compileall src scripts tests`
+  - local `.venv/bin/python -m pytest tests/test_decision.py tests/test_health.py tests/test_pipeline.py tests/test_context_card.py tests/test_trade_db.py tests/test_monthly_full_strategy_backtest.py -q` → `140 passed, 1 warning`
+  - local `.venv/bin/python scripts/runtime_latency_report.py`
+  - local `.venv/bin/python scripts/entry_filter_analysis.py`
+  - local `.venv/bin/python scripts/monthly_full_strategy_backtest.py`
+  - local `.venv/bin/python -m pytest -q` → `1001 passed, 1 skipped, 1 warning`
+  - diagnostics `lsp_diagnostics_directory` → `0 errors`, `0 warnings`
+  - remote `./.venv/bin/python -m compileall src/kindshot scripts tests dashboard`
+  - remote `./.venv/bin/python -m pip install -e . --quiet`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `systemctl status kindshot kindshot-dashboard --no-pager -l` → both active since `2026-03-28 04:27:18 KST`
+  - remote `journalctl -u kindshot -n 20 --no-pager` showed:
+    - `kindshot 0.1.3 starting`
+    - `RecentPatternProfile loaded: dates=20260319,20260320,20260327 trades=14 boost=1 loss=2`
+    - `Health server started on 127.0.0.1:8080`
+  - remote `/health` returned:
+    - `status=healthy`
+    - `started_at=2026-03-28T04:27:20.859306+09:00`
+    - `configured_max_positions=4`
+    - `trade_metrics.total_trades=0`
+    - `trade_metrics.total_pnl_pct=0.0`
+  - remote dashboard probe `GET http://127.0.0.1:8501/` → `200 text/html`
+- Rollback: re-sync the prior known-good runtime tree to `/opt/kindshot`, rerun `./.venv/bin/python -m pip install -e . --quiet`, and restart `kindshot` plus `kindshot-dashboard`
+- Result: 성공
+- Notes: local shell did not have the `ks` alias, so this deploy used direct `ssh`/`rsync`; the server remains in VTS-backed paper mode, so fresh intraday entry/exit latency evidence still requires the next live session
+
+---
+
 ### 2026-03-28 03:52 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)

@@ -47,6 +47,8 @@ class ContextCardData:
     support_price_5d: Optional[float] = None
     support_price_20d: Optional[float] = None
     support_reference_px: Optional[float] = None
+    avg_volume_20d: Optional[float] = None
+    volume_ratio_vs_avg20d: Optional[float] = None
     alpha_signal: dict | None = None
 
 def configure_cache(ttl_s: int, max_size: int) -> None:
@@ -197,12 +199,21 @@ async def _pykrx_features(ticker: str) -> dict:
                     # ATR을 현재가 대비 %로 표현 (비교 가능성)
                     atr_14 = round(float(atr_series.iloc[-1] / cur_close * 100), 2)
 
+            # 20일 평균 거래량 (volume ratio 계산용)
+            avg_volume_20d = None
+            if vol_col:
+                volume = df[vol_col]
+                vol_tail_20 = volume.tail(20)
+                if len(vol_tail_20) >= 5:
+                    avg_volume_20d = float(vol_tail_20.mean())
+
             return {
                 "ret_1d": round(ret_1d, 2) if ret_1d is not None else None,
                 "ret_3d": round(ret_3d, 2) if ret_3d is not None else None,
                 "pos_20d": round(pos_20d, 1) if pos_20d is not None else None,
                 "adv_value_20d": round(adv_20d) if adv_20d is not None else None,
                 "vol_pct_20d": round(vol_pct, 1) if vol_pct is not None else None,
+                "avg_volume_20d": round(avg_volume_20d) if avg_volume_20d is not None else None,
                 "prev_close": prev_close,
                 "rsi_14": rsi_14,
                 "macd_hist": macd_hist,
@@ -348,6 +359,19 @@ async def build_context_card(
         else:
             alpha_signal = alpha_result
 
+    # 당일 누적거래량 / 20일 평균거래량 비율
+    volume_ratio_vs_avg20d: Optional[float] = None
+    avg_volume_20d = hist.get("avg_volume_20d")
+    if (
+        kis
+        and price_info
+        and price_info.cum_volume is not None
+        and price_info.cum_volume > 0
+        and avg_volume_20d
+        and avg_volume_20d > 0
+    ):
+        volume_ratio_vs_avg20d = round(price_info.cum_volume / avg_volume_20d, 4)
+
     card = ContextCard(
         ret_today=ret_today,
         ret_1d=hist.get("ret_1d"),
@@ -358,6 +382,7 @@ async def build_context_card(
         spread_bps=spread_bps,
         vol_pct_20d=hist.get("vol_pct_20d"),
         intraday_value_vs_adv20d=intraday_value_vs_adv20d,
+        volume_ratio_vs_avg20d=volume_ratio_vs_avg20d,
         top_ask_notional=top_ask_notional,
         orderbook_bid_ask_ratio=orderbook_bid_ask_ratio,
         quote_temp_stop=quote_temp_stop,
@@ -388,6 +413,8 @@ async def build_context_card(
         quote_risk_state=price_info.risk_state if kis and price_info else None,
         orderbook_snapshot=price_info.orderbook if kis and price_info else None,
         sector=price_info.sector if kis and price_info else "",
+        avg_volume_20d=avg_volume_20d,
+        volume_ratio_vs_avg20d=volume_ratio_vs_avg20d,
         support_price_5d=hist.get("support_price_5d"),
         support_price_20d=hist.get("support_price_20d"),
         support_reference_px=hist.get("support_reference_px"),
@@ -479,6 +506,8 @@ async def append_runtime_context_card(
             "volume_turnover_rate": raw.volume_turnover_rate,
             "prior_volume_rate": raw.prior_volume_rate,
             "intraday_value_vs_adv20d": raw.intraday_value_vs_adv20d,
+            "avg_volume_20d": raw.avg_volume_20d,
+            "volume_ratio_vs_avg20d": raw.volume_ratio_vs_avg20d,
             "orderbook_bid_ask_ratio": raw.orderbook_bid_ask_ratio,
             "quote_risk_state": _json_safe_value(raw.quote_risk_state),
             "orderbook_snapshot": _json_safe_value(raw.orderbook_snapshot),
