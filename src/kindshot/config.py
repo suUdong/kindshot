@@ -58,6 +58,8 @@ class Config:
 
     # --- Feed ---
     feed_source: str = field(default_factory=lambda: _env("FEED_SOURCE", "KIS"))  # KIS, KIND, DART, or comma-separated (e.g. "KIS,DART")
+    analyst_feed_enabled: bool = field(default_factory=lambda: _env_bool("ANALYST_FEED_ENABLED", True))
+    analyst_feed_interval_s: float = field(default_factory=lambda: _env_float("ANALYST_FEED_INTERVAL_S", 30.0))
     kind_rss_url: str = "https://kind.krx.co.kr/disclosure/todaydisclosure.do?method=searchTodayDisclosureRSS"
     # --- DART OpenAPI ---
     dart_api_key: str = field(default_factory=lambda: _env("DART_API_KEY"))
@@ -134,6 +136,10 @@ class Config:
     dynamic_guardrail_confidence_relaxation: int = field(default_factory=lambda: _env_int("DYNAMIC_GUARDRAIL_CONFIDENCE_RELAXATION", 2))
     dynamic_fast_profile_extension_minutes: int = field(default_factory=lambda: _env_int("DYNAMIC_FAST_PROFILE_EXTENSION_MINUTES", 60))
 
+    # --- MTF (Multi-Timeframe) ---
+    mtf_enabled: bool = field(default_factory=lambda: _env_bool("MTF_ENABLED", True))
+    mtf_cache_ttl_s: int = field(default_factory=lambda: _env_int("MTF_CACHE_TTL_S", 120))
+
     # --- Market ---
     kospi_halt_pct: float = field(default_factory=lambda: _env_float("KOSPI_HALT_PCT", -8.0))
     min_market_breadth_ratio: float = field(default_factory=lambda: _env_float("MIN_MARKET_BREADTH_RATIO", 0.3))
@@ -193,6 +199,10 @@ class Config:
     finalize_cutoff_minute_kst: int = field(default_factory=lambda: _env_int("FINALIZE_CUTOFF_MINUTE_KST", 30))
     collector_news_max_attempts: int = field(default_factory=lambda: _env_int("COLLECTOR_NEWS_MAX_ATTEMPTS", 3))
     collector_retry_delay_s: float = field(default_factory=lambda: _env_float("COLLECTOR_RETRY_DELAY_S", 1.0))
+
+    # --- Ticker Learning ---
+    ticker_learning_enabled: bool = field(default_factory=lambda: _env_bool("TICKER_LEARNING_ENABLED", True))
+    ticker_learning_min_trades: int = field(default_factory=lambda: _env_int("TICKER_LEARNING_MIN_TRADES", 3))
 
     # --- Pipeline ---
     pipeline_workers: int = field(default_factory=lambda: _env_int("PIPELINE_WORKERS", 4))

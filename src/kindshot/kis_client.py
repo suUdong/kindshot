@@ -413,6 +413,58 @@ class KisClient:
             prior_volume_rate=prior_volume_rate,
         )
 
+    async def fetch_minute_candles(self, ticker: str, period: int = 5) -> list[dict]:
+        """분봉 캔들 데이터 조회.
+
+        Args:
+            ticker: 종목코드 (6자리)
+            period: 분봉 주기 (5, 15, 60)
+        Returns:
+            list of dict with keys: open, high, low, close, volume, time
+        """
+        token, use_real = await self._market_data_token()
+        if not token:
+            return []
+
+        spec = KisGetSpec(
+            path="/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice",
+            tr_id="FHKST03010200",
+            output_key="output2",
+            timeout_s=10,
+        )
+
+        from datetime import datetime
+        from kindshot.tz import KST as _KST
+        now_kst = datetime.now(_KST)
+
+        params = {
+            "FID_ETC_CLS_CODE": "",
+            "FID_COND_MRKT_CLS_CODE": "J",
+            "FID_INPUT_ISCD": ticker,
+            "FID_INPUT_HOUR_1": now_kst.strftime("%H%M%S"),
+            "FID_PW_DATA_INCU_YN": "N",
+        }
+
+        response = await self._get_json(token, spec, params, use_real=use_real)
+        if response is None:
+            return []
+
+        items = self._output_list(response.data, spec, context="minute candles")
+        candles = []
+        for item in items[:30]:  # 최근 30봉
+            try:
+                candles.append({
+                    "open": float(item.get("stck_oprc", 0)),
+                    "high": float(item.get("stck_hgpr", 0)),
+                    "low": float(item.get("stck_lwpr", 0)),
+                    "close": float(item.get("stck_prpr", 0)),
+                    "volume": int(item.get("cntg_vol", 0)),
+                    "time": item.get("stck_cntg_hour", ""),
+                })
+            except (ValueError, TypeError):
+                continue
+        return candles
+
     async def _get_orderbook_snapshot(self, token: str, ticker: str) -> Optional[OrderbookSnapshot]:
         """Fetch level-1/aggregate orderbook values needed for liquidity checks."""
         spec = KisGetSpec(
@@ -672,6 +724,18 @@ class KisClient:
             items=self._normalize_news_items(items),
             pagination_truncated=True,
         )
+
+    async def fetch_analyst_reports(self, from_time: str = "", date: str = "") -> list[NewsDisclosure]:
+        """증권사 리포트/애널리스트 의견 조회. dorg 기반 필터링."""
+        result = await self.get_news_disclosure_fetch_result(from_time=from_time, date=date)
+        # dorg가 증권사인 항목만 필터링
+        analyst_dorgs = {
+            "하나증권", "NH투자증권", "한국투자증권", "SK증권", "유진투자증권",
+            "미래에셋증권", "삼성증권", "KB증권", "대신증권", "키움증권",
+            "신한투자증권", "메리츠증권", "IBK투자증권", "교보증권", "유안타증권",
+            "한화투자증권", "현대차증권", "LS증권", "DB금융투자", "BNK투자증권",
+        }
+        return [item for item in result.items if item.dorg in analyst_dorgs]
 
     def _normalize_news_items(self, items: list[dict[str, Any]]) -> list[NewsDisclosure]:
         normalized: list[NewsDisclosure] = []

@@ -492,6 +492,103 @@ class KisFeed:
                 tracer.sleep_end(t_sleep)
 
 
+# ── Analyst Report Feed ────────────────────────────────────────────
+
+
+class AnalystFeed:
+    """증권사 리포트/애널리스트 의견 피드. KIS API dorg 기반 필터링.
+
+    리포트는 실시간성이 낮으므로 기본 폴링 간격은 30초.
+    장외 시간에는 폴링하지 않는다.
+    """
+
+    def __init__(self, config: Config, kis: KisClient) -> None:
+        self._config = config
+        self._kis = kis
+        self._seen_ids: OrderedDict[str, None] = OrderedDict()
+        self._stop_event = asyncio.Event()
+        self._last_poll_at: Optional[datetime] = None
+
+    @property
+    def last_poll_at(self) -> Optional[datetime]:
+        return self._last_poll_at
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def _is_market_hours(self) -> bool:
+        from datetime import time as dt_time
+        now_kst = datetime.now(_KST)
+        if now_kst.weekday() >= 5:
+            return False
+        return dt_time(9, 0) <= now_kst.time() <= dt_time(15, 30)
+
+    async def poll_once(self) -> list[RawDisclosure]:
+        """증권사 리포트 단일 폴링. 장외 시간에는 빈 목록 반환."""
+        self._last_poll_at = datetime.now(_KST)
+
+        if not self._is_market_hours():
+            return []
+
+        try:
+            items = await self._kis.fetch_analyst_reports()
+        except Exception:
+            logger.exception("AnalystFeed fetch error")
+            return []
+
+        now = datetime.now(_KST)
+        results: list[RawDisclosure] = []
+
+        for item in items:
+            news_id = item.news_id
+            if not news_id or news_id in self._seen_ids:
+                continue
+            self._seen_ids[news_id] = None
+
+            ticker = item.tickers[0] if item.tickers else ""
+            corp_name = ""
+            m = re.search(r"(.+?)\((\d{6})\)", item.title)
+            if m:
+                corp_name = m.group(1).strip()
+
+            results.append(
+                RawDisclosure(
+                    title=item.title,
+                    link=f"kis://news/{news_id}",
+                    rss_guid=news_id,
+                    published=f"{item.data_dt} {item.data_tm}",
+                    ticker=ticker,
+                    corp_name=corp_name,
+                    detected_at=now,
+                    dorg="analyst",
+                )
+            )
+
+        # seen_ids 상한 (FIFO)
+        while len(self._seen_ids) > 5000:
+            self._seen_ids.popitem(last=False)
+
+        if results:
+            logger.info("AnalystFeed: %d new analyst reports", len(results))
+        return results
+
+    async def stream(self) -> AsyncIterator[list[RawDisclosure]]:
+        """폴링 루프. stop() 호출 시 종료."""
+        while not self._stop_event.is_set():
+            items = await self.poll_once()
+            if items:
+                yield items
+            if self._stop_event.is_set():
+                break
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self._config.analyst_feed_interval_s,
+                )
+            except asyncio.TimeoutError:
+                pass
+
+
 # ── DART OpenAPI Feed ──────────────────────────────────────────────
 
 

@@ -860,6 +860,19 @@ def apply_volatility_confidence_adjustment(
     return confidence
 
 
+def apply_mtf_confidence_adjustment(confidence: int, mtf_alignment: int) -> int:
+    """멀티 타임프레임 정렬도 기반 confidence 조정.
+
+    alignment >= 70: +3 (상승 추세 확인)
+    alignment <= 30: -3 (하락 추세 경고)
+    """
+    if mtf_alignment >= 70:
+        return min(100, confidence + 3)
+    if mtf_alignment <= 30:
+        return max(0, confidence - 3)
+    return confidence
+
+
 def apply_news_category_confidence_adjustment(
     confidence: int,
     category: str,

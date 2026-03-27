@@ -11,7 +11,7 @@ from aioresponses import aioresponses
 import aiohttp
 
 from kindshot.config import Config
-from kindshot.feed import DartFeed, KindFeed, KisFeed, MultiFeed, _extract_ticker_corp, _extract_kind_uid
+from kindshot.feed import AnalystFeed, DartFeed, KindFeed, KisFeed, MultiFeed, _extract_ticker_corp, _extract_kind_uid
 from kindshot.kis_client import NewsDisclosure
 
 
@@ -649,3 +649,100 @@ async def test_multifeed_cross_dedup():
 
     result2 = multi._cross_dedup([item2])
     assert len(result2) == 0  # 중복 제거됨
+
+
+# ── AnalystFeed Tests ────────────────────────────────────────────
+
+
+async def test_analyst_feed_filters_by_dorg():
+    """증권사 dorg 항목만 필터링하는지 검증."""
+    cfg = Config()
+    kis = AsyncMock()
+    # 증권사 2개 + 비증권사 1개 반환
+    kis.fetch_analyst_reports = AsyncMock(return_value=[
+        _news_item("RPT001", "20260327", "100000", "삼성전자(005930) 목표가 상향", dorg="삼성증권"),
+        _news_item("RPT002", "20260327", "100100", "SK하이닉스(000660) 투자의견 상향", dorg="NH투자증권"),
+        _news_item("RPT003", "20260327", "100200", "LG전자(066570) 매수", dorg="연합뉴스"),
+    ])
+    feed = AnalystFeed(cfg, kis)
+
+    with patch("kindshot.feed.AnalystFeed._is_market_hours", return_value=True):
+        results = await feed.poll_once()
+
+    # fetch_analyst_reports가 이미 증권사 필터링을 했으므로 반환된 항목만 처리
+    assert len(results) == 3
+    assert all(r.dorg == "analyst" for r in results)
+
+
+async def test_analyst_feed_creates_raw_disclosure():
+    """RawDisclosure로 올바르게 변환되는지 검증."""
+    cfg = Config()
+    kis = AsyncMock()
+    kis.fetch_analyst_reports = AsyncMock(return_value=[
+        _news_item("RPT010", "20260327", "110000", "삼성전자(005930) 목표가 상향", ticker="005930", dorg="키움증권"),
+    ])
+    feed = AnalystFeed(cfg, kis)
+
+    with patch("kindshot.feed.AnalystFeed._is_market_hours", return_value=True):
+        results = await feed.poll_once()
+
+    assert len(results) == 1
+    item = results[0]
+    assert item.rss_guid == "RPT010"
+    assert item.ticker == "005930"
+    assert item.corp_name == "삼성전자"
+    assert item.dorg == "analyst"
+    assert item.link == "kis://news/RPT010"
+    assert item.detected_at is not None
+
+
+async def test_analyst_feed_dedup():
+    """동일 news_id 중복 제거 검증."""
+    cfg = Config()
+    kis = AsyncMock()
+    report = _news_item("RPT020", "20260327", "120000", "현대차(005380) 실적 서프라이즈", dorg="대신증권")
+    kis.fetch_analyst_reports = AsyncMock(return_value=[report])
+    feed = AnalystFeed(cfg, kis)
+
+    with patch("kindshot.feed.AnalystFeed._is_market_hours", return_value=True):
+        first = await feed.poll_once()
+        second = await feed.poll_once()
+
+    assert len(first) == 1
+    assert len(second) == 0  # 두 번째 폴링에서 중복 제거
+
+
+async def test_analyst_feed_off_market_returns_empty():
+    """장외 시간에는 폴링하지 않고 빈 목록 반환."""
+    cfg = Config()
+    kis = AsyncMock()
+    kis.fetch_analyst_reports = AsyncMock(return_value=[
+        _news_item("RPT030", "20260327", "200000", "A사(123456) 리포트", dorg="삼성증권"),
+    ])
+    feed = AnalystFeed(cfg, kis)
+
+    with patch("kindshot.feed.AnalystFeed._is_market_hours", return_value=False):
+        results = await feed.poll_once()
+
+    assert results == []
+    kis.fetch_analyst_reports.assert_not_called()
+
+
+async def test_analyst_feed_stop_interrupts_stream():
+    """stop() 호출 시 스트림이 빠르게 종료되는지 검증."""
+    cfg = Config(analyst_feed_interval_s=30.0)
+    kis = AsyncMock()
+    kis.fetch_analyst_reports = AsyncMock(return_value=[])
+    feed = AnalystFeed(cfg, kis)
+
+    with patch("kindshot.feed.AnalystFeed._is_market_hours", return_value=True):
+        async def _consume() -> None:
+            async for _batch in feed.stream():
+                pass
+
+        task = asyncio.create_task(_consume())
+        await asyncio.sleep(0.05)
+        t0 = time.monotonic()
+        feed.stop()
+        await asyncio.wait_for(task, timeout=0.5)
+        assert time.monotonic() - t0 < 0.5

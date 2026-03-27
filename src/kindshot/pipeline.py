@@ -24,8 +24,9 @@ from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, Llm
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
 from kindshot.headline_parser import normalize_analysis_headline
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile, detect_volatility_regime, apply_volatility_confidence_adjustment, apply_news_category_confidence_adjustment
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile, detect_volatility_regime, apply_volatility_confidence_adjustment, apply_news_category_confidence_adjustment, apply_mtf_confidence_adjustment
 from kindshot.news_category import classify_news_type
+from kindshot.ticker_learning import TickerLearner
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -56,6 +57,19 @@ from kindshot.unknown_review import (
 )
 
 logger = logging.getLogger(__name__)
+
+_ticker_learner: Optional[TickerLearner] = None
+
+
+def _get_ticker_learner(config: Config) -> Optional[TickerLearner]:
+    global _ticker_learner
+    if not config.ticker_learning_enabled:
+        return None
+    if _ticker_learner is None:
+        _ticker_learner = TickerLearner(min_trades=config.ticker_learning_min_trades)
+        _ticker_learner.load_history(config.data_dir)
+    return _ticker_learner
+
 
 
 # ── Data classes ──────────────────────────────────────
@@ -577,6 +591,30 @@ async def execute_bucket_path(
         if decision.confidence != before:
             logger.info("News category adj [%s]: %d → %d (category=%s)",
                         raw.ticker, before, decision.confidence, news_cat)
+
+        # 8. v68: 종목별 학습 기반 confidence 조정
+        learner = _get_ticker_learner(config)
+        if learner is not None:
+            before = decision.confidence
+            adj = learner.get_adjustment(raw.ticker)
+            if adj != 0:
+                decision.confidence = max(0, min(100, decision.confidence + adj))
+                stats = learner.get_stats(raw.ticker)
+                logger.info("Ticker learning adj [%s]: %d → %d (adj=%+d, win_rate=%.0f%%, trades=%d)",
+                            raw.ticker, before, decision.confidence, adj,
+                            stats.win_rate * 100 if stats else 0,
+                            stats.total_trades if stats else 0)
+
+        # 9. v68: 멀티 타임프레임 추세 확인
+        if config.mtf_enabled and kis is not None:
+            from kindshot.mtf_analysis import analyze_mtf
+            mtf_result = await analyze_mtf(raw.ticker, kis, config)
+            before = decision.confidence
+            decision.confidence = apply_mtf_confidence_adjustment(decision.confidence, mtf_result.alignment_score)
+            if decision.confidence != before:
+                logger.info("MTF alignment adj [%s]: %d → %d (alignment=%d, %s)",
+                            raw.ticker, before, decision.confidence,
+                            mtf_result.alignment_score, mtf_result.detail)
 
         # graduated penalty cap: 강한 시그널은 보호, 약한 시그널은 감점 허용
         # LLM 88+ (대형촉매): cap 8 → 최악 80 (BUY 유지)
