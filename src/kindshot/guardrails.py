@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from kindshot.config import Config
+from kindshot.headline_parser import is_contract_commentary_headline
 from kindshot.kis_client import OrderbookSnapshot, QuoteRiskState
 from kindshot.models import Action
 
@@ -282,6 +283,9 @@ def check_guardrails(
     if decision_action == Action.BUY and decision_confidence is not None and config.no_buy_after_kst_hour < 24:
         now_kst = _resolve_decision_time_kst(decision_time_kst)
         h, m = now_kst.hour, now_kst.minute
+        # v65: 08:30~09:00 장 직전 — 08시대 worst(-0.49%) 데이터, 높은 확신만
+        if h == 8 and m >= 30 and decision_confidence < config.opening_min_confidence:
+            return GuardrailResult(passed=False, reason="PRE_OPENING_LOW_CONFIDENCE")
         # 09:00~09:30: 변동성 최고, 높은 확신만 진입
         if h == 9 and m < 30 and decision_confidence < config.opening_min_confidence:
             return GuardrailResult(passed=False, reason="OPENING_LOW_CONFIDENCE")
@@ -367,25 +371,25 @@ def check_guardrails(
 def get_dynamic_stop_loss_pct(config: Config, confidence: int, hold_minutes: int = 0) -> float:
     """confidence + hold_profile 기반 동적 손절 비율.
 
-    hold_minutes=0 (EOD, 자사주소각 등 장기 촉매): SL 넓게 (-3.0%)
-    hold_minutes<=20 (수주/공급계약, 반전 리스크): SL 표준
-    hold_minutes>20 (특허/임상 등): confidence 기반 표준
+    v65 개선: SL을 넓혀서 V자 반등 기회 보존.
+    기존 SL이 너무 타이트해서 stop_loss 32건(-94%) vs take_profit 15건(+70%).
+    t+5m 승률 70% 데이터 근거 — 시간을 줘야 수익 전환.
 
     base=-1.5% 기준:
-      conf>=85: -2.5%  /  80-84: -1.5%  /  75-79: -1.0%
+      conf>=85: -3.0%  /  80-84: -2.0%  /  75-79: -1.5%
       EOD hold: 위 값 * 1.3 (추가 여유)
     """
     base = config.paper_stop_loss_pct  # default: -1.5
     if confidence >= 85:
-        sl = base * 1.7  # -2.55%
+        sl = base * 2.0  # -3.0% (기존 -2.55% → 넓혀서 V자 반등 허용)
     elif confidence >= 80:
-        sl = base  # -1.5%
+        sl = base * 1.33  # -2.0% (기존 -1.5%)
     else:
-        sl = max(base * 0.67, -1.0)  # -1.0%
+        sl = base  # -1.5% (기존 -1.0% → 완화, 너무 타이트하면 SL 빈발)
 
     # EOD hold (자사주소각, 공개매수 등): 장기 트렌드이므로 SL 넓게
     if hold_minutes == 0:
-        sl = min(sl * 1.3, -1.5)  # 최소 -1.5%, 최대 약 -3.3%
+        sl = min(sl * 1.3, -1.5)  # 최소 -1.5%, 최대 약 -3.9%
 
     return sl
 
@@ -393,17 +397,18 @@ def get_dynamic_stop_loss_pct(config: Config, confidence: int, hold_minutes: int
 def get_dynamic_tp_pct(config: Config, confidence: int, hold_minutes: int = 0) -> float:
     """confidence + hold_profile 기반 동적 익절 비율.
 
-    hold_minutes=0 (EOD, 자사주소각 등): TP 넓게 — 장기 트렌드 수익 극대화
-    hold_minutes<=20 (수주/공급계약): TP 적정 — 반전 리스크 대응
-    hold_minutes>20 (특허/임상 등): 표준
+    v65 개선: TP를 넓혀서 리워드/리스크 비율 개선.
+    승률 25.8%에서 수익 내려면 R:R >= 2:1 필요.
+    conf>=85: TP 3.0% / SL -3.0% = R:R 1:1 (trailing으로 추가 수익)
+    conf>=80: TP 2.0% / SL -2.0% = R:R 1:1 (trailing으로 추가 수익)
     """
-    # 기본 confidence 기반 TP
+    # 기본 confidence 기반 TP — 대폭 상향
     if confidence >= 85:
-        tp = 1.5
+        tp = 3.0  # 기존 1.5% → 3.0% (trailing stop이 실질 TP 역할)
     elif confidence >= 80:
-        tp = 1.0
+        tp = 2.0  # 기존 1.0% → 2.0%
     elif confidence >= 75:
-        tp = 0.5
+        tp = 1.5  # 기존 0.5% → 1.5% (너무 타이트하면 수익 기회 손실)
     else:
         tp = config.paper_take_profit_pct
 
@@ -412,8 +417,8 @@ def get_dynamic_tp_pct(config: Config, confidence: int, hold_minutes: int = 0) -
         # EOD hold: 트렌드 수익 극대화 — TP 1.5배
         tp = tp * 1.5
     elif hold_minutes <= 20:
-        # 수주/공급계약: 반전 리스크 — TP 0.85배 (적정 익절, 0.7은 너무 타이트)
-        tp = tp * 0.85
+        # 수주/공급계약: 반전 리스크 — TP 0.9배 (기존 0.85 → 약간 완화)
+        tp = tp * 0.9
 
     return tp
 
@@ -561,9 +566,15 @@ def apply_time_session_confidence_adjustment(confidence: int, decision_time_kst:
         return confidence
     now_kst = _resolve_decision_time_kst(decision_time_kst)
     h, m = now_kst.hour, now_kst.minute
-    # 장전 공시 (06:00~08:30): 최고 기회 — 가격 미반영
-    if (6 <= h < 8) or (h == 8 and m <= 30):
+    # 장전 공시 (06:00~08:00): 최고 기회 — 가격 미반영 (v65: 08:30→08:00으로 축소)
+    if 6 <= h < 8:
         return min(confidence + 5, 100)
+    # 08:00~08:30: 장전이지만 08시대 worst(-0.49%) 데이터 → 부스트 축소 +2
+    if h == 8 and m < 30:
+        return min(confidence + 2, 100)
+    # 08:30~09:00: 장 직전 — 변동성 커짐, 부스트 없음
+    if h == 8 and m >= 30:
+        return confidence
     # 비유동 시간대 (11:00~13:00): 승률 저조
     if 11 <= h < 13:
         return max(0, confidence - 3)
@@ -628,6 +639,8 @@ def apply_headline_quality_adjustment(confidence: int, headline: str) -> int:
     if any(kw in stripped for kw in contract_keywords):
         if not re.search(r"\d", stripped):
             penalty += 3
+        if is_contract_commentary_headline(stripped):
+            penalty += 4
 
     return max(0, confidence - penalty)
 

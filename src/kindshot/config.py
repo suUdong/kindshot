@@ -87,20 +87,20 @@ class Config:
     no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_HOUR", 15))  # 15시 이후 BUY 차단
     no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_MINUTE", 0))  # 15:00 이후 차단
     # 가상 익절/손절 (paper mode 추적용)
-    paper_take_profit_pct: float = field(default_factory=lambda: _env_float("PAPER_TAKE_PROFIT_PCT", 1.0))  # 1.0% 기본 익절 (confidence별 동적 TP와 병행)
+    paper_take_profit_pct: float = field(default_factory=lambda: _env_float("PAPER_TAKE_PROFIT_PCT", 2.0))  # 2.0% 기본 익절 (v65: 1.0→2.0, R:R 비율 개선)
     paper_stop_loss_pct: float = field(default_factory=lambda: _env_float("PAPER_STOP_LOSS_PCT", -1.5))  # -1.5% 손절 (V자 반등 대응, 기존 -0.7%에서 완화)
     # Trailing stop + 30분 룰
     trailing_stop_enabled: bool = field(default_factory=lambda: _env_bool("TRAILING_STOP_ENABLED", True))
-    trailing_stop_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_PCT", 0.5))  # 기본 trailing (5분 이후)
-    trailing_stop_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_ACTIVATION_PCT", 0.3))  # 0.3% 이상 수익 시 trailing 활성화
-    # 시간대별 trailing stop 폭 (진입 후 경과 시간 기준)
-    trailing_stop_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_EARLY_PCT", 0.3))  # 0~5분: 타이트
-    trailing_stop_mid_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_MID_PCT", 0.5))  # 5~30분: 보통
-    trailing_stop_late_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_LATE_PCT", 0.7))  # 30분+: 완화
-    max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 10))  # 최대 보유 10분 (0=비활성, 20→10 타이트닝)
+    trailing_stop_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_PCT", 0.8))  # v65: 0.5→0.8% 기본 trailing (수익 트레이드 조기 청산 방지)
+    trailing_stop_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_ACTIVATION_PCT", 0.5))  # v65: 0.3→0.5% 이상 수익 시 trailing 활성화 (노이즈 필터링)
+    # 시간대별 trailing stop 폭 (진입 후 경과 시간 기준) — v65: 전체 완화
+    trailing_stop_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_EARLY_PCT", 0.5))  # 0~5분: v65 0.3→0.5 (초기 노이즈 허용)
+    trailing_stop_mid_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_MID_PCT", 0.8))  # 5~30분: v65 0.5→0.8 (추세 유지)
+    trailing_stop_late_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_LATE_PCT", 1.0))  # 30분+: v65 0.7→1.0 (장기 홀드 여유)
+    max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 15))  # v65: 10→15분 (t+5m→t+30m 수익 개선 데이터 근거)
     # t+5m 체크포인트 청산: 5분 경과 시 손실이면 즉시 청산, 수익이면 타이트 trailing
     t5m_loss_exit_enabled: bool = field(default_factory=lambda: _env_bool("T5M_LOSS_EXIT_ENABLED", True))
-    t5m_profit_trailing_pct: float = field(default_factory=lambda: _env_float("T5M_PROFIT_TRAILING_PCT", 0.2))  # t+5m 이후 수익 포지션 trailing 폭 (타이트)
+    t5m_profit_trailing_pct: float = field(default_factory=lambda: _env_float("T5M_PROFIT_TRAILING_PCT", 0.5))  # v65: 0.2→0.5% t+5m 이후 수익 포지션 trailing (기존 너무 타이트)
     # 시간대별 청산 차등
     session_early_sl_multiplier: float = field(default_factory=lambda: _env_float("SESSION_EARLY_SL_MULT", 0.7))  # 09:00-09:30 SL 강화 (기본값 × 0.7)
     session_late_max_hold_divisor: float = field(default_factory=lambda: _env_float("SESSION_LATE_MAX_HOLD_DIV", 2.0))  # 14:00+ max_hold 축소 (÷2)

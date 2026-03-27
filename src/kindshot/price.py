@@ -299,7 +299,10 @@ class SnapshotScheduler:
             )
             self._t0_prices[snap.event_id] = (effective_entry_px, cum_value)
             self._entry_times[snap.event_id] = time.monotonic()
-            self._entry_times_kst[snap.event_id] = datetime.now(_KST)
+            if snap.t0_ts.tzinfo is None:
+                self._entry_times_kst[snap.event_id] = snap.t0_ts.replace(tzinfo=_KST)
+            else:
+                self._entry_times_kst[snap.event_id] = snap.t0_ts.astimezone(_KST)
         else:
             t0_px, t0_cum = self._t0_prices.get(snap.event_id, (None, None))
             if px is not None and t0_px and t0_px > 0:

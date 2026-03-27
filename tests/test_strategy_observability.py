@@ -75,11 +75,11 @@ def test_collect_strategy_summary_counts_key_strategies():
 
     snapshots = {
         "buy_tp": {
-            "t+30s": {"ret_long_vs_t0": 0.011},
+            "t+30s": {"ret_long_vs_t0": 0.025},  # v65: TP 2.0% → 2.5%에서 트리거
         },
         "buy_trail": {
-            "t+30s": {"ret_long_vs_t0": 0.005},
-            "t+1m": {"ret_long_vs_t0": 0.001},
+            "t+30s": {"ret_long_vs_t0": 0.010},  # v65: activation 0.5% 통과
+            "t+1m": {"ret_long_vs_t0": 0.001},    # 하락 → trailing stop
         },
         "buy_hold": {
             "t+15m": {"ret_long_vs_t0": 0.002},

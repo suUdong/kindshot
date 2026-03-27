@@ -639,6 +639,13 @@ def test_ignore_broker_rating():
     assert "매수-유안타" in result.keyword_hits
 
 
+def test_ignore_broker_prefixed_contract_headline():
+    """브로커 prefix가 있는 계약 기사형 헤드라인은 raw-title 기준 IGNORE를 유지."""
+    result = classify('KB증권 "삼성전자, 추가 상승 여력 충분…장기공급계약 요구 큰 폭 증가"')
+    assert result.bucket == Bucket.IGNORE
+    assert "KB증권 " in result.keyword_hits
+
+
 def test_ignore_target_price_maintained():
     """목표가 유지 → IGNORE."""
     result = classify("현대차, 투자의견 및 목표가 유지")

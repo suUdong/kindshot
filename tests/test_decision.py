@@ -14,6 +14,8 @@ from kindshot.decision import (
     DecisionEngine,
     _parse_llm_response,
     _build_prompt,
+    _contract_preflight_skip,
+    has_article_pattern,
     LlmTimeoutError,
     LlmParseError,
     LlmCallError,
@@ -166,6 +168,50 @@ def test_build_prompt_truncates_long_headline():
     # Headline in prompt should be truncated to 500 chars
     assert "A" * 500 in prompt
     assert "A" * 501 not in prompt
+
+
+def test_contract_preflight_skips_brokerage_commentary_contract_headline():
+    ctx = ContextCard(ret_today=0.5, ret_3d=0.5, adv_value_20d=50e9)
+    parsed = _contract_preflight_skip(
+        "삼성전자 추가 상승 여력 충분 장기공급계약 요구 큰 폭 증가",
+        ["공급계약"],
+        ctx,
+        raw_headline='KB증권 "삼성전자, 추가 상승 여력 충분…장기공급계약 요구 큰 폭 증가"',
+        dorg="연합뉴스",
+    )
+    assert parsed is not None
+    assert parsed["reason"] == "rule_preflight:contract_article"
+
+
+def test_contract_preflight_keeps_direct_disclosure_contract_headline():
+    """v65: 200억+ 직접 공시 계약은 LLM 판단으로 넘어감. 200억 미만은 소규모 차단."""
+    ctx = ContextCard(ret_today=0.5, ret_3d=0.5, adv_value_20d=50e9)
+    # 250억 → 통과 (LLM 판단)
+    parsed = _contract_preflight_skip(
+        "넥스틴, SK하이닉스와 250억 규모 공급계약 체결",
+        ["공급계약"],
+        ctx,
+        raw_headline="넥스틴, SK하이닉스와 250억 규모 공급계약 체결",
+        dorg="한국거래소",
+    )
+    assert parsed is None
+    # 106억 → v65에서 소규모 차단 (200억 미만)
+    parsed_small = _contract_preflight_skip(
+        "넥스틴, SK하이닉스와 106억 규모 공급계약 체결",
+        ["공급계약"],
+        ctx,
+        raw_headline="넥스틴, SK하이닉스와 106억 규모 공급계약 체결",
+        dorg="한국거래소",
+    )
+    assert parsed_small is not None
+    assert parsed_small["confidence"] == 45
+
+
+def test_has_article_pattern_detects_raw_brokerage_framing():
+    assert has_article_pattern(
+        "삼성전자 추가 상승 여력 충분 장기공급계약 요구 큰 폭 증가",
+        raw_headline='KB증권 "삼성전자, 추가 상승 여력 충분…장기공급계약 요구 큰 폭 증가"',
+    ) is True
 
 
 def test_cache_key_changes_with_microstructure_context():

@@ -23,6 +23,7 @@ from kindshot.context_card import (
 from kindshot.decision import DecisionEngine, LlmCallError, LlmTimeoutError, LlmParseError, has_high_conviction_keyword, has_article_pattern
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
+from kindshot.headline_parser import normalize_analysis_headline
 from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment
 from kindshot.hold_profile import get_max_hold_minutes
 from kindshot.kis_client import KisClient
@@ -162,6 +163,7 @@ async def execute_bucket_path(
     promotion_policy: Optional[str] = None,
 ) -> ProcessOutcome:
     detected_at = raw.detected_at
+    analysis_headline = normalize_analysis_headline(raw.title)
     disclosed_at, disclosed_at_missing, delay_ms = _parse_disclosure_meta(raw, detected_at)
     _pipeline_t0 = time.monotonic()
 
@@ -319,10 +321,10 @@ async def execute_bucket_path(
         and market_snapshot.kosdaq_breadth_ratio < config.min_market_breadth_ratio
     ):
         # 고확신 촉매(conf>=82 키워드)는 하락장에서도 LLM 판단 허용
-        if has_high_conviction_keyword(raw.title, keyword_hits, min_conf=86):
+        if has_high_conviction_keyword(analysis_headline, keyword_hits, min_conf=86):
             logger.info(
                 "MARKET_BREADTH_RISK_OFF bypassed for high-conviction catalyst [%s]: %s",
-                raw.ticker, raw.title[:80],
+                raw.ticker, analysis_headline[:80],
             )
         else:
             event_rec.skip_stage = SkipStage.GUARDRAIL
@@ -366,6 +368,8 @@ async def execute_bucket_path(
             ctx=ctx if ctx else ContextCard(),
             detected_at_str=detected_at.strftime("%H:%M:%S"),
             keyword_hits=keyword_hits,
+            analysis_headline=analysis_headline,
+            dorg=raw.dorg,
             run_id=run_id,
             schema_version=config.schema_version,
             market_ctx=market.snapshot,
@@ -380,6 +384,7 @@ async def execute_bucket_path(
             bucket=bucket,
             ctx=ctx if ctx else ContextCard(),
             keyword_hits=keyword_hits,
+            analysis_headline=analysis_headline,
             run_id=run_id,
             schema_version=config.schema_version,
         )
@@ -399,6 +404,7 @@ async def execute_bucket_path(
             bucket=bucket,
             ctx=ctx if ctx else ContextCard(),
             keyword_hits=keyword_hits,
+            analysis_headline=analysis_headline,
             run_id=run_id,
             schema_version=config.schema_version,
         )
@@ -426,7 +432,11 @@ async def execute_bucket_path(
             _MAX_TOTAL_PENALTY = 15
 
         # 0. Post-LLM 기사/미확정 패턴 감점: LLM이 기사 헤드라인에 BUY를 줄 때 conf -10
-        if decision.decision_source == "LLM" and has_article_pattern(raw.title):
+        if decision.decision_source == "LLM" and has_article_pattern(
+            analysis_headline,
+            raw_headline=raw.title,
+            dorg=raw.dorg,
+        ):
             before = decision.confidence
             decision.confidence = max(0, decision.confidence - 10)
             logger.warning(
@@ -436,10 +446,10 @@ async def execute_bucket_path(
 
         # 0a-2. 헤드라인 품질 감점: 짧은 제목, 추측성, 금액 미기재
         before = decision.confidence
-        decision.confidence = apply_headline_quality_adjustment(decision.confidence, raw.title)
+        decision.confidence = apply_headline_quality_adjustment(decision.confidence, analysis_headline)
         if decision.confidence != before:
             logger.info("Headline quality adj [%s]: %d → %d (title=%s)",
-                        raw.ticker, before, decision.confidence, raw.title[:50])
+                        raw.ticker, before, decision.confidence, analysis_headline[:50])
 
         # 0b. 시간대별 조정: 장전 공시 +5, 비유동 시간대 -3
         before = decision.confidence
@@ -481,7 +491,7 @@ async def execute_bucket_path(
         if ctx and (ctx.rsi_14 is not None or ctx.macd_hist is not None
                     or ctx.bb_position is not None or ctx.atr_14 is not None):
             before = decision.confidence
-            has_catalyst = has_high_conviction_keyword(raw.title, keyword_hits, min_conf=83)
+            has_catalyst = has_high_conviction_keyword(analysis_headline, keyword_hits, min_conf=83)
             decision.confidence = apply_technical_confidence_adjustment(
                 decision.confidence, ctx.rsi_14, ctx.macd_hist,
                 has_catalyst=has_catalyst,
@@ -596,7 +606,7 @@ async def execute_bucket_path(
     event_rec.decision_size_hint = decision.size_hint.value
     event_rec.decision_reason = decision.reason
 
-    hold_minutes = get_max_hold_minutes(raw.title, keyword_hits, config) if decision.action == Action.BUY else 0
+    hold_minutes = get_max_hold_minutes(analysis_headline, keyword_hits, config) if decision.action == Action.BUY else 0
 
     gr = check_guardrails(
         ticker=raw.ticker,
@@ -797,6 +807,9 @@ async def process_registered_event(
     _tracer = get_tracer()
     _t_proc = _tracer.process_start(processed.event_id, raw.ticker, raw.title) if _tracer else None
     detected_at = raw.detected_at
+    analysis_headline = normalize_analysis_headline(raw.title)
+    if analysis_headline and analysis_headline != raw.title:
+        logger.info("Normalized analysis headline [%s]: %s -> %s", raw.ticker, raw.title[:80], analysis_headline[:80])
 
     # 1.5. Skip correction/withdrawal events (only originals proceed to decision)
     if processed.event_kind in (EventKind.CORRECTION, EventKind.WITHDRAWAL):

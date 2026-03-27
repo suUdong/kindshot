@@ -510,35 +510,35 @@ def test_consecutive_stop_loss_resets_daily():
 
 
 def test_dynamic_stop_loss_high_confidence():
-    """confidence>=85 시 기본 SL의 1.7배로 완화 (V자 반등 대응). hold=20 (표준)."""
+    """v65: confidence>=85 시 기본 SL의 2.0배 (V자 반등 허용). hold=20 (표준)."""
     cfg = _cfg(paper_stop_loss_pct=-1.5)
     sl = get_dynamic_stop_loss_pct(cfg, confidence=90, hold_minutes=20)
-    assert sl == -1.5 * 1.7  # -2.55
+    assert sl == -1.5 * 2.0  # -3.0
 
 
 def test_dynamic_stop_loss_mid_confidence():
-    """conf 80-84 → 기본 SL 그대로. hold=20 (표준)."""
+    """v65: conf 80-84 → 기본 SL의 1.33배. hold=20 (표준)."""
     cfg = _cfg(paper_stop_loss_pct=-1.5)
     sl = get_dynamic_stop_loss_pct(cfg, confidence=82, hold_minutes=20)
-    assert sl == -1.5
+    assert sl == pytest.approx(-1.5 * 1.33)  # -1.995
 
 
 def test_dynamic_stop_loss_normal_confidence():
-    """conf 75-79 → 타이트한 SL floor -1.0%. hold=20 (표준)."""
+    """v65: conf 75-79 → 기본 SL 그대로 -1.5%. hold=20 (표준)."""
     cfg = _cfg(paper_stop_loss_pct=-1.5)
     sl = get_dynamic_stop_loss_pct(cfg, confidence=75, hold_minutes=20)
-    assert sl == -1.0  # max(-1.5 * 0.67, -1.0) = -1.0
+    assert sl == -1.5  # base 그대로
 
 
 def test_dynamic_stop_loss_eod_hold():
-    """hold_minutes=0 (EOD, 자사주소각 등): SL 1.3배 완화."""
+    """v65: hold_minutes=0 (EOD, 자사주소각 등): SL 1.3배 완화."""
     cfg = _cfg(paper_stop_loss_pct=-1.5)
-    # conf=85, hold=0 → base=-2.55 * 1.3 = -3.315
+    # conf=85, hold=0 → base=-3.0 * 1.3 = -3.9
     sl = get_dynamic_stop_loss_pct(cfg, confidence=85, hold_minutes=0)
-    assert sl == pytest.approx(-1.5 * 1.7 * 1.3)
-    # conf=80, hold=0 → base=-1.5 * 1.3 = -1.95
+    assert sl == pytest.approx(-1.5 * 2.0 * 1.3)
+    # conf=80, hold=0 → base=-1.995 * 1.3 = -2.5935
     sl_mid = get_dynamic_stop_loss_pct(cfg, confidence=80, hold_minutes=0)
-    assert sl_mid == pytest.approx(-1.5 * 1.3)
+    assert sl_mid == pytest.approx(-1.5 * 1.33 * 1.3)
 
 
 def test_consecutive_stop_loss_does_not_block_skip():
@@ -719,37 +719,37 @@ def test_kill_switch_configurable_halt_at_2():
 # ── US-001: 동적 TP 테스트 ──────────────────
 
 def test_dynamic_tp_high_confidence():
-    """conf>=85, hold=25 (표준, 20분 이상) → TP 1.5%."""
+    """v65: conf>=85, hold=25 (표준, 20분 이상) → TP 3.0%."""
     cfg = _cfg()
-    assert get_dynamic_tp_pct(cfg, 90, hold_minutes=25) == 1.5
-    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=25) == 1.5
+    assert get_dynamic_tp_pct(cfg, 90, hold_minutes=25) == 3.0
+    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=25) == 3.0
 
 
 def test_dynamic_tp_mid_confidence():
-    """conf 80-84 → TP 1.0%, conf 75-79 → TP 0.5%. hold=25 (표준, 20분 이상)."""
+    """v65: conf 80-84 → TP 2.0%, conf 75-79 → TP 1.5%. hold=25 (표준, 20분 이상)."""
     cfg = _cfg()
-    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=25) == 1.0
-    assert get_dynamic_tp_pct(cfg, 75, hold_minutes=25) == 0.5
+    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=25) == 2.0
+    assert get_dynamic_tp_pct(cfg, 75, hold_minutes=25) == 1.5
 
 
 def test_dynamic_tp_eod_hold():
-    """hold_minutes=0 (EOD, 자사주소각): TP 1.5배 — 트렌드 수익 극대화."""
+    """v65: hold_minutes=0 (EOD, 자사주소각): TP 1.5배 — 트렌드 수익 극대화."""
     cfg = _cfg()
-    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=0) == 1.5 * 1.5  # 2.25
-    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=0) == 1.0 * 1.5  # 1.5
+    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=0) == 3.0 * 1.5  # 4.5
+    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=0) == 2.0 * 1.5  # 3.0
 
 
 def test_dynamic_tp_short_hold():
-    """hold_minutes=20 (수주/공급계약): TP 0.85배 — 반전 리스크 대응."""
+    """v65: hold_minutes=20 (수주/공급계약): TP 0.9배 — 반전 리스크 대응."""
     cfg = _cfg()
-    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=20) == pytest.approx(1.5 * 0.85)  # 1.275
-    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=20) == pytest.approx(1.0 * 0.85)  # 0.85
+    assert get_dynamic_tp_pct(cfg, 85, hold_minutes=20) == pytest.approx(3.0 * 0.9)  # 2.7
+    assert get_dynamic_tp_pct(cfg, 80, hold_minutes=20) == pytest.approx(2.0 * 0.9)  # 1.8
 
 
 def test_dynamic_tp_low_confidence():
-    """conf<75 → config 기본값. hold=25 (표준, 20분 이상)."""
-    cfg = _cfg(paper_take_profit_pct=1.0)
-    assert get_dynamic_tp_pct(cfg, 70, hold_minutes=25) == 1.0
+    """v65: conf<75 → config 기본값 (2.0%). hold=25 (표준, 20분 이상)."""
+    cfg = _cfg(paper_take_profit_pct=2.0)
+    assert get_dynamic_tp_pct(cfg, 70, hold_minutes=25) == 2.0
 
 
 # ── US-003: ADV confidence 조정 테스트 ──────────────────
@@ -1231,18 +1231,20 @@ def test_dorg_floor_at_zero():
 
 
 def test_time_premarket_boost():
-    """장전 공시 06:00~08:30 → +5 부스트."""
+    """v65: 장전 공시 06:00~08:00 → +5 부스트, 08:00~08:30 → +2 부스트."""
     from kindshot.tz import KST
     t0700 = datetime(2026, 3, 27, 7, 0, tzinfo=KST)
-    t0830 = datetime(2026, 3, 27, 8, 30, tzinfo=KST)
-    assert apply_time_session_confidence_adjustment(80, t0700) == 85
-    assert apply_time_session_confidence_adjustment(80, t0830) == 85
+    t0815 = datetime(2026, 3, 27, 8, 15, tzinfo=KST)
+    assert apply_time_session_confidence_adjustment(80, t0700) == 85  # +5
+    assert apply_time_session_confidence_adjustment(80, t0815) == 82  # +2 (v65: 08시대 축소)
 
 
 def test_time_premarket_after_0830_no_boost():
-    """08:31 이후 → 부스트 없음."""
+    """v65: 08:30 이후 → 부스트 없음 (08시대 worst -0.49% 데이터)."""
     from kindshot.tz import KST
+    t0830 = datetime(2026, 3, 27, 8, 30, tzinfo=KST)
     t0831 = datetime(2026, 3, 27, 8, 31, tzinfo=KST)
+    assert apply_time_session_confidence_adjustment(80, t0830) == 80
     assert apply_time_session_confidence_adjustment(80, t0831) == 80
 
 
@@ -1431,3 +1433,7 @@ def test_headline_quality_contract_with_amount_no_penalty():
 def test_headline_quality_normal_headline_no_penalty():
     """일반적인 양호한 제목 → 감점 없음."""
     assert apply_headline_quality_adjustment(85, "삼성전자(005930) - 합병 결정 공시") == 85
+
+
+def test_headline_quality_contract_commentary_gets_extra_penalty():
+    assert apply_headline_quality_adjustment(85, "삼성전자 추가 상승 여력 충분 장기공급계약 요구 큰 폭 증가") == 78

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from kindshot.config import Config
+from kindshot.headline_parser import is_commentary_headline, is_contract_commentary_headline
 from kindshot.llm_client import LlmClient, LlmCallError, LlmTimeoutError
 from kindshot.models import (
     Action,
@@ -204,10 +205,13 @@ def _is_contract_family(headline: str, keyword_hits: list[str]) -> bool:
     return any(term in text for text in haystacks for term in _CONTRACT_FAMILY_KEYWORDS)
 
 
-def _looks_like_contract_article(headline: str) -> bool:
+def _looks_like_contract_article(headline: str, *, raw_headline: str | None = None, dorg: str = "") -> bool:
+    source_text = raw_headline or headline
+    if is_contract_commentary_headline(source_text, dorg=dorg):
+        return True
     if any(marker in headline for marker in _CONTRACT_ARTICLE_MARKERS):
         return True
-    if "넘어" in headline and any(mark in headline for mark in ('"', "'", "“", "”", "‘", "’")):
+    if "넘어" in source_text and any(mark in source_text for mark in ('"', "'", "“", "”", "‘", "’")):
         return True
     return False
 
@@ -234,19 +238,22 @@ def _contract_preflight_skip(
     headline: str,
     keyword_hits: list[str],
     ctx: ContextCard,
+    *,
+    raw_headline: str | None = None,
+    dorg: str = "",
 ) -> dict[str, object] | None:
     if not _is_contract_family(headline, keyword_hits):
         return None
 
-    if _looks_like_contract_article(headline):
+    if _looks_like_contract_article(headline, raw_headline=raw_headline, dorg=dorg):
         return {"confidence": 35, "reason": "rule_preflight:contract_article"}
 
     if _looks_like_incremental_order(headline):
         return {"confidence": 45, "reason": "rule_preflight:contract_incremental"}
 
-    # 소규모 계약 (<100억): SKIP — 주가 영향 미미
+    # 소규모 계약 (<200억): SKIP — 주가 영향 미미 (v65: 100→200억 상향, 공급계약 -2.30%/건 손실 데이터)
     amt_eok = _parse_contract_amount_eok(headline)
-    if amt_eok is not None and amt_eok < 100:
+    if amt_eok is not None and amt_eok < 200:
         return {"confidence": 45, "reason": f"rule_preflight:small_contract {amt_eok:.0f}억"}
 
     if ctx.ret_today is not None and ctx.ret_today >= 3.0:
@@ -264,6 +271,11 @@ def _contract_preflight_skip(
         if not is_large:
             adv_eok = ctx.adv_value_20d / 1e8
             return {"confidence": 45, "reason": f"rule_preflight:contract_large_cap adv={adv_eok:.0f}억"}
+
+    # v65: 중형 계약(200-500억) + 중대형주(ADV 1000억+) → sell-the-news 가능성
+    if amt_eok is not None and amt_eok < 500 and ctx.adv_value_20d is not None and ctx.adv_value_20d > 100_000_000_000:
+        adv_eok = ctx.adv_value_20d / 1e8
+        return {"confidence": 50, "reason": f"rule_preflight:mid_contract_large_cap {amt_eok:.0f}억/adv={adv_eok:.0f}억"}
 
     return None
 
@@ -415,11 +427,18 @@ _ARTICLE_MARKERS = (
     "Preview", "preview", "리뷰", "프리뷰",
     "추진", "검토", "계획", "협의 중", "논의", "예정",
     "우려", "주목", "관심", "포인트", "키워드",
+    # v65 추가: 리포트/분석 기사 패턴 (-2.26%/건 손실)
+    "주가 전망", "실적 전망", "호실적", "수혜주",
+    "테마", "급등", "폭등", "급락", "상한가",
+    "모멘텀", "랠리", "반등 기대", "저점 매수",
 )
 
 
-def has_article_pattern(headline: str) -> bool:
+def has_article_pattern(headline: str, *, raw_headline: str | None = None, dorg: str = "") -> bool:
     """헤드라인에 기사/미확정 패턴이 있으면 True. LLM BUY에도 post-check 적용."""
+    source_text = raw_headline or headline
+    if is_commentary_headline(source_text, dorg=dorg):
+        return True
     return any(marker in headline for marker in _ARTICLE_MARKERS)
 
 
@@ -547,11 +566,12 @@ class DecisionEngine:
         ctx: ContextCard,
         keyword_hits: list[str],
         *,
+        analysis_headline: Optional[str] = None,
         run_id: str = "",
         schema_version: str = "0.1.2",
     ) -> DecisionRecord:
         """Rule-based fallback when LLM is unavailable."""
-        parsed = _rule_based_decide(bucket, headline, keyword_hits, ctx)
+        parsed = _rule_based_decide(bucket, analysis_headline or headline, keyword_hits, ctx)
 
         record = DecisionRecord(
             schema_version=schema_version,
@@ -574,10 +594,18 @@ class DecisionEngine:
         ctx: ContextCard,
         keyword_hits: list[str],
         *,
+        raw_headline: Optional[str] = None,
+        dorg: str = "",
         run_id: str = "",
         schema_version: str = "0.1.2",
     ) -> DecisionRecord | None:
-        parsed = _contract_preflight_skip(headline, keyword_hits, ctx)
+        parsed = _contract_preflight_skip(
+            headline,
+            keyword_hits,
+            ctx,
+            raw_headline=raw_headline,
+            dorg=dorg,
+        )
         if parsed is None:
             return None
 
@@ -605,6 +633,8 @@ class DecisionEngine:
         detected_at_str: str,
         *,
         keyword_hits: Optional[list[str]] = None,
+        analysis_headline: Optional[str] = None,
+        dorg: str = "",
         run_id: str = "",
         schema_version: str = "0.1.2",
         market_ctx: Optional[MarketContext] = None,
@@ -616,10 +646,14 @@ class DecisionEngine:
             LlmCallError: upstream call failure.
             LlmParseError: response parse/shape failure.
         """
+        analysis_text = analysis_headline or headline
+
         preflight = self._preflight_decide(
-            headline,
+            analysis_text,
             ctx,
             list(keyword_hits or []),
+            raw_headline=headline,
+            dorg=dorg,
             run_id=run_id,
             schema_version=schema_version,
         )
@@ -627,7 +661,7 @@ class DecisionEngine:
             return preflight
 
         self._sweep_cache()
-        key = self._cache_key(ticker, headline, bucket, ctx)
+        key = self._cache_key(ticker, analysis_text, bucket, ctx)
 
         # Cache hit
         if key in self._cache and self._cache[key].expires_at > time.monotonic():
@@ -644,7 +678,7 @@ class DecisionEngine:
             return self._as_cache_result(shared, run_id)
 
         async def _invoke_uncached() -> DecisionRecord:
-            prompt = _build_prompt(bucket, headline, ticker, corp_name, detected_at_str, ctx, market_ctx)
+            prompt = _build_prompt(bucket, analysis_text, ticker, corp_name, detected_at_str, ctx, market_ctx)
 
             raw_text, latency_ms = await self._llm.call(prompt, max_tokens=200)
 

@@ -59,12 +59,12 @@ def test_trailing_stop_defaults():
     with patch.dict(os.environ, clean_env, clear=True):
         cfg = Config()
         assert cfg.trailing_stop_enabled is True
-        assert cfg.trailing_stop_pct == 0.5
-        assert cfg.trailing_stop_activation_pct == 0.3
-        assert cfg.trailing_stop_early_pct == 0.3
-        assert cfg.trailing_stop_mid_pct == 0.5
-        assert cfg.trailing_stop_late_pct == 0.7
-        assert cfg.max_hold_minutes == 10
+        assert cfg.trailing_stop_pct == 0.8  # v65: 0.5→0.8
+        assert cfg.trailing_stop_activation_pct == 0.5  # v65: 0.3→0.5
+        assert cfg.trailing_stop_early_pct == 0.5  # v65: 0.3→0.5
+        assert cfg.trailing_stop_mid_pct == 0.8  # v65: 0.5→0.8
+        assert cfg.trailing_stop_late_pct == 1.0  # v65: 0.7→1.0
+        assert cfg.max_hold_minutes == 15  # v65: 10→15
         assert cfg.fast_profile_hold_minutes == 20
         assert cfg.fast_profile_no_buy_after_kst_hour == 14
         assert cfg.fast_profile_no_buy_after_kst_minute == 0

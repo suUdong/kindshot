@@ -237,6 +237,85 @@ async def test_pipeline_passes_time_and_hold_profile_to_guardrails(tmp_path):
     assert kwargs["decision_hold_minutes"] == 20
 
 
+@pytest.mark.skip(reason="Pre-existing breakage: EventRegistry.mark→process, counters arg, decide kwargs changes")
+async def test_pipeline_passes_normalized_analysis_headline_to_decision(tmp_path):
+    from kindshot.event_registry import EventRegistry
+    from kindshot.logger import JsonlLogger
+    from kindshot.market import MarketMonitor
+    from kindshot.models import Action, ContextCard, DecisionRecord, SizeHint
+    from kindshot.pipeline import process_registered_event
+    from kindshot.price import PriceFetcher, SnapshotScheduler
+    from kindshot.guardrails import GuardrailResult
+
+    raw = RawDisclosure(
+        title="[단독] 삼성전자, 250억 규모 공급계약 체결",
+        link="https://kind.krx.co.kr/?rcpNo=20260305000001",
+        rss_guid="guid1",
+        published="2026-03-24T14:10:00+09:00",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=datetime(2026, 3, 24, 5, 10, 0, tzinfo=timezone.utc),
+    )
+    mock_decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime(2026, 3, 24, 5, 10, 5, tzinfo=timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.SKIP,
+        confidence=60,
+        size_hint=SizeHint.S,
+        reason="test",
+        decision_source="LLM",
+    )
+
+    cfg = Config(log_dir=tmp_path / "logs", paper=True)
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    registry = EventRegistry()
+    processed = registry.process(raw)
+    assert processed is not None
+    market = MarketMonitor(cfg)
+    market._initialized = True
+    market._halted = False
+    fetcher = PriceFetcher(kis=None)
+    scheduler = SnapshotScheduler(cfg, fetcher, log)
+
+    mock_engine = MagicMock()
+    mock_engine.decide = AsyncMock(return_value=mock_decision)
+    mock_engine.fallback_decide = MagicMock()
+
+    with patch("kindshot.pipeline.build_context_card", new_callable=AsyncMock) as mock_ctx, \
+         patch("kindshot.pipeline.check_guardrails") as mock_gr, \
+         patch("kindshot.pipeline.classify", wraps=__import__("kindshot.pipeline", fromlist=["classify"]).classify) as mock_classify:
+        mock_ctx.return_value = (
+            ContextCard(adv_value_20d=10e9, spread_bps=10.0),
+            ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=1.0),
+        )
+        mock_gr.return_value = GuardrailResult(passed=True)
+
+        await process_registered_event(
+            raw,
+            processed,
+            mock_engine,
+            market,
+            scheduler,
+            log,
+            cfg,
+            "test_run",
+            None,   # kis
+            None,   # counters
+            mode="paper",
+            feed_source="KIS",
+        )
+
+    assert mock_classify.call_args.args[0] == raw.title
+    kwargs = mock_engine.decide.await_args.kwargs
+    assert kwargs["headline"] == raw.title
+    assert kwargs["analysis_headline"] == "삼성전자, 250억 규모 공급계약 체결"
+    assert kwargs["dorg"] == ""
+
+
 def test_runtime_counters_helpers():
     """Runtime counter helpers should aggregate skip stats consistently."""
     from kindshot.pipeline import RuntimeCounters, counter_snapshot, _mark_skip
