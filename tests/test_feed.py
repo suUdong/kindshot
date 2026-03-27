@@ -11,7 +11,7 @@ from aioresponses import aioresponses
 import aiohttp
 
 from kindshot.config import Config
-from kindshot.feed import KindFeed, KisFeed, _extract_ticker_corp, _extract_kind_uid
+from kindshot.feed import DartFeed, KindFeed, KisFeed, MultiFeed, _extract_ticker_corp, _extract_kind_uid
 from kindshot.kis_client import NewsDisclosure
 
 
@@ -407,3 +407,245 @@ async def test_kis_feed_keeps_new_disclosure_keywords():
     feed2 = KisFeed(cfg, kis)
     results2 = await feed2.poll_once()
     assert len(results2) == 1
+
+
+# ── DART Feed Tests ──────────────────────────────────────────────
+
+
+DART_RESPONSE_OK = {
+    "status": "000",
+    "message": "정상",
+    "page_no": 1,
+    "page_count": 20,
+    "total_count": 2,
+    "total_page": 1,
+    "list": [
+        {
+            "corp_cls": "Y",
+            "corp_name": "삼성전자",
+            "corp_code": "00126380",
+            "stock_code": "005930",
+            "report_nm": "주요사항보고서(수주공시)",
+            "rcept_no": "20260327000001",
+            "flr_nm": "삼성전자",
+            "rcept_dt": "20260327",
+        },
+        {
+            "corp_cls": "K",
+            "corp_name": "셀트리온",
+            "corp_code": "00413046",
+            "stock_code": "068270",
+            "report_nm": "임상시험결과(자율공시)",
+            "rcept_no": "20260327000002",
+            "flr_nm": "셀트리온",
+            "rcept_dt": "20260327",
+        },
+        {
+            # 비상장사 — stock_code 없음, 스킵 대상
+            "corp_cls": "E",
+            "corp_name": "비상장법인",
+            "corp_code": "99999999",
+            "stock_code": "",
+            "report_nm": "사업보고서",
+            "rcept_no": "20260327000003",
+            "flr_nm": "비상장법인",
+            "rcept_dt": "20260327",
+        },
+    ],
+}
+
+DART_RESPONSE_EMPTY = {
+    "status": "013",
+    "message": "조회된 데이터가 없습니다.",
+}
+
+
+async def test_dart_feed_poll_once_ok():
+    cfg = Config(dart_api_key="test_key_123")
+    import re as _re
+    dart_url_pattern = _re.compile(r"^https://opendart\.fss\.or\.kr/api/list\.json")
+    async with aiohttp.ClientSession() as session:
+        feed = DartFeed(cfg, session)
+        with aioresponses() as m:
+            m.get(
+                dart_url_pattern,
+                payload=DART_RESPONSE_OK,
+                status=200,
+            )
+            items = await feed.poll_once()
+
+    assert len(items) == 2  # 비상장사 제외
+    assert items[0].ticker == "005930"
+    assert items[0].corp_name == "삼성전자"
+    assert "수주공시" in items[0].title
+    assert items[0].link.startswith("https://dart.fss.or.kr/")
+    assert items[0].dorg.startswith("DART/")
+
+    assert items[1].ticker == "068270"
+    assert "임상" in items[1].title
+
+
+async def test_dart_feed_poll_once_empty():
+    cfg = Config(dart_api_key="test_key_123")
+    import re as _re
+    dart_url_pattern = _re.compile(r"^https://opendart\.fss\.or\.kr/api/list\.json")
+    async with aiohttp.ClientSession() as session:
+        feed = DartFeed(cfg, session)
+        with aioresponses() as m:
+            m.get(dart_url_pattern, payload=DART_RESPONSE_EMPTY, status=200)
+            items = await feed.poll_once()
+
+    assert items == []
+
+
+async def test_dart_feed_no_api_key_returns_empty():
+    cfg = Config(dart_api_key="")
+    async with aiohttp.ClientSession() as session:
+        feed = DartFeed(cfg, session)
+        items = await feed.poll_once()
+    assert items == []
+
+
+async def test_dart_feed_dedup_across_polls():
+    cfg = Config(dart_api_key="test_key_123")
+    import re as _re
+    dart_url_pattern = _re.compile(r"^https://opendart\.fss\.or\.kr/api/list\.json")
+    async with aiohttp.ClientSession() as session:
+        feed = DartFeed(cfg, session)
+        with aioresponses() as m:
+            m.get(dart_url_pattern, payload=DART_RESPONSE_OK, status=200)
+            first = await feed.poll_once()
+        with aioresponses() as m:
+            m.get(dart_url_pattern, payload=DART_RESPONSE_OK, status=200)
+            second = await feed.poll_once()
+
+    assert len(first) == 2
+    assert len(second) == 0  # 모두 이미 본 것
+
+
+async def test_dart_feed_500_increments_failures():
+    cfg = Config(dart_api_key="test_key_123")
+    import re as _re
+    dart_url_pattern = _re.compile(r"^https://opendart\.fss\.or\.kr/api/list\.json")
+    async with aiohttp.ClientSession() as session:
+        feed = DartFeed(cfg, session)
+        with aioresponses() as m:
+            m.get(dart_url_pattern, status=500)
+            items = await feed.poll_once()
+    assert items == []
+    assert feed._consecutive_failures == 1
+
+
+async def test_dart_feed_updates_last_poll_at():
+    cfg = Config(dart_api_key="test_key_123")
+    import re as _re
+    dart_url_pattern = _re.compile(r"^https://opendart\.fss\.or\.kr/api/list\.json")
+    async with aiohttp.ClientSession() as session:
+        feed = DartFeed(cfg, session)
+        assert feed.last_poll_at is None
+        with aioresponses() as m:
+            m.get(dart_url_pattern, payload=DART_RESPONSE_EMPTY, status=200)
+            await feed.poll_once()
+    assert feed.last_poll_at is not None
+
+
+# ── MultiFeed Tests ──────────────────────────────────────────────
+
+
+async def test_multifeed_merges_sources():
+    """MultiFeed가 여러 소스의 결과를 합산하는지 검증."""
+    cfg = Config()
+
+    # 가짜 피드 2개
+    feed_a = AsyncMock()
+    feed_a.last_poll_at = None
+    feed_a.stop = MagicMock()
+
+    from kindshot.feed import RawDisclosure
+    from datetime import datetime as dt, timezone, timedelta
+    kst = timezone(timedelta(hours=9))
+    now = dt.now(kst)
+
+    item_a = RawDisclosure(
+        title="A사(111111) 수주 공시",
+        link="https://dart.fss.or.kr/test1",
+        rss_guid="DART001",
+        published="20260327",
+        ticker="111111",
+        corp_name="A사",
+        detected_at=now,
+        dorg="DART",
+    )
+    item_b = RawDisclosure(
+        title="B사(222222) 공급계약 체결",
+        link="kis://news/KIS001",
+        rss_guid="KIS001",
+        published="20260327 100000",
+        ticker="222222",
+        corp_name="B사",
+        detected_at=now,
+        dorg="한국거래소",
+    )
+
+    async def stream_a():
+        yield [item_a]
+    async def stream_b():
+        yield [item_b]
+
+    feed_a.stream = stream_a
+    feed_b = AsyncMock()
+    feed_b.last_poll_at = None
+    feed_b.stop = MagicMock()
+    feed_b.stream = stream_b
+
+    multi = MultiFeed([feed_a, feed_b], cfg)
+
+    collected = []
+    async def _consume():
+        async for batch in multi.stream():
+            collected.extend(batch)
+            if len(collected) >= 2:
+                multi.stop()
+
+    await asyncio.wait_for(_consume(), timeout=3.0)
+    tickers = {item.ticker for item in collected}
+    assert "111111" in tickers
+    assert "222222" in tickers
+
+
+async def test_multifeed_cross_dedup():
+    """동일 종목+제목의 공시가 다른 소스에서 오면 중복 제거."""
+    cfg = Config()
+    multi = MultiFeed([], cfg)
+
+    from kindshot.feed import RawDisclosure
+    from datetime import datetime as dt, timezone, timedelta
+    kst = timezone(timedelta(hours=9))
+    now = dt.now(kst)
+
+    item1 = RawDisclosure(
+        title="삼성전자(005930) 주요사항보고서(수주공시)",
+        link="https://dart.fss.or.kr/test",
+        rss_guid="DART001",
+        published="20260327",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=now,
+        dorg="DART",
+    )
+    item2 = RawDisclosure(
+        title="삼성전자(005930) 주요사항보고서(수주공시)",
+        link="kis://news/KIS001",
+        rss_guid="KIS001",
+        published="20260327 100000",
+        ticker="005930",
+        corp_name="삼성전자",
+        detected_at=now,
+        dorg="한국거래소",
+    )
+
+    result1 = multi._cross_dedup([item1])
+    assert len(result1) == 1
+
+    result2 = multi._cross_dedup([item2])
+    assert len(result2) == 0  # 중복 제거됨

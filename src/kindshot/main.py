@@ -16,7 +16,7 @@ from kindshot.config import Config, load_config
 from kindshot.context_card import configure_cache as configure_context_card_cache
 from kindshot.decision import DecisionEngine
 from kindshot.event_registry import EventRegistry
-from kindshot.feed import KindFeed, KisFeed
+from kindshot.feed import DartFeed, KindFeed, KisFeed, MultiFeed
 from kindshot.guardrails import GuardrailState
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -154,6 +154,46 @@ async def _watchdog_loop(
         await _wait_or_stop(stop_event, config.watchdog_interval_s)
 
 
+def _build_feed(config, feed_source: str, kis, session, state_dir):
+    """Build feed instance(s) from config. Returns (feed, feed_source_label)."""
+    sources = [s.strip() for s in feed_source.split(",") if s.strip()]
+    if not sources:
+        sources = ["KIS"]
+
+    feeds = []
+    labels = []
+
+    for src in sources:
+        if src == "KIS" and kis:
+            feeds.append(KisFeed(config, kis, state_dir=state_dir / "feed"))
+            labels.append("KIS")
+        elif src == "DART" and config.dart_api_key:
+            feeds.append(DartFeed(config, session, state_dir=state_dir / "feed_dart"))
+            labels.append("DART")
+        elif src == "KIND":
+            feeds.append(KindFeed(config, session))
+            labels.append("KIND")
+        else:
+            if src == "KIS" and not kis:
+                logger.warning("KIS feed requested but KIS client disabled — skipping")
+            elif src == "DART" and not config.dart_api_key:
+                logger.warning("DART feed requested but DART_API_KEY not set — skipping")
+
+    if not feeds:
+        logger.warning("No valid feed sources — falling back to KIND RSS")
+        feeds.append(KindFeed(config, session))
+        labels = ["KIND"]
+
+    if len(feeds) == 1:
+        feed = feeds[0]
+    else:
+        feed = MultiFeed(feeds, config)
+
+    label = ",".join(labels)
+    logger.info("Feed source: %s", label)
+    return feed, label
+
+
 async def run() -> None:
     args = _parse_args()
     if getattr(args, "dry_run", False) and getattr(args, "paper", False):
@@ -185,15 +225,7 @@ async def run() -> None:
 
         state_dir = config.log_dir / "state" / mode
         feed_source = config.feed_source.upper()
-        if feed_source == "KIS" and kis:
-            feed = KisFeed(config, kis, state_dir=state_dir / "feed")
-            logger.info("Feed source: KIS API")
-        else:
-            if feed_source == "KIS" and not kis:
-                logger.warning("KIS feed requested but KIS client disabled — falling back to KIND RSS")
-            feed = KindFeed(config, session)
-            feed_source = "KIND"
-            logger.info("Feed source: KIND RSS")
+        feed, feed_source = _build_feed(config, feed_source, kis, session, state_dir)
         registry = EventRegistry(state_dir=state_dir)
         decision_engine = DecisionEngine(config)
         unknown_review_engine = UnknownReviewEngine(config) if config.unknown_shadow_review_enabled else None

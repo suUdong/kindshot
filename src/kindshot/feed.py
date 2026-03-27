@@ -1,4 +1,4 @@
-"""KIND RSS adaptive polling with ETag, jitter, and backoff."""
+"""News/disclosure feed sources: KIND RSS, KIS API, DART OpenAPI, MultiFeed compositor."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ import logging
 import random
 import re
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, Protocol
 
 import aiohttp
 import feedparser
@@ -490,3 +490,286 @@ class KisFeed:
                 pass
             if tracer and t_sleep is not None:
                 tracer.sleep_end(t_sleep)
+
+
+# ── DART OpenAPI Feed ──────────────────────────────────────────────
+
+
+class DartFeed:
+    """DART 전자공시 OpenAPI 기반 실시간 공시 피드.
+
+    https://opendart.fss.or.kr/api/list.json 엔드포인트를 폴링하여
+    당일 공시를 RawDisclosure로 변환한다.
+    """
+
+    def __init__(self, config: Config, session: aiohttp.ClientSession, *, state_dir: Optional[Path] = None) -> None:
+        self._config = config
+        self._session = session
+        self._seen_rcept: OrderedDict[str, None] = OrderedDict()
+        self._consecutive_failures = 0
+        self._stop_event = asyncio.Event()
+        self._last_poll_at: Optional[datetime] = None
+        self._state_dir = state_dir
+        self._current_date: Optional[str] = None
+        if state_dir:
+            state_dir.mkdir(parents=True, exist_ok=True)
+            self._load_state()
+
+    @property
+    def last_poll_at(self) -> Optional[datetime]:
+        return self._last_poll_at
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def _is_market_hours(self) -> bool:
+        from datetime import time as dt_time
+        now_kst = datetime.now(_KST)
+        if now_kst.weekday() >= 5:
+            return False
+        return dt_time(9, 0) <= now_kst.time() <= dt_time(15, 30)
+
+    def _base_interval(self) -> float:
+        if self._is_market_hours():
+            return self._config.feed_interval_market_s
+        return self._config.feed_interval_off_s
+
+    def _interval_with_backoff(self) -> float:
+        base = self._base_interval()
+        if self._consecutive_failures >= self._config.feed_backoff_threshold:
+            multiplier = 2 ** (self._consecutive_failures - self._config.feed_backoff_threshold + 1)
+            base = min(base * multiplier, self._config.feed_backoff_max_s)
+        jitter = base * self._config.feed_jitter_pct
+        return base + random.uniform(-jitter, jitter)
+
+    # ── state persistence ──
+
+    def _state_file(self) -> Optional[Path]:
+        if not self._state_dir or not self._current_date:
+            return None
+        return self._state_dir / f"dart_feed_{self._current_date}.json"
+
+    def _load_state(self) -> None:
+        self._current_date = datetime.now(_KST).strftime("%Y%m%d")
+        state_file = self._state_file()
+        if not state_file or not state_file.exists():
+            return
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            seen = data.get("seen_rcept", [])
+            if isinstance(seen, list):
+                self._seen_rcept = OrderedDict((str(r), None) for r in seen if r)
+            logger.info("Loaded DART feed state (seen_rcept=%d)", len(self._seen_rcept))
+        except Exception:
+            logger.exception("Failed to load DART feed state")
+
+    def _persist_state(self) -> None:
+        state_file = self._state_file()
+        if not state_file:
+            return
+        try:
+            payload = {"seen_rcept": list(self._seen_rcept.keys())}
+            state_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            logger.exception("Failed to persist DART feed state")
+
+    def _prune_if_new_day(self, now: datetime) -> None:
+        today = now.strftime("%Y%m%d")
+        if self._current_date is None:
+            self._current_date = today
+            return
+        if today == self._current_date:
+            return
+        self._current_date = today
+        self._seen_rcept.clear()
+        self._persist_state()
+
+    async def poll_once(self) -> list[RawDisclosure]:
+        """DART list.json 단일 폴링."""
+        self._last_poll_at = datetime.now(_KST)
+        self._prune_if_new_day(self._last_poll_at)
+
+        api_key = self._config.dart_api_key
+        if not api_key:
+            return []
+
+        today = self._last_poll_at.strftime("%Y%m%d")
+        params = {
+            "crtfc_key": api_key,
+            "bgn_de": today,
+            "end_de": today,
+            "page_no": "1",
+            "page_count": str(self._config.dart_poll_page_count),
+            "sort": "date",
+            "sort_mth": "desc",
+        }
+        url = f"{self._config.dart_base_url}/list.json"
+
+        try:
+            async with self._session.get(
+                url, params=params, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                if resp.status != 200:
+                    self._consecutive_failures += 1
+                    logger.warning("DART API status=%d", resp.status)
+                    return []
+                data = await resp.json(content_type=None)
+        except Exception:
+            self._consecutive_failures += 1
+            logger.exception("DART API fetch error")
+            return []
+
+        self._consecutive_failures = 0
+
+        status = data.get("status", "")
+        if status == "013":
+            # 013 = 조회된 데이터가 없습니다 (정상, 공시 없는 시간대)
+            return []
+        if status != "000":
+            logger.warning("DART API status_code=%s, message=%s", status, data.get("message", ""))
+            return []
+
+        items = data.get("list", [])
+        now = datetime.now(_KST)
+        results: list[RawDisclosure] = []
+
+        for item in items:
+            rcept_no = item.get("rcept_no", "")
+            if not rcept_no or rcept_no in self._seen_rcept:
+                continue
+            self._seen_rcept[rcept_no] = None
+
+            stock_code = item.get("stock_code", "").strip()
+            if not stock_code:
+                continue  # 비상장사 제외
+
+            corp_name = item.get("corp_name", "").strip()
+            report_nm = item.get("report_nm", "").strip()
+            rcept_dt = item.get("rcept_dt", "")
+            flr_nm = item.get("flr_nm", "")  # 공시 제출인
+
+            # DART 제목 = report_nm (e.g. "주요사항보고서(수주공시)")
+            # corp_name 포함 형태로 변환하여 기존 bucket 분류와 호환
+            title = f"{corp_name}({stock_code}) {report_nm}"
+
+            results.append(
+                RawDisclosure(
+                    title=title,
+                    link=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}",
+                    rss_guid=rcept_no,
+                    published=rcept_dt,
+                    ticker=stock_code,
+                    corp_name=corp_name,
+                    detected_at=now,
+                    dorg=f"DART/{flr_nm}" if flr_nm else "DART",
+                )
+            )
+
+        # Cap seen set
+        while len(self._seen_rcept) > 5000:
+            self._seen_rcept.popitem(last=False)
+
+        self._persist_state()
+        if results:
+            logger.info("DART poll: %d new disclosures", len(results))
+        return results
+
+    async def stream(self) -> AsyncIterator[list[RawDisclosure]]:
+        """DART 폴링 루프."""
+        while not self._stop_event.is_set():
+            items = await self.poll_once()
+            if items:
+                yield items
+            if self._stop_event.is_set():
+                break
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self._interval_with_backoff(),
+                )
+            except asyncio.TimeoutError:
+                pass
+
+
+# ── MultiFeed compositor ───────────────────────────────────────────
+
+
+class MultiFeed:
+    """여러 피드를 병렬 폴링하고 교차 중복제거하여 단일 스트림으로 합성.
+
+    Usage::
+
+        feeds = [KisFeed(...), DartFeed(...)]
+        multi = MultiFeed(feeds, config)
+        async for batch in multi.stream():
+            ...  # merged, deduplicated RawDisclosure batch
+    """
+
+    def __init__(self, feeds: list, config: Config) -> None:
+        self._feeds = feeds
+        self._config = config
+        self._stop_event = asyncio.Event()
+        # 교차 중복제거: (ticker, title_prefix) → seen
+        self._cross_seen: OrderedDict[str, None] = OrderedDict()
+
+    @property
+    def last_poll_at(self) -> Optional[datetime]:
+        """가장 최근에 폴링한 피드의 시각."""
+        times = [f.last_poll_at for f in self._feeds if f.last_poll_at]
+        return max(times) if times else None
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        for feed in self._feeds:
+            feed.stop()
+
+    def _dedup_key(self, item: RawDisclosure) -> str:
+        """교차 중복제거 키: ticker + 제목 앞 30자 정규화."""
+        # 괄호/종목코드 제거 후 앞 30자
+        title_norm = re.sub(r"\(?\d{6}\)?", "", item.title).strip()[:30]
+        return f"{item.ticker}:{title_norm}"
+
+    def _cross_dedup(self, items: list[RawDisclosure]) -> list[RawDisclosure]:
+        """교차 소스 중복 제거."""
+        result = []
+        for item in items:
+            key = self._dedup_key(item)
+            if key in self._cross_seen:
+                continue
+            self._cross_seen[key] = None
+            result.append(item)
+
+        # Cap cross_seen
+        while len(self._cross_seen) > 10000:
+            self._cross_seen.popitem(last=False)
+
+        return result
+
+    async def stream(self) -> AsyncIterator[list[RawDisclosure]]:
+        """모든 피드를 병렬로 폴링, 합산 배치를 yield."""
+        queue: asyncio.Queue[list[RawDisclosure]] = asyncio.Queue()
+
+        async def _feed_pump(feed: object) -> None:
+            try:
+                async for batch in feed.stream():  # type: ignore[union-attr]
+                    await queue.put(batch)
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                logger.exception("MultiFeed pump error for %s", type(feed).__name__)
+
+        tasks = [asyncio.create_task(_feed_pump(f), name=f"multifeed-{type(f).__name__}") for f in self._feeds]
+
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    batch = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                deduped = self._cross_dedup(batch)
+                if deduped:
+                    yield deduped
+        finally:
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)

@@ -57,8 +57,12 @@ class Config:
     kis_real_app_secret: str = field(default_factory=lambda: _env("KIS_REAL_APP_SECRET"))
 
     # --- Feed ---
-    feed_source: str = field(default_factory=lambda: _env("FEED_SOURCE", "KIS"))  # KIS or KIND
+    feed_source: str = field(default_factory=lambda: _env("FEED_SOURCE", "KIS"))  # KIS, KIND, DART, or comma-separated (e.g. "KIS,DART")
     kind_rss_url: str = "https://kind.krx.co.kr/disclosure/todaydisclosure.do?method=searchTodayDisclosureRSS"
+    # --- DART OpenAPI ---
+    dart_api_key: str = field(default_factory=lambda: _env("DART_API_KEY"))
+    dart_base_url: str = "https://opendart.fss.or.kr/api"
+    dart_poll_page_count: int = field(default_factory=lambda: _env_int("DART_POLL_PAGE_COUNT", 20))  # 한 번에 가져올 공시 수
     feed_interval_market_s: float = field(default_factory=lambda: _env_float("FEED_INTERVAL_MARKET", 3.0))
     feed_interval_off_s: float = field(default_factory=lambda: _env_float("FEED_INTERVAL_OFF", 15.0))
     feed_overlap_s: int = field(default_factory=lambda: _env_int("FEED_OVERLAP_S", 90))
