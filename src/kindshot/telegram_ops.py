@@ -469,6 +469,57 @@ def try_send_sell_signal(
         return False
 
 
+def format_intraday_update(
+    metrics: dict[str, float | int],
+    *,
+    open_positions: int,
+    consecutive_stop_losses: int,
+) -> str:
+    """Format an intraday performance update for Telegram."""
+    total = int(metrics.get("total_trades", 0))
+    wins = int(metrics.get("wins", 0))
+    losses = int(metrics.get("losses", 0))
+    win_rate = float(metrics.get("win_rate", 0.0))
+    total_pnl_pct = float(metrics.get("total_pnl_pct", 0.0))
+    total_pnl_won = float(metrics.get("total_pnl_won", 0.0))
+    avg_pnl_pct = float(metrics.get("avg_pnl_pct", 0.0))
+    peak_ret_pct = float(metrics.get("peak_ret_pct", 0.0))
+    mdd_pct = float(metrics.get("mdd_pct", 0.0))
+    now_str = datetime.now(_KST).strftime("%H:%M")
+    emoji = "\U0001f4c8" if total_pnl_won >= 0 else "\U0001f4c9"  # chart_increasing / chart_decreasing
+    lines = [
+        f"{emoji} [{now_str}] Kindshot Intraday",
+        f"trades={total} W={wins} L={losses} win_rate={win_rate:.1f}%",
+        f"pnl={total_pnl_won:+.0f}won ({total_pnl_pct:+.2f}%) avg={avg_pnl_pct:+.2f}%",
+        f"peak={peak_ret_pct:+.2f}% mdd={mdd_pct:+.2f}%",
+        f"positions={open_positions} streak_loss={consecutive_stop_losses}",
+    ]
+    return "\n".join(lines)
+
+
+def try_send_intraday_update(
+    metrics: dict[str, float | int],
+    *,
+    open_positions: int,
+    consecutive_stop_losses: int,
+) -> bool:
+    """Best-effort intraday performance telegram. Never raises."""
+    target = _telegram_target()
+    if target is None:
+        return False
+    bot_token, chat_id = target
+    try:
+        text = format_intraday_update(
+            metrics,
+            open_positions=open_positions,
+            consecutive_stop_losses=consecutive_stop_losses,
+        )
+        return send_telegram_message(text, bot_token, chat_id)
+    except Exception:
+        logger.debug("Intraday update telegram send failed", exc_info=True)
+        return False
+
+
 def try_send_daily_summary(
     summary: DailySummary,
     *,

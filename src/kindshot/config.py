@@ -317,6 +317,11 @@ class Config:
     recent_pattern_max_profit_patterns: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MAX_PROFIT_PATTERNS", 5))  # v72: 2→5 (수익 패턴 더 많이 캡처)
     recent_pattern_max_loss_patterns: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MAX_LOSS_PATTERNS", 5))  # v72: 2→5 (손실 패턴 더 많이 캡처)
 
+    # --- Intraday performance monitor (v72) ---
+    intraday_monitor_enabled: bool = field(default_factory=lambda: _env_bool("INTRADAY_MONITOR_ENABLED", True))
+    intraday_monitor_interval_s: int = field(default_factory=lambda: _env_int("INTRADAY_MONITOR_INTERVAL_S", 1800))  # 30분마다 장중 성과 리포트
+    intraday_monitor_min_trades: int = field(default_factory=lambda: _env_int("INTRADAY_MONITOR_MIN_TRADES", 1))  # 최소 N건 이상일 때만 발송
+
     # --- Pipeline ---
     pipeline_workers: int = field(default_factory=lambda: _env_int("PIPELINE_WORKERS", 4))
     pipeline_queue_maxsize: int = field(default_factory=lambda: _env_int("PIPELINE_QUEUE_MAXSIZE", 512))

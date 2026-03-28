@@ -9,6 +9,7 @@ from kindshot.telegram_ops import (
     format_backfill_notification,
     format_daily_summary_signal,
     format_high_conf_skip_signal,
+    format_intraday_update,
     format_sell_signal,
     send_telegram_message,
 )
@@ -303,3 +304,48 @@ def test_daily_summary_notifier_prevents_duplicate_send(tmp_path):
     reloaded = DailySummaryNotifier(state_path, close_delay_s=300)
     assert reloaded.should_send(due_time) is False
     assert reloaded.should_send(datetime(2026, 3, 28, 15, 36, tzinfo=_KST)) is True
+
+
+def test_format_intraday_update_basic():
+    metrics = {
+        "total_trades": 5,
+        "wins": 3,
+        "losses": 2,
+        "win_rate": 60.0,
+        "total_pnl_pct": 1.25,
+        "total_pnl_won": 62500,
+        "avg_pnl_pct": 0.25,
+        "peak_ret_pct": 2.0,
+        "mdd_pct": -0.5,
+    }
+    text = format_intraday_update(
+        metrics,
+        open_positions=1,
+        consecutive_stop_losses=0,
+    )
+    assert "Kindshot Intraday" in text
+    assert "trades=5 W=3 L=2 win_rate=60.0%" in text
+    assert "pnl=+62500won (+1.25%)" in text
+    assert "peak=+2.00% mdd=-0.50%" in text
+    assert "positions=1 streak_loss=0" in text
+
+
+def test_format_intraday_update_negative_pnl():
+    metrics = {
+        "total_trades": 2,
+        "wins": 0,
+        "losses": 2,
+        "win_rate": 0.0,
+        "total_pnl_pct": -1.5,
+        "total_pnl_won": -75000,
+        "avg_pnl_pct": -0.75,
+        "peak_ret_pct": 0.0,
+        "mdd_pct": -1.5,
+    }
+    text = format_intraday_update(
+        metrics,
+        open_positions=0,
+        consecutive_stop_losses=2,
+    )
+    assert "pnl=-75000won (-1.50%)" in text
+    assert "streak_loss=2" in text

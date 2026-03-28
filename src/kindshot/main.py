@@ -36,7 +36,7 @@ from kindshot.price import PriceFetcher, SnapshotScheduler
 from kindshot.sd_notify import notify_ready, notify_watchdog
 from kindshot.tz import KST as _KST
 from kindshot.health import HealthState, start_health_server
-from kindshot.telegram_ops import DailySummaryNotifier, telegram_configured, try_send_daily_summary, try_send_sell_signal
+from kindshot.telegram_ops import DailySummaryNotifier, telegram_configured, try_send_daily_summary, try_send_intraday_update, try_send_sell_signal
 from kindshot.unknown_review import (
     UnknownReviewEngine,
     append_unknown_review,
@@ -447,6 +447,33 @@ async def run() -> None:
                     logger.exception("Daily summary loop error")
                 await _wait_or_stop(stop_event, 60)
 
+        async def _intraday_monitor_loop() -> None:
+            """v72: 장중 실시간 성과 모니터링 — 주기적으로 텔레그램 발송."""
+            if not config.intraday_monitor_enabled or not telegram_configured():
+                return
+            last_trade_count = 0
+            while not stop_event.is_set():
+                try:
+                    metrics = performance_tracker.live_metrics()
+                    current_count = int(metrics.get("total_trades", 0))
+                    if current_count >= config.intraday_monitor_min_trades and current_count != last_trade_count:
+                        sent = try_send_intraday_update(
+                            metrics,
+                            open_positions=guardrail_state.position_count,
+                            consecutive_stop_losses=guardrail_state.consecutive_stop_losses,
+                        )
+                        if sent:
+                            last_trade_count = current_count
+                            logger.info(
+                                "Intraday monitor sent: trades=%d win_rate=%.1f%% pnl=%.0fwon",
+                                current_count,
+                                float(metrics.get("win_rate", 0)),
+                                float(metrics.get("total_pnl_won", 0)),
+                            )
+                except Exception:
+                    logger.exception("Intraday monitor loop error")
+                await _wait_or_stop(stop_event, config.intraday_monitor_interval_s)
+
         # Health check server
         health_state = HealthState(latency_window_size=config.health_latency_window_size)
         health_state.set_guardrail_state(guardrail_state)
@@ -482,6 +509,8 @@ async def run() -> None:
         ]
         if daily_summary_notifier is not None:
             tasks.append(asyncio.create_task(_daily_summary_loop(), name="daily-summary"))
+        if config.intraday_monitor_enabled and telegram_configured():
+            tasks.append(asyncio.create_task(_intraday_monitor_loop(), name="intraday-monitor"))
         if unknown_review_queue is not None:
             tasks.append(asyncio.create_task(_unknown_review_loop(), name="unknown-review"))
 
