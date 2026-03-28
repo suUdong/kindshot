@@ -1,11 +1,22 @@
 # 월요일 장 시작 전 실거래 체크리스트
 
-> 작성일: 2026-03-28 (토), 최종 점검: 2026-03-29 (일) 02:41 KST
+> 작성일: 2026-03-28 (토), 최종 점검: 2026-03-29 (일) 06:41 KST
 > 대상: 2026-03-31 (월) 장 시작 전 점검
 
 ---
 
-## 1. 최근 배포 변경사항 (v78~v80)
+## 1. 최근 배포 변경사항 (v78~v82)
+
+### v82 — 승률 개선 (2062e20)
+- **CEO 발언 하드블록**: CEO/임원 발언 뉴스 완전 차단 (변동성 과다)
+- **해외품목허가 cap**: confidence 50 상한 (과대평가 방지)
+- **매도 타이밍 최적화**: trailing stop 및 exit 로직 개선
+- **검증**: 스트레스 테스트 28건 통과 (e1d6f16)
+
+### v81 — 장전 차단 + confidence 상향 (1f1ddb6)
+- **장전 차단**: 장 시작 전 시그널 자동 차단
+- **confidence 상향**: 진입 기준 강화
+- **LLM 프롬프트 강화**: 더 정밀한 분석 유도
 
 ### v80 — _sell_triggered 영구 차단 방지 (4dfd2c9, 7d83ab1)
 - **문제**: trade close 콜백 실패 시 `_sell_triggered`가 영구적으로 True로 남아 해당 포지션의 매도가 차단됨
@@ -50,15 +61,15 @@ ssh kindshot-server "curl -s http://127.0.0.1:8080/health | python3 -m json.tool
 # 기대: status=healthy, circuit_breaker 모두 false
 ```
 
-### 2026-03-28 진단 결과
+### 2026-03-29 06:41 진단 결과 (v82 코드 동기화 후)
 | 항목 | 상태 | 비고 |
 |------|------|------|
-| kindshot.service | ✅ active (running) | paper 모드, PID 153070 |
-| kindshot-dashboard.service | ✅ active (running) | port 8501, 12시간 가동 |
-| Health endpoint | ✅ healthy | circuit breaker 정상 |
+| kindshot.service | ✅ active (running) | paper 모드, PID 156789, v82 코드 |
+| kindshot-dashboard.service | ✅ active (running) | port 8501, 20시간+ 가동 |
+| Health endpoint | ✅ healthy | circuit breaker 정상, error_count=0 |
 | Heartbeat | ✅ 30초 간격 정상 | events_seen=0 (장 마감 후) |
-| Market monitor | ✅ 초기화 완료 | KOSPI -0.40% |
 | 에러/Exception | ✅ 없음 | 클린 로그 |
+| 코드 동기화 | ✅ 완료 | src/ tests/ scripts/ deploy/ rsync 완료 |
 
 ---
 
@@ -211,9 +222,9 @@ ssh kindshot-server "sudo systemctl stop kindshot"
 
 | 항목 | 상태 |
 |------|------|
-| 로컬 ↔ 서버 소스 파일 | ⚠️ 재배포 필요 (trade_db.py, strategy_observability.py 수정) |
+| 로컬 ↔ 서버 소스 파일 | ✅ 동기화 완료 (v82, 2026-03-29 06:41) |
 | 서버 배포 방식 | rsync (git 없음) |
-| 최신 배포 시간 | 2026-03-28 22:05 (config.py 기준) |
+| 최신 배포 시간 | 2026-03-29 06:41 (v82 전체 동기화) |
 | LLM_MODEL (서버) | claude-haiku-4-5-20251001 |
 | LLM_PROVIDER 기본값 | nvidia (NVIDIA_API_KEY 미설정 → Anthropic fallback) |
 | FEED_SOURCE (서버) | KIS |
