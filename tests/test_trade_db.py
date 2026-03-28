@@ -332,3 +332,174 @@ class TestBackfill:
             assert row["spread_close"] == 5.0
         finally:
             db.close()
+
+    def test_backfill_blocked_buy_uses_shadow_snapshots(self, tmp_path: Path) -> None:
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+        snaps_dir = tmp_path / "snaps"
+        snaps_dir.mkdir()
+
+        event_id = "blocked-shadow-001"
+        log_path = logs_dir / "kindshot_20260327.jsonl"
+        rows = [
+            {
+                "type": "event",
+                "event_id": event_id,
+                "ticker": "005930",
+                "corp_name": "삼성전자",
+                "headline": "삼성전자 대형 수주",
+                "bucket": "POS_STRONG",
+                "keyword_hits": ["수주"],
+                "decision_action": "BUY",
+                "decision_confidence": 82,
+                "decision_size_hint": "M",
+                "decision_reason": "guardrail blocked buy",
+                "skip_stage": "GUARDRAIL",
+                "guardrail_result": "OPENING_LOW_CONFIDENCE",
+                "detected_at": "2026-03-27T09:05:00+09:00",
+                "ctx": {"ret_today": 0.2, "adv_value_20d": 1000000000.0, "spread_bps": 8.0},
+                "market_ctx": {},
+            },
+        ]
+        log_path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
+
+        shadow_rows = [
+            {"event_id": f"shadow_{event_id}", "horizon": "t0", "px": 100.0, "ret_long_vs_t0": None, "spread_bps": 9.0},
+            {"event_id": f"shadow_{event_id}", "horizon": "t+5m", "px": 101.0, "ret_long_vs_t0": 0.01, "spread_bps": 7.0},
+            {"event_id": f"shadow_{event_id}", "horizon": "t+20m", "px": 102.0, "ret_long_vs_t0": 0.02, "spread_bps": 6.0},
+        ]
+        (snaps_dir / "20260327.jsonl").write_text(
+            "\n".join(json.dumps(row, ensure_ascii=False) for row in shadow_rows) + "\n",
+            encoding="utf-8",
+        )
+
+        db = TradeDB(tmp_path / "blocked_shadow.db")
+        try:
+            count = backfill_from_logs(db, logs_dir, snaps_dir)
+            assert count == 1
+            rows = db.query(
+                "SELECT skip_stage, ret_t5m, ret_t20m, exit_type, exit_horizon, exit_ret_pct, peak_ret_pct "
+                "FROM trades WHERE event_id = ?",
+                (event_id,),
+            )
+            assert len(rows) == 1
+            row = rows[0]
+            assert row["skip_stage"] == "GUARDRAIL"
+            assert row["ret_t5m"] == 1.0
+            assert row["ret_t20m"] == 2.0
+            assert row["exit_horizon"] == "t+5m"
+            assert row["exit_ret_pct"] == 1.0
+            assert row["peak_ret_pct"] == 2.0
+        finally:
+            db.close()
+
+    def test_backfill_blocked_buy_falls_back_to_skip_snapshots(self, tmp_path: Path) -> None:
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+        snaps_dir = tmp_path / "snaps"
+        snaps_dir.mkdir()
+
+        event_id = "blocked-skip-001"
+        (logs_dir / "kindshot_20260327.jsonl").write_text(
+            json.dumps(
+                {
+                    "type": "event",
+                    "event_id": event_id,
+                    "ticker": "000660",
+                    "corp_name": "SK하이닉스",
+                    "headline": "SK하이닉스 공급계약",
+                    "bucket": "POS_STRONG",
+                    "keyword_hits": ["공급계약"],
+                    "decision_action": "BUY",
+                    "decision_confidence": 80,
+                    "decision_size_hint": "M",
+                    "decision_reason": "skip snapshot fallback",
+                    "skip_stage": "GUARDRAIL",
+                    "guardrail_result": "SAME_STOCK_REBUY",
+                    "detected_at": "2026-03-27T09:10:00+09:00",
+                    "ctx": {"ret_today": 0.1, "adv_value_20d": 1000000000.0, "spread_bps": 6.0},
+                    "market_ctx": {},
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (snaps_dir / "20260327.jsonl").write_text(
+            "\n".join(
+                json.dumps(row, ensure_ascii=False)
+                for row in [
+                    {"event_id": f"skip_{event_id}", "horizon": "t0", "px": 200.0, "ret_long_vs_t0": None, "spread_bps": 6.0},
+                    {"event_id": f"skip_{event_id}", "horizon": "close", "px": 199.0, "ret_long_vs_t0": -0.005, "spread_bps": 5.0},
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        db = TradeDB(tmp_path / "blocked_skip.db")
+        try:
+            count = backfill_from_logs(db, logs_dir, snaps_dir)
+            assert count == 1
+            row = db.query(
+                "SELECT ret_close, exit_horizon, exit_ret_pct FROM trades WHERE event_id = ?",
+                (event_id,),
+            )[0]
+            assert row["ret_close"] == -0.5
+            assert row["exit_horizon"] == "close"
+            assert row["exit_ret_pct"] == -0.5
+        finally:
+            db.close()
+
+    def test_backfill_force_replaces_stale_null_blocked_rows(self, tmp_path: Path) -> None:
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+        snaps_dir = tmp_path / "snaps"
+        snaps_dir.mkdir()
+
+        event_id = "blocked-stale-001"
+        (logs_dir / "kindshot_20260327.jsonl").write_text(
+            json.dumps(
+                {
+                    "type": "event",
+                    "event_id": event_id,
+                    "ticker": "035420",
+                    "corp_name": "NAVER",
+                    "headline": "네이버 전략 제휴",
+                    "bucket": "POS_STRONG",
+                    "keyword_hits": ["제휴"],
+                    "decision_action": "BUY",
+                    "decision_confidence": 79,
+                    "decision_size_hint": "M",
+                    "decision_reason": "stale cleanup",
+                    "skip_stage": "GUARDRAIL",
+                    "guardrail_result": "OPENING_LOW_CONFIDENCE",
+                    "detected_at": "2026-03-27T09:15:00+09:00",
+                    "ctx": {"ret_today": 0.0, "adv_value_20d": 1000000000.0, "spread_bps": 5.0},
+                    "market_ctx": {},
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        db = TradeDB(tmp_path / "blocked_force.db")
+        try:
+            db.upsert_trade(
+                {
+                    "event_id": event_id,
+                    "date": "20260327",
+                    "ticker": "035420",
+                    "skip_stage": "GUARDRAIL",
+                    "exit_ret_pct": None,
+                }
+            )
+            db.commit()
+            assert db.trade_count() == 1
+
+            count = backfill_from_logs(db, logs_dir, snaps_dir, force=True)
+            assert count == 0
+            assert db.trade_count() == 0
+        finally:
+            db.close()

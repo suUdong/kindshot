@@ -520,7 +520,10 @@ def backfill_from_logs(
             eid: ev for eid, ev in events.items()
             if ev.get("decision_action") == "BUY" and ev.get("skip_stage")
         }
+        # 날짜 단위 재구성: force 재백필 시 이전 null/stale row 제거
+        db._conn.execute("DELETE FROM trades WHERE date = ?", (date_str,))
         if not buy_events and not blocked_events:
+            db.commit()
             continue
 
         # 스냅샷 로드: 로그 내 embedded snapshot을 기본으로 두고,
@@ -555,59 +558,72 @@ def backfill_from_logs(
             max_hold_minutes=params["max_hold_minutes"],
         )
 
+        def _snap_ret(snaps: dict[str, dict[str, Any]], horizon: str) -> Optional[float]:
+            row = snaps.get(horizon)
+            if row and row.get("ret_long_vs_t0") is not None:
+                return round(row["ret_long_vs_t0"] * 100, 4)
+            return None
+
+        def _snap_spread(snaps: dict[str, dict[str, Any]], horizon: str) -> Optional[float]:
+            row = snaps.get(horizon)
+            if row is None:
+                return None
+            spread = row.get("spread_bps")
+            if isinstance(spread, (int, float)):
+                return round(float(spread), 4)
+            return None
+
+        def _compute_exit_metrics(
+            event: dict[str, Any],
+            snaps: dict[str, dict[str, Any]],
+        ) -> tuple[str, str, Optional[float], Optional[float]]:
+            exit_type, exit_horizon = classify_buy_exit(event, snaps, config=strat_config)
+
+            exit_ret = None
+            if exit_horizon and snaps.get(exit_horizon):
+                raw_ret = snaps[exit_horizon].get("ret_long_vs_t0")
+                if raw_ret is not None:
+                    exit_ret = round(raw_ret * 100, 4)
+
+            peak_ret = None
+            all_rets = [
+                row["ret_long_vs_t0"] * 100
+                for row in snaps.values()
+                if row.get("ret_long_vs_t0") is not None
+            ]
+            if all_rets:
+                peak_ret = round(max(all_rets), 4)
+
+            if exit_ret is None:
+                for fallback_h in ["close", "t+30m", "t+20m", "t+15m", "t+10m", "t+5m"]:
+                    fallback_ret = _snap_ret(snaps, fallback_h)
+                    if fallback_ret is not None:
+                        exit_ret = fallback_ret
+                        exit_type = exit_type or "timeout"
+                        exit_horizon = exit_horizon or fallback_h
+                        break
+
+            return exit_type or "", exit_horizon or "", exit_ret, peak_ret
+
+        def _resolve_blocked_snapshots(
+            event_id: str,
+        ) -> tuple[dict[str, dict[str, Any]], Optional[str]]:
+            for candidate in (f"shadow_{event_id}", f"skip_{event_id}", event_id):
+                snaps = snap_by_event.get(candidate, {})
+                if any(row.get("ret_long_vs_t0") is not None for row in snaps.values()):
+                    return snaps, candidate
+            return {}, None
+
+        skipped_blocked = 0
         for eid, ev in buy_events.items():
             ctx = ev.get("ctx") or {}
             mctx = ev.get("market_ctx") or {}
             snaps = snap_by_event.get(eid, {})
 
-            # 스냅샷에서 ret % 추출
-            def _snap_ret(h: str) -> Optional[float]:
-                s = snaps.get(h)
-                if s and s.get("ret_long_vs_t0") is not None:
-                    return round(s["ret_long_vs_t0"] * 100, 4)
-                return None
-
-            def _snap_spread(h: str) -> Optional[float]:
-                s = snaps.get(h)
-                if s is None:
-                    return None
-                spread = s.get("spread_bps")
-                if isinstance(spread, (int, float)):
-                    return round(float(spread), 4)
-                return None
-
             t0_snap = snaps.get("t0", {})
             entry_px = t0_snap.get("px")
 
-            # exit 시뮬레이션
-            exit_type, exit_horizon = classify_buy_exit(ev, snaps, config=strat_config)
-
-            # exit ret 계산
-            exit_ret = None
-            peak_ret = None
-            if exit_horizon and snaps.get(exit_horizon):
-                r = snaps[exit_horizon].get("ret_long_vs_t0")
-                if r is not None:
-                    exit_ret = round(r * 100, 4)
-
-            # peak 계산
-            all_rets = []
-            for h_snaps in snaps.values():
-                r = h_snaps.get("ret_long_vs_t0")
-                if r is not None:
-                    all_rets.append(r * 100)
-            if all_rets:
-                peak_ret = round(max(all_rets), 4)
-
-            # exit 없으면 close 또는 마지막 스냅샷 사용
-            if exit_ret is None:
-                for fallback_h in ["close", "t+30m", "t+20m", "t+15m", "t+10m", "t+5m"]:
-                    r = _snap_ret(fallback_h)
-                    if r is not None:
-                        exit_ret = r
-                        exit_type = exit_type or "timeout"
-                        exit_horizon = exit_horizon or fallback_h
-                        break
+            exit_type, exit_horizon, exit_ret, peak_ret = _compute_exit_metrics(ev, snaps)
 
             kw_hits = ev.get("keyword_hits") or []
             detected_at = ev.get("detected_at", "")
@@ -645,29 +661,29 @@ def backfill_from_logs(
                 "kosdaq_change_pct": mctx.get("kosdaq_change_pct"),
                 "kospi_breadth": mctx.get("kospi_breadth_ratio"),
                 "kosdaq_breadth": mctx.get("kosdaq_breadth_ratio"),
-                "ret_t0": _snap_ret("t0"),
-                "ret_t30s": _snap_ret("t+30s"),
-                "ret_t1m": _snap_ret("t+1m"),
-                "ret_t2m": _snap_ret("t+2m"),
-                "ret_t5m": _snap_ret("t+5m"),
-                "ret_t10m": _snap_ret("t+10m"),
-                "ret_t15m": _snap_ret("t+15m"),
-                "ret_t20m": _snap_ret("t+20m"),
-                "ret_t30m": _snap_ret("t+30m"),
-                "ret_close": _snap_ret("close"),
-                "spread_t0": _snap_spread("t0"),
-                "spread_t30s": _snap_spread("t+30s"),
-                "spread_t1m": _snap_spread("t+1m"),
-                "spread_t2m": _snap_spread("t+2m"),
-                "spread_t5m": _snap_spread("t+5m"),
-                "spread_t10m": _snap_spread("t+10m"),
-                "spread_t15m": _snap_spread("t+15m"),
-                "spread_t20m": _snap_spread("t+20m"),
-                "spread_t30m": _snap_spread("t+30m"),
-                "spread_close": _snap_spread("close"),
+                "ret_t0": _snap_ret(snaps, "t0"),
+                "ret_t30s": _snap_ret(snaps, "t+30s"),
+                "ret_t1m": _snap_ret(snaps, "t+1m"),
+                "ret_t2m": _snap_ret(snaps, "t+2m"),
+                "ret_t5m": _snap_ret(snaps, "t+5m"),
+                "ret_t10m": _snap_ret(snaps, "t+10m"),
+                "ret_t15m": _snap_ret(snaps, "t+15m"),
+                "ret_t20m": _snap_ret(snaps, "t+20m"),
+                "ret_t30m": _snap_ret(snaps, "t+30m"),
+                "ret_close": _snap_ret(snaps, "close"),
+                "spread_t0": _snap_spread(snaps, "t0"),
+                "spread_t30s": _snap_spread(snaps, "t+30s"),
+                "spread_t1m": _snap_spread(snaps, "t+1m"),
+                "spread_t2m": _snap_spread(snaps, "t+2m"),
+                "spread_t5m": _snap_spread(snaps, "t+5m"),
+                "spread_t10m": _snap_spread(snaps, "t+10m"),
+                "spread_t15m": _snap_spread(snaps, "t+15m"),
+                "spread_t20m": _snap_spread(snaps, "t+20m"),
+                "spread_t30m": _snap_spread(snaps, "t+30m"),
+                "spread_close": _snap_spread(snaps, "close"),
                 "entry_px": entry_px,
-                "exit_type": exit_type or "",
-                "exit_horizon": exit_horizon or "",
+                "exit_type": exit_type,
+                "exit_horizon": exit_horizon,
                 "exit_ret_pct": exit_ret,
                 "peak_ret_pct": peak_ret,
                 "version_tag": version_tag,
@@ -676,27 +692,23 @@ def backfill_from_logs(
             db.upsert_trade(data)
             total_inserted += 1
 
-        # 가드레일 차단 이벤트: shadow 스냅샷 매칭 (기회비용 분석용)
+        # 가드레일 차단 이벤트: shadow/skip 스냅샷이 있는 경우에만 기회비용 row 저장
         for eid, ev in blocked_events.items():
             ctx = ev.get("ctx") or {}
             mctx = ev.get("market_ctx") or {}
-            shadow_eid = f"shadow_{eid}"
-            snaps = snap_by_event.get(shadow_eid, {})
+            snaps, matched_snapshot_id = _resolve_blocked_snapshots(eid)
+            if not matched_snapshot_id:
+                skipped_blocked += 1
+                logger.debug(
+                    "Skipping blocked BUY without reconstructable shadow snapshots: %s %s",
+                    date_str,
+                    eid,
+                )
+                continue
 
-            def _snap_ret_blocked(h: str) -> Optional[float]:
-                s = snaps.get(h)
-                if s and s.get("ret_long_vs_t0") is not None:
-                    return round(s["ret_long_vs_t0"] * 100, 4)
-                return None
-
-            def _snap_spread_blocked(h: str) -> Optional[float]:
-                s = snaps.get(h)
-                if s is None:
-                    return None
-                spread = s.get("spread_bps")
-                if isinstance(spread, (int, float)):
-                    return round(float(spread), 4)
-                return None
+            exit_type, exit_horizon, exit_ret, peak_ret = _compute_exit_metrics(ev, snaps)
+            t0_snap = snaps.get("t0", {})
+            entry_px = t0_snap.get("px")
 
             kw_hits = ev.get("keyword_hits") or []
             detected_at = ev.get("detected_at", "")
@@ -734,31 +746,31 @@ def backfill_from_logs(
                 "kosdaq_change_pct": mctx.get("kosdaq_change_pct"),
                 "kospi_breadth": mctx.get("kospi_breadth_ratio"),
                 "kosdaq_breadth": mctx.get("kosdaq_breadth_ratio"),
-                "ret_t0": _snap_ret_blocked("t0"),
-                "ret_t30s": _snap_ret_blocked("t+30s"),
-                "ret_t1m": _snap_ret_blocked("t+1m"),
-                "ret_t2m": _snap_ret_blocked("t+2m"),
-                "ret_t5m": _snap_ret_blocked("t+5m"),
-                "ret_t10m": _snap_ret_blocked("t+10m"),
-                "ret_t15m": _snap_ret_blocked("t+15m"),
-                "ret_t20m": _snap_ret_blocked("t+20m"),
-                "ret_t30m": _snap_ret_blocked("t+30m"),
-                "ret_close": _snap_ret_blocked("close"),
-                "spread_t0": _snap_spread_blocked("t0"),
-                "spread_t30s": _snap_spread_blocked("t+30s"),
-                "spread_t1m": _snap_spread_blocked("t+1m"),
-                "spread_t2m": _snap_spread_blocked("t+2m"),
-                "spread_t5m": _snap_spread_blocked("t+5m"),
-                "spread_t10m": _snap_spread_blocked("t+10m"),
-                "spread_t15m": _snap_spread_blocked("t+15m"),
-                "spread_t20m": _snap_spread_blocked("t+20m"),
-                "spread_t30m": _snap_spread_blocked("t+30m"),
-                "spread_close": _snap_spread_blocked("close"),
-                "entry_px": None,
-                "exit_type": "",
-                "exit_horizon": "",
-                "exit_ret_pct": None,
-                "peak_ret_pct": None,
+                "ret_t0": _snap_ret(snaps, "t0"),
+                "ret_t30s": _snap_ret(snaps, "t+30s"),
+                "ret_t1m": _snap_ret(snaps, "t+1m"),
+                "ret_t2m": _snap_ret(snaps, "t+2m"),
+                "ret_t5m": _snap_ret(snaps, "t+5m"),
+                "ret_t10m": _snap_ret(snaps, "t+10m"),
+                "ret_t15m": _snap_ret(snaps, "t+15m"),
+                "ret_t20m": _snap_ret(snaps, "t+20m"),
+                "ret_t30m": _snap_ret(snaps, "t+30m"),
+                "ret_close": _snap_ret(snaps, "close"),
+                "spread_t0": _snap_spread(snaps, "t0"),
+                "spread_t30s": _snap_spread(snaps, "t+30s"),
+                "spread_t1m": _snap_spread(snaps, "t+1m"),
+                "spread_t2m": _snap_spread(snaps, "t+2m"),
+                "spread_t5m": _snap_spread(snaps, "t+5m"),
+                "spread_t10m": _snap_spread(snaps, "t+10m"),
+                "spread_t15m": _snap_spread(snaps, "t+15m"),
+                "spread_t20m": _snap_spread(snaps, "t+20m"),
+                "spread_t30m": _snap_spread(snaps, "t+30m"),
+                "spread_close": _snap_spread(snaps, "close"),
+                "entry_px": entry_px,
+                "exit_type": exit_type,
+                "exit_horizon": exit_horizon,
+                "exit_ret_pct": exit_ret,
+                "peak_ret_pct": peak_ret,
                 "version_tag": version_tag,
                 "hour_slot": hour_slot,
             }
@@ -767,8 +779,8 @@ def backfill_from_logs(
 
         db.commit()
         logger.info(
-            "Backfilled %s: %d traded + %d blocked BUY events",
-            date_str, len(buy_events), len(blocked_events),
+            "Backfilled %s: %d traded + %d blocked BUY events (%d skipped: no shadow data)",
+            date_str, len(buy_events), len(blocked_events) - skipped_blocked, skipped_blocked,
         )
 
     return total_inserted

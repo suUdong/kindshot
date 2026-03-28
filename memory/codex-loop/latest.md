@@ -1,59 +1,51 @@
-Hypothesis: If the remote runtime tree is reconciled to local `main` at `44783ee` and both services restart cleanly, then Kindshot will be deployment-consistent for the full `v71 + NLP + volume + sector` stack, and the remaining uncertainty will narrow to whether fresh live events arrive to exercise those paths.
+Hypothesis: If blocked BUY rows are only backfilled when reconstructable shadow/skip snapshots exist, and date reprocessing deletes stale rows first, then `trade_history.db` will stop accumulating `exit_ret_pct = NULL` artifacts and version/analysis queries will reflect only real exit-capable rows.
 
 Changed files:
-- `DEPLOYMENT_LOG.md`
+- `src/kindshot/trade_db.py`
+- `tests/test_trade_db.py`
 - `memory/codex-loop/latest.md`
-- `memory/codex-loop/session.md`
-- `.omx/context/ralph-kindshot-final-deploy-20260328T010904Z.md`
+- `data/trade_history.db` (local force re-backfill result; not tracked)
+- `.omx/context/exit-ret-pct-null-20260328T201711Z.md`
+- `.omx/plans/prd-exit-ret-pct-null-trace-20260329.md`
+- `.omx/plans/test-spec-exit-ret-pct-null-trace-20260329.md`
 
 Implementation summary:
-- Reconciled `/opt/kindshot` with local `main` via `rsync`, closing remote drift in `src/kindshot/config.py`, `src/kindshot/main.py`, `src/kindshot/telegram_ops.py`, and `tests/test_telegram_ops.py`.
-- Recompiled and reinstalled the remote package, then restarted both `kindshot` and `kindshot-dashboard`.
-- Verified `/health` and dashboard HTTP after warm-up, then watched live journal and polling output for roughly 150 seconds to determine whether new market events exercised the runtime.
+- Traced the runtime close path as `SnapshotScheduler._emit_trade_close()` -> `main._on_trade_close()` -> `PerformanceTracker.record_trade()`, then confirmed `trade_history.db` is populated separately by `backfill_from_logs()`.
+- Confirmed the schema already supports `exit_ret_pct REAL`; the break was not the DB schema.
+- Verified the null rows were coming from blocked BUY events inserted by `backfill_from_logs()` without reconstructable shadow data.
+- Updated `backfill_from_logs()` to:
+  - rebuild a processed date from scratch by deleting prior rows first
+  - reuse a shared exit-metric path for both traded and blocked rows
+  - resolve blocked-event snapshots from `shadow_{event_id}`, `skip_{event_id}`, then raw `event_id`
+  - skip blocked rows entirely when no reconstructable snapshot data exists, instead of inserting `exit_ret_pct = NULL`
+- Added regression tests for shadow snapshot backfill, `skip_` fallback, and stale-null cleanup during force re-backfill.
+- Force re-backfilled the local `data/trade_history.db` using `logs/` plus `data/runtime/price_snapshots/`.
 
-Deployment evidence summary:
-- Remote host: `kindshot-server` (`/opt/kindshot`)
-- Target commit synced from local: `44783ee`
-- Services:
-  - `kindshot` active since `2026-03-28 10:16:13 KST`
-  - `kindshot-dashboard` active since `2026-03-28 10:16:13 KST`
-- Remote `/health` after warm-up returned:
-  - `status=healthy`
-  - `started_at=2026-03-28T10:16:15.416286+09:00`
-  - `last_poll_source=feed`
-  - `last_poll_age_seconds=7`
-  - `events_seen=0`
-  - `events_processed=0`
-  - `llm_calls=0`
-- Remote dashboard probe returned:
-  - `HEAD http://127.0.0.1:8501/` → `200`
-  - `Content-Type: text/html`
+Root cause:
+- The close pipeline itself was intact.
+- The break was in the DB backfill boundary: blocked BUY rows were written into `trades` even when the opportunity-cost snapshot stream needed to reconstruct an exit was absent.
+- Because those rows had no usable snapshot returns, `exit_ret_pct` stayed null by construction.
 
 Validation:
-- local `python3 -m compileall src tests scripts dashboard`
-- local `.venv/bin/python -m pytest tests/test_news_semantics.py tests/test_decision.py tests/test_pipeline.py tests/test_trade_db.py tests/test_context_card.py tests/test_guardrails.py tests/test_entry_filter_analysis.py tests/test_dashboard.py tests/test_volatility_regime.py -q` → `363 passed`
-- local `.venv/bin/python -m pytest -q` → `1030 passed, 1 skipped, 1 warning`
-- local diagnostics `lsp_diagnostics_directory` → `0 errors`, `0 warnings`
-- remote `rsync --dry-run --checksum` found drift in `config.py`, `main.py`, `telegram_ops.py`, and `tests/test_telegram_ops.py`
-- remote `rsync --checksum` synced `src/`, `dashboard/`, `tests/`, `scripts/`, `pyproject.toml`, `README.md`, `requirements.lock`
-- remote `./.venv/bin/python -m compileall src/kindshot tests scripts dashboard`
-- remote `./.venv/bin/python -m pip install -e . --quiet`
-- remote `sudo -n systemctl restart kindshot kindshot-dashboard`
-- remote `curl -fsS http://127.0.0.1:8080/health`
-- remote dashboard `HEAD http://127.0.0.1:8501/`
-- remote live monitor window:
-  - journal heartbeats only, no post-start runtime error
-  - polling trace repeated `items=0 raw=40 dup=40 max_t=235650 last_t=235650`
-  - `polling_trace_20260328.jsonl` stats showed `2137` polls, `2` total new items, `0` errors
+- `pytest -q tests/test_trade_db.py` -> `21 passed`
+- `python3 -m compileall src tests` -> success
+- `pytest -q` -> `1080 passed, 1 skipped, 1 warning`
+- diagnostics on changed files:
+  - `src/kindshot/trade_db.py` -> 0 errors
+  - `tests/test_trade_db.py` -> 0 errors
+- local DB after force re-backfill:
+  - total rows = `14`
+  - `exit_ret_pct IS NULL` rows = `0`
+  - by date: `20260327=5`, `20260320=7`, `20260319=2`
 
 Simplifications made:
-- Kept deployment file-based with direct `rsync` and remote reinstall instead of changing `deploy/` automation.
-- Reused existing health endpoint, dashboard probe, journal, and polling trace surfaces rather than adding new operator tooling in this run.
+- Reused the existing strategy exit classifier for blocked-row reconstruction instead of adding a second exit simulation path.
+- Kept blocked opportunity tracking in the same table, but only for rows that can actually be reconstructed.
+- Used date-level replacement on re-backfill rather than adding schema or migration complexity.
 
 Remaining risks:
-- No fresh live events arrived during the monitor window, so the NLP / sector / volume decision paths were not exercised after restart.
-- No current-day `kindshot_20260328.jsonl` existed during monitoring, which matches the `events_seen=0` state but leaves structured-event verification pending the next live item.
-- The server remains in VTS-backed paper mode because `KIS_REAL_APP_KEY` / `KIS_REAL_APP_SECRET` are absent; stale-exit and T5M loss-exit behavior remain limited in this environment.
+- Historical blocked BUY rows without any preserved shadow/skip snapshots are now omitted, so opportunity-cost coverage depends on runtime snapshot preservation.
+- Existing older logs appear not to contain reconstructable shadow streams for many blocked BUY events, so historical blocked coverage remains sparse even though null artifacts are removed.
 
 Rollback note:
-- Re-sync the prior known-good runtime tree to `/opt/kindshot`, rerun `./.venv/bin/python -m pip install -e . --quiet`, and restart `kindshot` plus `kindshot-dashboard`.
+- Revert the commit and restore `data/trade_history.db` from `data/trade_history.db.bak` if you want the previous local analysis DB contents back.
