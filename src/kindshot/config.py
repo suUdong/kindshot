@@ -103,7 +103,7 @@ class Config:
     llm_wait_for_s: float = 12.0    # asyncio.wait_for fires first
     llm_cache_ttl_s: float = 60.0
     llm_cache_sweep_s: float = 300.0
-    llm_max_concurrency: int = field(default_factory=lambda: _env_int("LLM_MAX_CONCURRENCY", 2))
+    llm_max_concurrency: int = field(default_factory=lambda: _env_int("LLM_MAX_CONCURRENCY", 4))
     llm_cache_max_entries: int = field(default_factory=lambda: _env_int("LLM_CACHE_MAX_ENTRIES", 1024))
 
     # --- KIS ---
@@ -217,6 +217,9 @@ class Config:
     account_risk_pct: float = field(default_factory=lambda: _env_float("ACCOUNT_RISK_PCT", 2.0))  # 계좌 대비 최대 리스크 %
     minute_volume_cap_pct: float = field(default_factory=lambda: _env_float("MINUTE_VOLUME_CAP_PCT", 5.0))  # 1분 거래대금의 5%
     ask_depth_cap_pct: float = field(default_factory=lambda: _env_float("ASK_DEPTH_CAP_PCT", 10.0))  # 매도 5호가 잔량의 10%
+    # v76: ATR 기반 변동성 정규화 포지션 사이징
+    position_sizing_base_atr_pct: float = field(default_factory=lambda: _env_float("POSITION_SIZING_BASE_ATR_PCT", 2.0))  # 기준 ATR (이 값 대비 스케일링)
+    position_sizing_atr_max_scale: float = field(default_factory=lambda: _env_float("POSITION_SIZING_ATR_MAX_SCALE", 1.3))  # 저변동성 시 최대 확대 배율
     # 마이크로 라이브: 1건당 주문 금액 상한 (안전장치)
     micro_live_max_order_won: float = field(default_factory=lambda: _env_float("MICRO_LIVE_MAX_ORDER_WON", 1_000_000))
     # 시간대별 confidence 문턱

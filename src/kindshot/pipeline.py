@@ -570,6 +570,12 @@ async def execute_bucket_path(
             pipeline_profile=profile,
         )
 
+    # v76: MTF를 LLM과 병렬 실행 — 둘은 독립적이므로 동시 시작
+    _mtf_task: asyncio.Task | None = None
+    if config.mtf_enabled and kis is not None:
+        from kindshot.mtf_analysis import analyze_mtf
+        _mtf_task = asyncio.create_task(analyze_mtf(raw.ticker, kis, config))
+
     _decision_t0 = time.monotonic()
     try:
         risk_budget = resolve_daily_loss_budget(config, guardrail_state) if guardrail_state is not None else None
@@ -861,19 +867,23 @@ async def execute_bucket_path(
                             stats.win_rate * 100 if stats else 0,
                             stats.total_trades if stats else 0)
 
-        # 9. v68: 멀티 타임프레임 추세 확인
-        if config.mtf_enabled and kis is not None:
-            from kindshot.mtf_analysis import analyze_mtf
-            mtf_result = await analyze_mtf(raw.ticker, kis, config)
-            before = decision.confidence
-            decision.confidence = apply_mtf_confidence_adjustment(decision.confidence, mtf_result.alignment_score)
-            if decision.confidence != before:
-                logger.info("MTF alignment adj [%s]: %d → %d (alignment=%d, %s)",
-                            raw.ticker, before, decision.confidence,
-                            mtf_result.alignment_score, mtf_result.detail)
-            else:
-                logger.debug("MTF neutral [%s]: alignment=%d (%s)",
-                             raw.ticker, mtf_result.alignment_score, mtf_result.detail)
+        # 9. v68/v76: 멀티 타임프레임 추세 확인 (LLM과 병렬 실행된 task await)
+        if _mtf_task is not None:
+            try:
+                mtf_result = await _mtf_task
+            except Exception:
+                logger.warning("MTF task failed [%s], skipping adjustment", raw.ticker)
+                mtf_result = None
+            if mtf_result is not None:
+                before = decision.confidence
+                decision.confidence = apply_mtf_confidence_adjustment(decision.confidence, mtf_result.alignment_score)
+                if decision.confidence != before:
+                    logger.info("MTF alignment adj [%s]: %d → %d (alignment=%d, %s)",
+                                raw.ticker, before, decision.confidence,
+                                mtf_result.alignment_score, mtf_result.detail)
+                else:
+                    logger.debug("MTF neutral [%s]: alignment=%d (%s)",
+                                 raw.ticker, mtf_result.alignment_score, mtf_result.detail)
 
         # graduated penalty cap: 강한 시그널은 보호, 약한 시그널은 감점 허용
         # LLM 88+ (대형촉매): cap 8 → 최악 80 (BUY 유지)
@@ -907,6 +917,14 @@ async def execute_bucket_path(
                 pattern_boost.count,
                 pattern_boost.total_pnl_pct,
             )
+
+    # v76: MTF task cleanup — BUY가 아니면 cancel
+    if _mtf_task is not None and not _mtf_task.done():
+        _mtf_task.cancel()
+        try:
+            await _mtf_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
     # 킬 스위치: 연패 시 size_hint 다운그레이드
     if decision.action == Action.BUY and guardrail_state is not None:
@@ -1064,20 +1082,28 @@ async def execute_bucket_path(
             _account_bal = guardrail_state.account_balance if guardrail_state is not None else 0.0
             _ob = raw_data.orderbook_snapshot if ctx else None
             _ask_depth = (_ob.ask_price1 * _ob.ask_size1) if _ob is not None else 0.0
+            # v76: minute_volume 추정 (ADV 20일 / 390분) + ATR 전달
+            _adv = raw_data.adv_value_20d if raw_data.adv_value_20d else 0.0
+            _minute_vol = _adv / 390.0 if _adv > 0 else 0.0
+            _atr_pct = ctx.atr_14 if ctx else None
             _target_won = calculate_position_size(
                 config,
                 decision.size_hint.value,
                 account_balance=_account_bal,
+                minute_volume=_minute_vol,
                 ask_depth_notional=_ask_depth,
                 macro_position_multiplier=_macro_mult,
+                atr_pct=_atr_pct,
             )
             logger.info(
-                "LIVE position sizing [%s]: hint=%s macro=%.2f acct=%.0f ask_depth=%.0f => target=%.0f won",
+                "LIVE position sizing [%s]: hint=%s macro=%.2f acct=%.0f ask_depth=%.0f min_vol=%.0f atr=%.2f%% => target=%.0f won",
                 raw.ticker,
                 decision.size_hint.value,
                 _macro_mult,
                 _account_bal,
                 _ask_depth,
+                _minute_vol,
+                _atr_pct or 0.0,
                 _target_won,
             )
             _buy_result = await order_executor.buy_market_with_retry(

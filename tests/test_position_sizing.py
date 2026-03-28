@@ -80,3 +80,39 @@ def test_zero_account_balance_ignored(cfg):
     """account_balance=0이면 계좌 리스크 제약 미적용."""
     result = calculate_position_size(cfg, "M", account_balance=0)
     assert result == 5_000_000
+
+
+# ── v76: ATR 기반 변동성 정규화 테스트 ──
+
+
+def test_atr_high_volatility_shrinks(cfg):
+    """ATR > base(2.0%)이면 포지션 축소."""
+    # ATR=4.0%, base=2.0% → scale=0.5 → 5M * 0.5 = 2.5M
+    result = calculate_position_size(cfg, "M", atr_pct=4.0)
+    assert result == pytest.approx(2_500_000)
+
+
+def test_atr_low_volatility_expands(cfg):
+    """ATR < base(2.0%)이면 포지션 확대 (최대 1.3x)."""
+    # ATR=1.0%, base=2.0% → scale=2.0 → capped at 1.3 → 5M * 1.3 = 6.5M
+    result = calculate_position_size(cfg, "M", atr_pct=1.0)
+    assert result == pytest.approx(6_500_000)
+
+
+def test_atr_at_base_no_change(cfg):
+    """ATR == base(2.0%)이면 scale=1.0 → 변화 없음."""
+    result = calculate_position_size(cfg, "M", atr_pct=2.0)
+    assert result == 5_000_000
+
+
+def test_atr_none_backward_compatible(cfg):
+    """atr_pct=None이면 기존 로직과 동일."""
+    result = calculate_position_size(cfg, "M", atr_pct=None)
+    assert result == 5_000_000
+
+
+def test_atr_extreme_high_has_floor(cfg):
+    """극단적 고변동성(ATR=10%)에도 50% 하한 적용."""
+    # ATR=10%, base=2.0% → scale=0.2 → floored at 0.5 → 5M * 0.5 = 2.5M
+    result = calculate_position_size(cfg, "M", atr_pct=10.0)
+    assert result == pytest.approx(2_500_000)

@@ -1009,13 +1009,25 @@ def calculate_position_size(
     minute_volume: float = 0.0,
     ask_depth_notional: float = 0.0,
     macro_position_multiplier: float = 1.0,
+    atr_pct: float | None = None,
 ) -> float:
     """포지션 사이즈 계산: min(hint 기반, 계좌리스크, 거래대금, 호가잔량).
+
+    v76: ATR 기반 변동성 정규화 — 고변동성이면 축소, 저변동성이면 확대.
+    base_atr_pct 대비 비례 스케일링, 최대 확대 max_scale배.
 
     Returns:
         주문 금액 (won). 0이면 진입 불가.
     """
     hint_size = config.order_size_for_hint(size_hint) * macro_position_multiplier
+
+    # v76: ATR 변동성 정규화 스케일링
+    if atr_pct is not None and atr_pct > 0 and config.position_sizing_base_atr_pct > 0:
+        atr_scale = config.position_sizing_base_atr_pct / atr_pct
+        atr_scale = min(atr_scale, config.position_sizing_atr_max_scale)  # 저변동성 확대 상한
+        atr_scale = max(atr_scale, 0.5)  # 고변동성 축소 하한 (50%)
+        hint_size *= atr_scale
+
     candidates = [hint_size]
 
     if account_balance > 0 and config.account_risk_pct > 0:
