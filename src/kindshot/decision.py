@@ -559,6 +559,9 @@ _ARTICLE_MARKERS = (
     "주가 전망", "실적 전망", "호실적", "수혜주",
     "테마", "급등", "폭등", "급락", "상한가",
     "모멘텀", "랠리", "반등 기대", "저점 매수",
+    # v82 추가: 인물 발언/인터뷰 패턴 (LG엔솔 -0.20% CEO 발언 미감지)
+    "부회장 ", "사장 ", "부사장 ", "전무 ", "상무 ",
+    "인터뷰", "발언", "코멘트", "밝혔", "말했", "전했",
 )
 
 
@@ -567,7 +570,12 @@ def has_article_pattern(headline: str, *, raw_headline: str | None = None, dorg:
     source_text = raw_headline or headline
     if is_commentary_headline(source_text, dorg=dorg):
         return True
-    return any(marker in headline for marker in _ARTICLE_MARKERS)
+    if any(marker in headline for marker in _ARTICLE_MARKERS):
+        return True
+    # v82: 따옴표 패턴 감지 — 인물 발언/인터뷰 (LG엔솔 김동명 '올해 ESS 기회' -0.20%)
+    if "'" in headline or "'" in headline or "'" in headline or '"' in headline:
+        return True
+    return False
 
 
 def _rule_based_decide(

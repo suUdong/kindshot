@@ -168,15 +168,15 @@ class Config:
     # Trailing stop + 30분 룰
     trailing_stop_enabled: bool = field(default_factory=lambda: _env_bool("TRAILING_STOP_ENABLED", True))
     trailing_stop_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_PCT", 1.0))  # v70: 0.8→1.0% (3/27: 조기 trailing→종가 수익 유실 방지)
-    trailing_stop_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_ACTIVATION_PCT", 0.3))  # v71: 0.5→0.3% (효성중공업 peak +0.51%에서 trailing 미활성→-1.1% 하락 방지)
+    trailing_stop_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_ACTIVATION_PCT", 0.2))  # v82: 0.3→0.2% (GC녹십자 -0.17% — 소폭 수익 peak에서 trailing 미활성, 수익 유실)
     # 시간대별 trailing stop 폭 (진입 후 경과 시간 기준) — v65: 전체 완화
-    trailing_stop_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_EARLY_PCT", 0.4))  # v71: 0.5→0.4 (activation 0.3%와 조합, 초기 수익 보호 강화)
+    trailing_stop_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_EARLY_PCT", 0.3))  # v82: 0.4→0.3 (activation 0.2%와 조합, 소폭 수익 peak 보호 강화)
     trailing_stop_mid_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_MID_PCT", 0.8))  # 5~30분: v65 0.5→0.8 (추세 유지)
     trailing_stop_late_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_LATE_PCT", 1.0))  # 30분+: v65 0.7→1.0 (장기 홀드 여유)
     max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 20))  # v70: 15→20분 (3/27: TIMEOUT→종가 +0.35% 개선, 18건 중 10건 종가가 높음)
     # t+5m 체크포인트 청산: 5분 경과 시 손실이면 즉시 청산, 수익이면 타이트 trailing
     t5m_loss_exit_enabled: bool = field(default_factory=lambda: _env_bool("T5M_LOSS_EXIT_ENABLED", True))
-    t5m_loss_exit_threshold_pct: float = field(default_factory=lambda: _env_float("T5M_LOSS_EXIT_THRESHOLD_PCT", -0.3))  # v71: 0→-0.3% (금호건설 +2.2% peak→0% exit 방지, 미미한 손실은 홀드)
+    t5m_loss_exit_threshold_pct: float = field(default_factory=lambda: _env_float("T5M_LOSS_EXIT_THRESHOLD_PCT", -0.15))  # v82: -0.3→-0.15% (셀트리온 -0.61% — t+5m에서 -0.2% 수준 홀드→추가 하락, 조기 컷)
     t5m_profit_trailing_pct: float = field(default_factory=lambda: _env_float("T5M_PROFIT_TRAILING_PCT", 0.5))  # v65: 0.2→0.5% t+5m 이후 수익 포지션 trailing (기존 너무 타이트)
     partial_take_profit_enabled: bool = field(default_factory=lambda: _env_bool("PARTIAL_TAKE_PROFIT_ENABLED", True))
     partial_take_profit_target_ratio: float = field(default_factory=lambda: _env_float("PARTIAL_TAKE_PROFIT_TARGET_RATIO", 1.0))

@@ -29,12 +29,12 @@ class StrategyReportConfig:
     paper_take_profit_pct: float = 2.0   # v65: 1.0→2.0
     paper_stop_loss_pct: float = -1.5
     trailing_stop_enabled: bool = True
-    trailing_stop_activation_pct: float = 0.3  # v71: 0.5→0.3
-    trailing_stop_early_pct: float = 0.4  # v71: 0.5→0.4
+    trailing_stop_activation_pct: float = 0.2  # v82: 0.3→0.2
+    trailing_stop_early_pct: float = 0.3  # v82: 0.4→0.3
     trailing_stop_mid_pct: float = 0.8   # v65: 0.5→0.8
     trailing_stop_late_pct: float = 1.0  # v65: 0.7→1.0
     max_hold_minutes: int = field(default_factory=lambda: Config().max_hold_minutes)
-    t5m_loss_exit_threshold_pct: float = -0.3  # 라이브와 동일: 미미한 손실은 홀드
+    t5m_loss_exit_threshold_pct: float = -0.15  # v82: -0.3→-0.15 소폭 손실 조기 컷
 
 
 def _ret_pct(snapshots: dict[str, dict[str, Any]], horizon: str) -> float | None:

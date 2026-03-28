@@ -751,6 +751,21 @@ async def execute_bucket_path(
                 logger.info("Dorg confidence adj [%s]: %d → %d (dorg=%s)",
                             raw.ticker, before, decision.confidence, raw.dorg)
 
+        # 0d. v82: 해외법인 품목허가 confidence cap — FDA/EMA/식약처 직접 아닌 해외 허가는 임팩트 낮음
+        # 셀트리온 일본 품목허가 -0.61%, GC녹십자 해외 허가 -0.17% 손실 패턴
+        _hl_lower = analysis_headline
+        if "품목허가" in _hl_lower and not any(
+            fda_kw in _hl_lower for fda_kw in ("FDA", "EMA", "식약처", "미국", "유럽")
+        ):
+            _foreign_cap = 75  # min_buy_confidence(78) 미만 → 자동 SKIP
+            if decision.confidence > _foreign_cap:
+                before = decision.confidence
+                decision.confidence = _foreign_cap
+                logger.warning(
+                    "Foreign product approval cap [%s]: %d → %d (non-FDA/EMA 품목허가)",
+                    raw.ticker, before, decision.confidence,
+                )
+
         # 1. ADV 기반 (소형주 집중 전략)
         if raw_data.adv_value_20d is not None:
             before = decision.confidence
