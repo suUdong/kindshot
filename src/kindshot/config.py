@@ -159,7 +159,7 @@ class Config:
     prior_volume_gate_start_kst_hour: int = field(default_factory=lambda: _env_int("PRIOR_VOLUME_GATE_START_KST_HOUR", 10))
     prior_volume_gate_start_kst_minute: int = field(default_factory=lambda: _env_int("PRIOR_VOLUME_GATE_START_KST_MINUTE", 0))
     chase_buy_pct: float = field(default_factory=lambda: _env_float("CHASE_BUY_PCT", 5.0))  # 3.0→5.0: 뉴스 기반 3-5% 상승은 정상 반응, 추격매수 기준 완화
-    min_buy_confidence: int = field(default_factory=lambda: _env_int("MIN_BUY_CONFIDENCE", 73))  # 78→73: 84% 차단률 과도, POS_STRONG conf 73-77 시그널 허용
+    min_buy_confidence: int = field(default_factory=lambda: _env_int("MIN_BUY_CONFIDENCE", 78))  # v81: 73→78 (conf 75-77 borderline 전부 손실: 크래프톤 -1.37%, 지아이이노 -2.78%)
     no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_HOUR", 15))  # 15시 이후 BUY 차단
     no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_MINUTE", 15))  # 15:00→15:15: KRX 15:30 마감, 15분 여유 확보
     # 가상 익절/손절 (paper mode 추적용)

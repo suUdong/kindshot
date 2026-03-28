@@ -495,10 +495,10 @@ def check_guardrails(
     if decision_action == Action.BUY and decision_confidence is not None and config.no_buy_after_kst_hour < 24:
         now_kst = _resolve_decision_time_kst(decision_time_kst)
         h, m = now_kst.hour, now_kst.minute
-        # v71: 08:00~09:00 장전/직전 — 08시대 worst(-0.49%), spread=None, 호가 없음
-        # 기존 08:30+ → 08:00+로 확장 (08:00~08:30도 시장 미개장)
-        if h == 8 and decision_confidence < profile.opening_min_confidence:
-            return GuardrailResult(passed=False, reason="PRE_OPENING_LOW_CONFIDENCE")
+        # v81: hour<9 장전 BUY 전면 차단 — 14건 분석 결과 hour=8 4건 모두 손실(0% WR)
+        # 장 미개장 상태에서 가격 데이터 없이 max_hold 타이머 소진, 금호건설 peak+2.2%→exit 0%
+        if h < 9:
+            return GuardrailResult(passed=False, reason="PRE_MARKET_BLOCKED")
         # 09:00~09:30: 변동성 최고, 높은 확신만 진입
         if h == 9 and m < 30 and decision_confidence < profile.opening_min_confidence:
             return GuardrailResult(passed=False, reason="OPENING_LOW_CONFIDENCE")
