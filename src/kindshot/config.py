@@ -119,6 +119,13 @@ class Config:
     feed_source: str = field(default_factory=lambda: _env("FEED_SOURCE", "KIS"))  # KIS, KIND, DART, or comma-separated (e.g. "KIS,DART")
     analyst_feed_enabled: bool = field(default_factory=lambda: _env_bool("ANALYST_FEED_ENABLED", True))
     analyst_feed_interval_s: float = field(default_factory=lambda: _env_float("ANALYST_FEED_INTERVAL_S", 30.0))
+    # --- Y2I (유튜브 인사이트 시그널) ---
+    y2i_feed_enabled: bool = field(default_factory=lambda: _env_bool("Y2I_FEED_ENABLED", False))
+    y2i_signal_path: str = field(default_factory=lambda: _env("Y2I_SIGNAL_PATH", str(Path.home() / "workspace/y2i/.omx/state/signal_tracker.json")))
+    y2i_min_score: float = field(default_factory=lambda: _env_float("Y2I_MIN_SCORE", 55.0))
+    y2i_min_verdict: str = field(default_factory=lambda: _env("Y2I_MIN_VERDICT", "WATCH"))  # WATCH, BUY, STRONG_BUY
+    y2i_poll_interval_s: float = field(default_factory=lambda: _env_float("Y2I_POLL_INTERVAL_S", 60.0))
+    y2i_lookback_days: int = field(default_factory=lambda: _env_int("Y2I_LOOKBACK_DAYS", 3))
     kind_rss_url: str = "https://kind.krx.co.kr/disclosure/todaydisclosure.do?method=searchTodayDisclosureRSS"
     # --- DART OpenAPI ---
     dart_api_key: str = field(default_factory=lambda: _env("DART_API_KEY"))

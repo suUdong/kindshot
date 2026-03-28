@@ -18,7 +18,7 @@ from kindshot.order import OrderExecutor
 from kindshot.context_card import configure_cache as configure_context_card_cache
 from kindshot.decision import DecisionEngine
 from kindshot.event_registry import EventRegistry
-from kindshot.feed import AnalystFeed, DartFeed, KindFeed, KisFeed, MultiFeed
+from kindshot.feed import AnalystFeed, DartFeed, KindFeed, KisFeed, MultiFeed, Y2iFeed
 from kindshot.guardrails import GuardrailState
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -191,6 +191,18 @@ def _build_feed(config, feed_source: str, kis, session, state_dir):
         logger.info("AnalystFeed enabled (interval=%.0fs)", config.analyst_feed_interval_s)
     elif config.analyst_feed_enabled and not kis:
         logger.warning("AnalystFeed requested but KIS client disabled — skipping")
+
+    # Y2I: 유튜브 인사이트 시그널 피드
+    if config.y2i_feed_enabled:
+        from pathlib import Path
+        y2i_path = Path(config.y2i_signal_path)
+        if y2i_path.exists():
+            feeds.append(Y2iFeed(config))
+            labels.append("Y2I")
+            logger.info("Y2iFeed enabled (path=%s, min_score=%.0f, interval=%.0fs)",
+                         config.y2i_signal_path, config.y2i_min_score, config.y2i_poll_interval_s)
+        else:
+            logger.warning("Y2iFeed enabled but signal file not found: %s", config.y2i_signal_path)
 
     if not feeds:
         logger.warning("No valid feed sources — falling back to KIND RSS")

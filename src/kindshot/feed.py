@@ -791,6 +791,146 @@ class DartFeed:
 # ── MultiFeed compositor ───────────────────────────────────────────
 
 
+# ── Y2I Signal Feed ──────────────────────────────────────────────
+
+
+# verdict 서열: 높을수록 강한 시그널
+_Y2I_VERDICT_RANK = {"REJECT": 0, "WATCH": 1, "BUY": 2, "STRONG_BUY": 3}
+
+
+class Y2iFeed:
+    """y2i(유튜브 인사이트) signal_tracker.json을 폴링하여 KRX 시그널을 RawDisclosure로 변환.
+
+    - KRX 종목(.KS, .KQ)만 필터
+    - score >= y2i_min_score && verdict >= y2i_min_verdict 통과한 시그널만 emit
+    - (ticker, signal_date) 기반 중복 제거
+    - y2i_lookback_days 이내 시그널만 처리
+    """
+
+    def __init__(self, config: Config) -> None:
+        self._config = config
+        self._signal_path = Path(config.y2i_signal_path)
+        self._seen_keys: OrderedDict[str, None] = OrderedDict()
+        self._stop_event = asyncio.Event()
+        self._last_poll_at: Optional[datetime] = None
+        self._min_verdict_rank = _Y2I_VERDICT_RANK.get(config.y2i_min_verdict.upper(), 1)
+
+    @property
+    def last_poll_at(self) -> Optional[datetime]:
+        return self._last_poll_at
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def _parse_signal_file(self) -> list[dict]:
+        """signal_tracker.json 파싱. 실패 시 빈 목록 반환."""
+        try:
+            raw = self._signal_path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            return data.get("signals", []) if isinstance(data, dict) else []
+        except (OSError, json.JSONDecodeError, KeyError):
+            logger.warning("Y2iFeed: failed to read %s", self._signal_path)
+            return []
+
+    @staticmethod
+    def _extract_krx_ticker(ticker_str: str) -> Optional[str]:
+        """'005930.KS' → '005930', 비-KRX는 None."""
+        if not ticker_str:
+            return None
+        if ticker_str.endswith((".KS", ".KQ")):
+            code = ticker_str.split(".")[0]
+            if re.fullmatch(r"\d{6}", code):
+                return code
+        return None
+
+    def _qualifies(self, sig: dict) -> bool:
+        """score 및 verdict 기준 통과 여부."""
+        score = sig.get("signal_score", 0) or 0
+        if score < self._config.y2i_min_score:
+            return False
+        verdict = str(sig.get("verdict", "")).upper()
+        return _Y2I_VERDICT_RANK.get(verdict, 0) >= self._min_verdict_rank
+
+    def poll_once(self) -> list[RawDisclosure]:
+        """단일 폴링 사이클. 새 KRX 시그널을 RawDisclosure로 변환."""
+        self._last_poll_at = datetime.now(_KST)
+        signals = self._parse_signal_file()
+        if not signals:
+            return []
+
+        now = datetime.now(_KST)
+        cutoff = (now - timedelta(days=self._config.y2i_lookback_days)).date()
+        results: list[RawDisclosure] = []
+
+        for sig in signals:
+            ticker_raw = sig.get("ticker", "")
+            krx_code = self._extract_krx_ticker(ticker_raw)
+            if not krx_code:
+                continue
+
+            if not self._qualifies(sig):
+                continue
+
+            # 날짜 필터: lookback 이내
+            signal_date_str = sig.get("signal_date", "")
+            try:
+                sig_date = datetime.strptime(signal_date_str, "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                continue
+            if sig_date < cutoff:
+                continue
+
+            # 중복 제거 키: ticker + signal_date
+            dedup_key = f"{krx_code}:{signal_date_str}"
+            if dedup_key in self._seen_keys:
+                continue
+            self._seen_keys[dedup_key] = None
+
+            company = sig.get("company_name", "")
+            score = sig.get("signal_score", 0)
+            verdict = sig.get("verdict", "")
+            channel = sig.get("channel_slug", "")
+
+            title = f"{company}({krx_code}) [Y2I:{channel}] {verdict} score={score:.0f}"
+
+            results.append(
+                RawDisclosure(
+                    title=title,
+                    link=f"y2i://signal/{krx_code}/{signal_date_str}",
+                    rss_guid=dedup_key,
+                    published=signal_date_str,
+                    ticker=krx_code,
+                    corp_name=company,
+                    detected_at=now,
+                    dorg="y2i",
+                )
+            )
+
+        # seen_keys 상한
+        while len(self._seen_keys) > 5000:
+            self._seen_keys.popitem(last=False)
+
+        if results:
+            logger.info("Y2iFeed: %d new KRX signals (score≥%.0f)", len(results), self._config.y2i_min_score)
+        return results
+
+    async def stream(self) -> AsyncIterator[list[RawDisclosure]]:
+        """폴링 루프. stop() 호출 시 종료."""
+        while not self._stop_event.is_set():
+            items = self.poll_once()
+            if items:
+                yield items
+            if self._stop_event.is_set():
+                break
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self._config.y2i_poll_interval_s,
+                )
+            except asyncio.TimeoutError:
+                pass
+
+
 class MultiFeed:
     """여러 피드를 병렬 폴링하고 교차 중복제거하여 단일 스트림으로 합성.
 
