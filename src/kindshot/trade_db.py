@@ -61,6 +61,16 @@ CREATE TABLE IF NOT EXISTS trades (
     ret_t20m        REAL,
     ret_t30m        REAL,
     ret_close       REAL,
+    spread_t0       REAL,
+    spread_t30s     REAL,
+    spread_t1m      REAL,
+    spread_t2m      REAL,
+    spread_t5m      REAL,
+    spread_t10m     REAL,
+    spread_t15m     REAL,
+    spread_t20m     REAL,
+    spread_t30m     REAL,
+    spread_close    REAL,
     entry_px        REAL,
 
     -- simulated exit
@@ -100,6 +110,16 @@ ADDITIVE_TRADE_COLUMNS: list[tuple[str, str]] = [
     ("news_cluster_size", "INTEGER DEFAULT 0"),
     ("contract_amount_eok", "REAL"),
     ("impact_score", "INTEGER DEFAULT 0"),
+    ("spread_t0", "REAL"),
+    ("spread_t30s", "REAL"),
+    ("spread_t1m", "REAL"),
+    ("spread_t2m", "REAL"),
+    ("spread_t5m", "REAL"),
+    ("spread_t10m", "REAL"),
+    ("spread_t15m", "REAL"),
+    ("spread_t20m", "REAL"),
+    ("spread_t30m", "REAL"),
+    ("spread_close", "REAL"),
 ]
 
 # 버전-날짜 매핑: 실제 서버 배포 기준
@@ -290,6 +310,8 @@ class TradeDB:
             "kospi_change_pct", "kosdaq_change_pct", "kospi_breadth", "kosdaq_breadth",
             "ret_t0", "ret_t30s", "ret_t1m", "ret_t2m", "ret_t5m",
             "ret_t10m", "ret_t15m", "ret_t20m", "ret_t30m", "ret_close",
+            "spread_t0", "spread_t30s", "spread_t1m", "spread_t2m", "spread_t5m",
+            "spread_t10m", "spread_t15m", "spread_t20m", "spread_t30m", "spread_close",
             "entry_px", "exit_type", "exit_horizon", "exit_ret_pct", "peak_ret_pct",
             "version_tag", "hour_slot",
         ]
@@ -541,6 +563,15 @@ def backfill_from_logs(
                     return round(s["ret_long_vs_t0"] * 100, 4)
                 return None
 
+            def _snap_spread(h: str) -> Optional[float]:
+                s = snaps.get(h)
+                if s is None:
+                    return None
+                spread = s.get("spread_bps")
+                if isinstance(spread, (int, float)):
+                    return round(float(spread), 4)
+                return None
+
             t0_snap = snaps.get("t0", {})
             entry_px = t0_snap.get("px")
 
@@ -620,6 +651,16 @@ def backfill_from_logs(
                 "ret_t20m": _snap_ret("t+20m"),
                 "ret_t30m": _snap_ret("t+30m"),
                 "ret_close": _snap_ret("close"),
+                "spread_t0": _snap_spread("t0"),
+                "spread_t30s": _snap_spread("t+30s"),
+                "spread_t1m": _snap_spread("t+1m"),
+                "spread_t2m": _snap_spread("t+2m"),
+                "spread_t5m": _snap_spread("t+5m"),
+                "spread_t10m": _snap_spread("t+10m"),
+                "spread_t15m": _snap_spread("t+15m"),
+                "spread_t20m": _snap_spread("t+20m"),
+                "spread_t30m": _snap_spread("t+30m"),
+                "spread_close": _snap_spread("close"),
                 "entry_px": entry_px,
                 "exit_type": exit_type or "",
                 "exit_horizon": exit_horizon or "",
@@ -666,6 +707,8 @@ def simulate_version_on_trades(
         SELECT event_id, date, ticker, headline, keyword_hits, confidence,
                ret_t0, ret_t30s, ret_t1m, ret_t2m, ret_t5m,
                ret_t10m, ret_t15m, ret_t20m, ret_t30m, ret_close,
+               spread_t0, spread_t30s, spread_t1m, spread_t2m, spread_t5m,
+               spread_t10m, spread_t15m, spread_t20m, spread_t30m, spread_close,
                bucket, guardrail_result
         FROM trades
     """)
@@ -677,6 +720,12 @@ def simulate_version_on_trades(
         "ret_t15m": "t+15m", "ret_t20m": "t+20m", "ret_t30m": "t+30m",
         "ret_close": "close",
     }
+    spread_map = {
+        "spread_t0": "t0", "spread_t30s": "t+30s", "spread_t1m": "t+1m",
+        "spread_t2m": "t+2m", "spread_t5m": "t+5m", "spread_t10m": "t+10m",
+        "spread_t15m": "t+15m", "spread_t20m": "t+20m", "spread_t30m": "t+30m",
+        "spread_close": "close",
+    }
 
     for trade in trades:
         # 스냅샷 dict 재구성
@@ -685,6 +734,10 @@ def simulate_version_on_trades(
             val = trade.get(col)
             if val is not None:
                 snapshots[horizon] = {"ret_long_vs_t0": val / 100.0}
+        for col, horizon in spread_map.items():
+            spread = trade.get(col)
+            if spread is not None:
+                snapshots.setdefault(horizon, {})["spread_bps"] = spread
 
         kw_hits = json.loads(trade.get("keyword_hits", "[]"))
         event_like = {
@@ -715,6 +768,8 @@ def simulate_version_on_trades(
             "exit_type": exit_type or "",
             "exit_horizon": exit_horizon or "",
             "exit_ret_pct": exit_ret,
+            "entry_spread_bps": snapshots.get("t0", {}).get("spread_bps"),
+            "exit_spread_bps": snapshots.get(exit_horizon or "", {}).get("spread_bps") if exit_horizon else None,
             "confidence": trade.get("confidence"),
             "guardrail_result": trade.get("guardrail_result", ""),
         })

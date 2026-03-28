@@ -18,7 +18,7 @@
 - Track: NLP Signal Enrichment
 - Phase: Post-Deployment Observation
 - Status: In Progress (user override)
-- Reason: The requested NLP semantic-enrichment slice is now deployed. The next bounded step is collecting the first live-session evidence that numeric extraction, related-news clustering, and impact-score metadata are present and behaving sanely under real paper-mode headlines.
+- Reason: The server has now been reconciled to `44783ee` and restarted cleanly, but the post-deploy monitoring window only saw duplicate polling and idle heartbeats. The next bounded step is collecting the first fresh live item that actually exercises the deployed NLP, sector, and volume paths.
 
 ## Phases
 
@@ -59,9 +59,9 @@
 
 ## Next Run Candidates
 
-1. Observe the next live paper session and confirm that deployed event/context logs contain `news_signal` metadata with plausible contract/revenue/op-profit/cluster/impact values.
-2. If live paper decisions appear over-boosted or under-boosted, replay a recent headline batch and recalibrate the bounded impact-score adjustment before changing other guardrails.
-3. Once semantic-enrichment coverage is confirmed, return to the next highest-leverage hypothesis with this richer headline surface available to analysis and prompt tuning.
+1. Observe the next fresh live paper item and confirm that a current-day runtime log row contains `news_signal`, sector momentum, and volume fields with plausible values.
+2. If polling remains duplicate-only with no current-day structured log, inspect upstream feed freshness before changing runtime strategy logic.
+3. Once live semantic-enrichment coverage is confirmed, return to the next highest-leverage hypothesis with this richer signal surface available to analysis and prompt tuning.
 
 ## Deferred
 

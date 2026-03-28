@@ -64,27 +64,31 @@ def test_build_report_handles_current_strategy_blocks_and_version_metrics(tmp_pa
             "horizon": "t0",
             "px": 100.0,
             "ret_long_vs_t0": None,
+            "spread_bps": 10.0,
         },
         {
             "type": "price_snapshot",
             "event_id": "e1",
             "horizon": "t+5m",
             "px": 100.6,
-            "ret_long_vs_t0": 0.006,
+            "ret_long_vs_t0": 0.005497251374312928,
+            "spread_bps": 8.0,
         },
         {
             "type": "price_snapshot",
             "event_id": "e1",
             "horizon": "t+20m",
             "px": 101.2,
-            "ret_long_vs_t0": 0.012,
+            "ret_long_vs_t0": 0.011494252873563307,
+            "spread_bps": 6.0,
         },
         {
             "type": "price_snapshot",
             "event_id": "e1",
             "horizon": "close",
             "px": 101.0,
-            "ret_long_vs_t0": 0.01,
+            "ret_long_vs_t0": 0.009495252373813155,
+            "spread_bps": 5.0,
         },
         {
             "type": "event",
@@ -123,6 +127,7 @@ def test_build_report_handles_current_strategy_blocks_and_version_metrics(tmp_pa
             "horizon": "t0",
             "px": 200.0,
             "ret_long_vs_t0": None,
+            "spread_bps": 12.0,
         },
         {
             "type": "price_snapshot",
@@ -130,6 +135,7 @@ def test_build_report_handles_current_strategy_blocks_and_version_metrics(tmp_pa
             "horizon": "t+5m",
             "px": 200.4,
             "ret_long_vs_t0": 0.002,
+            "spread_bps": 11.0,
         },
         {
             "type": "price_snapshot",
@@ -137,6 +143,7 @@ def test_build_report_handles_current_strategy_blocks_and_version_metrics(tmp_pa
             "horizon": "t+20m",
             "px": 201.0,
             "ret_long_vs_t0": 0.005,
+            "spread_bps": 9.0,
         },
         {
             "type": "price_snapshot",
@@ -144,6 +151,7 @@ def test_build_report_handles_current_strategy_blocks_and_version_metrics(tmp_pa
             "horizon": "close",
             "px": 200.8,
             "ret_long_vs_t0": 0.004,
+            "spread_bps": 7.0,
         },
     ]
     _write_jsonl(log_path, rows)
@@ -191,9 +199,18 @@ def test_build_report_handles_current_strategy_blocks_and_version_metrics(tmp_pa
     report = mod.build_report(tmp_path, lookback_days=30)
 
     assert report["meta"]["available_window"]["from"] == "20260327"
+    assert report["meta"]["requested_window"]["from"] == "20260226"
     assert report["current_strategy_estimate"]["candidate_trade_count"] == 2
     assert report["current_strategy_estimate"]["accepted_trade_count"] == 1
     assert report["current_strategy_estimate"]["blocked_by_reason"]["ENTRY_DELAY_TOO_LATE"] == 1
+    assert report["current_strategy_estimate"]["gross_summary"]["trade_count"] == 1
+    assert report["current_strategy_estimate"]["net_summary"]["trade_count"] == 1
+    assert (
+        report["current_strategy_estimate"]["net_summary"]["total_ret_pct"]
+        < report["current_strategy_estimate"]["gross_summary"]["total_ret_pct"]
+    )
+    assert report["current_strategy_estimate"]["cost_validation"]["exit_spread_available_count"] == 1
+    assert report["current_strategy_estimate"]["cost_validation"]["runtime_entry_slippage_aligned_count"] == 1
     assert len(report["version_comparison"]) == 7
     assert report["best_parameter_set"]["entry"]["max_entry_delay_ms"] == 60000
 
@@ -210,10 +227,20 @@ def test_render_text_mentions_limitations(tmp_path: Path) -> None:
             "accepted_trade_count": 1,
             "blocked_trade_count": 1,
             "blocked_by_reason": {"ENTRY_DELAY_TOO_LATE": 1},
-            "summary": {
+            "gross_summary": {
                 "win_rate_pct": 100.0,
                 "total_ret_pct": 1.0,
                 "total_pnl_won": 50000.0,
+            },
+            "net_summary": {
+                "win_rate_pct": 100.0,
+                "total_ret_pct": 0.755,
+                "total_pnl_won": 37750.0,
+            },
+            "cost_validation": {
+                "runtime_entry_slippage_aligned_count": 1,
+                "exit_spread_available_count": 1,
+                "exit_spread_missing_count": 0,
             },
         },
         "version_comparison": [],
@@ -241,5 +268,105 @@ def test_render_text_mentions_limitations(tmp_path: Path) -> None:
     text = mod.render_text(report)
 
     assert "Current strategy estimate" in text
+    assert "gross_total_ret_pct=+1.0000%" in text
+    assert "net_total_ret_pct=+0.7550%" in text
+    assert "Cost validation" in text
     assert "ENTRY_DELAY_TOO_LATE" in text
     assert "llm replay blocked" in text
+
+
+def test_build_report_supports_three_month_requested_window(tmp_path: Path) -> None:
+    mod = _load_module()
+
+    for date_str in ("20260105", "20260327"):
+        log_path = tmp_path / "logs" / f"kindshot_{date_str}.jsonl"
+        rows = [
+            {
+                "type": "event",
+                "event_id": f"e-{date_str}",
+                "ticker": "005930",
+                "corp_name": "삼성전자",
+                "headline": "삼성전자 흑자 전환",
+                "bucket": "POS_STRONG",
+                "keyword_hits": ["흑자전환"],
+                "decision_action": "BUY",
+                "decision_confidence": 84,
+                "decision_size_hint": "M",
+                "decision_reason": "historical buy",
+                "detected_at": f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}T10:00:00+09:00",
+                "delay_ms": 0,
+                "ctx": {
+                    "ret_today": 1.0,
+                    "adv_value_20d": 10000000000.0,
+                    "spread_bps": 10.0,
+                    "intraday_value_vs_adv20d": 0.2,
+                },
+                "market_ctx": {},
+            },
+            {
+                "type": "decision",
+                "event_id": f"e-{date_str}",
+                "action": "BUY",
+                "confidence": 84,
+                "size_hint": "M",
+                "reason": "buy",
+                "decision_source": "LLM",
+            },
+            {
+                "type": "price_snapshot",
+                "event_id": f"e-{date_str}",
+                "horizon": "t0",
+                "px": 100.0,
+                "ret_long_vs_t0": None,
+                "spread_bps": 10.0,
+            },
+        {
+            "type": "price_snapshot",
+            "event_id": f"e-{date_str}",
+            "horizon": "t+20m",
+            "px": 101.2,
+            "ret_long_vs_t0": 0.011494252873563307,
+            "spread_bps": 6.0,
+        },
+        {
+            "type": "price_snapshot",
+            "event_id": f"e-{date_str}",
+            "horizon": "close",
+            "px": 101.0,
+            "ret_long_vs_t0": 0.009495252373813155,
+            "spread_bps": 5.0,
+        },
+        ]
+        _write_jsonl(log_path, rows)
+        _write_jsonl(
+            tmp_path / "data" / "runtime" / "context_cards" / f"{date_str}.jsonl",
+            [
+                {
+                    "type": "context_card",
+                    "event_id": f"e-{date_str}",
+                    "delay_ms": 0,
+                    "ctx": {
+                        "ret_today": 1.0,
+                        "adv_value_20d": 10000000000.0,
+                        "spread_bps": 10.0,
+                        "intraday_value_vs_adv20d": 0.2,
+                    },
+                    "raw": {
+                        "ret_today": 1.0,
+                        "adv_value_20d": 10000000000.0,
+                        "spread_bps": 10.0,
+                        "intraday_value_vs_adv20d": 0.2,
+                        "sector": "",
+                    },
+                }
+            ],
+        )
+
+    report = mod.build_report(tmp_path, lookback_months=3)
+
+    assert report["meta"]["requested_window"]["from"] == "20251227"
+    assert report["meta"]["requested_window"]["to"] == "20260327"
+    assert report["meta"]["available_window"]["from"] == "20260105"
+    assert report["meta"]["available_window"]["to"] == "20260327"
+    assert report["meta"]["coverage"]["covered_log_days"] == 2
+    assert report["meta"]["coverage"]["requested_months"] == 3

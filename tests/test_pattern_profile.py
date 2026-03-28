@@ -36,7 +36,7 @@ def test_build_recent_pattern_profile_prefers_stable_fallback_cohorts():
     assert profile.boost_patterns[0].news_type == "clinical_regulatory"
     assert profile.boost_patterns[0].hour_bucket == "midday"
     assert profile.boost_patterns[0].ticker is None
-    assert profile.boost_patterns[0].confidence_delta == 3
+    assert profile.boost_patterns[0].confidence_delta == 5  # v73: profit boost 3→5
     assert profile.loss_guardrail_patterns[0].pattern_type == "news_type_hour_bucket"
     assert profile.loss_guardrail_patterns[0].news_type == "contract"
     assert profile.loss_guardrail_patterns[0].hour_bucket == "open"

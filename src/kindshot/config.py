@@ -220,7 +220,7 @@ class Config:
     # 마이크로 라이브: 1건당 주문 금액 상한 (안전장치)
     micro_live_max_order_won: float = field(default_factory=lambda: _env_float("MICRO_LIVE_MAX_ORDER_WON", 1_000_000))
     # 시간대별 confidence 문턱
-    opening_min_confidence: int = field(default_factory=lambda: _env_int("OPENING_MIN_CONFIDENCE", 85))  # v71: 82→85 (09시대 전체 손실 87%, PF 0.08 — 높은 확신만 진입)
+    opening_min_confidence: int = field(default_factory=lambda: _env_int("OPENING_MIN_CONFIDENCE", 88))  # v73: 85→88 (09시대 87% 손실률 — 최고 확신만 진입)
     afternoon_min_confidence: int = field(default_factory=lambda: _env_int("AFTERNOON_MIN_CONFIDENCE", 80))  # 13:00-14:30 BUY 최소 confidence (오후 승률 저조)
     closing_min_confidence: int = field(default_factory=lambda: _env_int("CLOSING_MIN_CONFIDENCE", 85))  # 14:30-15:00 BUY 최소 confidence
     fast_profile_hold_minutes: int = field(default_factory=lambda: _env_int("FAST_PROFILE_HOLD_MINUTES", 20))  # fast-decay hold profile 기준값 (수주/공급계약)
@@ -238,7 +238,7 @@ class Config:
 
     # --- Market ---
     kospi_halt_pct: float = field(default_factory=lambda: _env_float("KOSPI_HALT_PCT", -8.0))
-    min_market_breadth_ratio: float = field(default_factory=lambda: _env_float("MIN_MARKET_BREADTH_RATIO", 0.3))
+    min_market_breadth_ratio: float = field(default_factory=lambda: _env_float("MIN_MARKET_BREADTH_RATIO", 0.25))  # v73: 0.3→0.25 (3/26 15건 과도한 RISK_OFF 차단 완화)
 
     # --- Price snapshots ---
     snapshot_horizons: tuple[str, ...] = ("t0", "t+30s", "t+1m", "t+2m", "t+5m", "t+10m", "t+15m", "t+20m", "t+30m", "close")
@@ -309,11 +309,11 @@ class Config:
     recent_pattern_profile_path: Path = field(default_factory=lambda: Path(_env("RECENT_PATTERN_PROFILE_PATH", "data/runtime/recent_pattern_profile.json")))
     recent_pattern_lookback_days: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_LOOKBACK_DAYS", 7))
     recent_pattern_min_trades: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MIN_TRADES", 2))
-    recent_pattern_profit_boost: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_PROFIT_BOOST", 3))
+    recent_pattern_profit_boost: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_PROFIT_BOOST", 5))  # v73: 3→5 (midday 수익 패턴 부스트 강화)
     recent_pattern_profit_min_win_rate: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_PROFIT_MIN_WIN_RATE", 0.5))
     recent_pattern_profit_min_total_pnl_pct: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_PROFIT_MIN_TOTAL_PNL_PCT", 0.15))
-    recent_pattern_loss_max_win_rate: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_LOSS_MAX_WIN_RATE", 0.25))
-    recent_pattern_loss_max_total_pnl_pct: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_LOSS_MAX_TOTAL_PNL_PCT", -0.5))
+    recent_pattern_loss_max_win_rate: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_LOSS_MAX_WIN_RATE", 0.30))  # v73: 0.25→0.30 (더 많은 손실 패턴 캡처)
+    recent_pattern_loss_max_total_pnl_pct: float = field(default_factory=lambda: _env_float("RECENT_PATTERN_LOSS_MAX_TOTAL_PNL_PCT", -0.3))  # v73: -0.5→-0.3 (약한 손실도 조기 차단)
     recent_pattern_max_profit_patterns: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MAX_PROFIT_PATTERNS", 5))  # v72: 2→5 (수익 패턴 더 많이 캡처)
     recent_pattern_max_loss_patterns: int = field(default_factory=lambda: _env_int("RECENT_PATTERN_MAX_LOSS_PATTERNS", 5))  # v72: 2→5 (손실 패턴 더 많이 캡처)
 

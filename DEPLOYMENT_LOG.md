@@ -28,6 +28,54 @@ Kindshot 운영 배포 이력 기록용 문서.
 
 ## Entries
 
+### 2026-03-28 10:19 KST
+
+- Environment: AWS Lightsail (`kindshot-server`, paper mode)
+- Branch: `main`
+- Commit: `44783ee`
+- Deployer: Codex manual `rsync` + direct `ssh kindshot-server`
+- Summary:
+  1. **final runtime re-sync** — re-synced the validated `main` tree to `/opt/kindshot` so the server no longer carries the partial v72 drift that was leaving `config.py`, `main.py`, `telegram_ops.py`, and `tests/test_telegram_ops.py` behind local `HEAD`
+  2. **remote reinstall + service restart** — reran remote `compileall`, reinstalled with `./.venv/bin/python -m pip install -e . --quiet`, and restarted `kindshot` plus `kindshot-dashboard`
+  3. **health + live monitor sign-off** — confirmed `/health` and dashboard HTTP recovered after warm-up, then watched journal/polling live and established the explicit evidence boundary that no fresh items arrived to exercise the new runtime path during the monitoring window
+- Validation:
+  - local `python3 -m compileall src tests scripts dashboard`
+  - local `.venv/bin/python -m pytest tests/test_news_semantics.py tests/test_decision.py tests/test_pipeline.py tests/test_trade_db.py tests/test_context_card.py tests/test_guardrails.py tests/test_entry_filter_analysis.py tests/test_dashboard.py tests/test_volatility_regime.py -q` → `363 passed`
+  - local `.venv/bin/python -m pytest -q` → `1030 passed, 1 skipped, 1 warning`
+  - diagnostics `lsp_diagnostics_directory` → `0 errors`, `0 warnings`
+  - remote `rsync --dry-run --checksum` detected drift in:
+    - `src/kindshot/config.py`
+    - `src/kindshot/main.py`
+    - `src/kindshot/telegram_ops.py`
+    - `tests/test_telegram_ops.py`
+  - remote `rsync` synced `src/`, `dashboard/`, `tests/`, `scripts/`, `pyproject.toml`, `README.md`, `requirements.lock`
+  - remote `./.venv/bin/python -m compileall src/kindshot tests scripts dashboard`
+  - remote `./.venv/bin/python -m pip install -e . --quiet`
+  - remote `sudo -n systemctl restart kindshot kindshot-dashboard`
+  - remote `systemctl is-active kindshot kindshot-dashboard` → both `active`
+  - remote `systemctl status` showed:
+    - `kindshot` active since `2026-03-28 10:16:13 KST`
+    - `kindshot-dashboard` active since `2026-03-28 10:16:13 KST`
+  - remote `/health` after warm-up returned:
+    - `status=healthy`
+    - `started_at=2026-03-28T10:16:15.416286+09:00`
+    - `last_poll_source=feed`
+    - `last_poll_age_seconds=7`
+    - `events_seen=0`
+    - `events_processed=0`
+    - `llm_calls=0`
+  - remote dashboard probe `HEAD http://127.0.0.1:8501/` → `200 text/html`
+  - remote live monitoring window (~150s) showed:
+    - journal heartbeats only, no post-startup errors
+    - polling trace `items=0 raw=40 dup=40 max_t=235650 last_t=235650`
+    - no `kindshot_20260328.jsonl` file yet
+- Rollback: re-sync the prior known-good runtime tree to `/opt/kindshot`, rerun `./.venv/bin/python -m pip install -e . --quiet`, and restart `kindshot` plus `kindshot-dashboard`
+- Result: 성공
+- Notes:
+  - the first post-restart `/health` probe hit warm-up timing and briefly saw `connection refused`; the follow-up probe passed once `kindshot.health` bound `127.0.0.1:8080`
+  - server remains in VTS-backed paper mode because `KIS_REAL_APP_KEY` / `KIS_REAL_APP_SECRET` are not present; journal also warns that stale exit and T5M loss exit stay disabled in this mode
+  - live feature confirmation is bounded by upstream feed reality: during this run no fresh items arrived, so NLP/sector/volume decision paths were not exercised after restart
+
 ### 2026-03-28 08:16 KST
 
 - Environment: AWS Lightsail (`kindshot-server`, paper mode)

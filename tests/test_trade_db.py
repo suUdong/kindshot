@@ -99,6 +99,7 @@ def sample_logs(tmp_path: Path) -> tuple[Path, Path]:
                     "horizon": horizon,
                     "px": 75000 if eid == "test001" else 120000,
                     "ret_long_vs_t0": ret if horizon != "t0" else None,
+                    "spread_bps": 5.0 if horizon == "t0" else 4.0,
                 }
                 f.write(json.dumps(snap) + "\n")
 
@@ -220,6 +221,8 @@ class TestBackfill:
             assert row["news_cluster_id"] == "cluster001"
             assert row["ret_t5m"] is not None
             assert row["entry_px"] == 75000
+            assert row["spread_t0"] == 5.0
+            assert row["spread_t5m"] == 4.0
 
             # 중복 실행 방지
             count2 = backfill_from_logs(db, logs_dir, snaps_dir)
@@ -283,6 +286,7 @@ class TestBackfill:
                 "horizon": "t0",
                 "px": 100.0,
                 "ret_long_vs_t0": None,
+                "spread_bps": 10.0,
             },
             {
                 "type": "price_snapshot",
@@ -290,6 +294,7 @@ class TestBackfill:
                 "horizon": "t+5m",
                 "px": 101.0,
                 "ret_long_vs_t0": 0.01,
+                "spread_bps": 8.0,
             },
             {
                 "type": "price_snapshot",
@@ -297,6 +302,7 @@ class TestBackfill:
                 "horizon": "t+20m",
                 "px": 102.0,
                 "ret_long_vs_t0": 0.02,
+                "spread_bps": 6.0,
             },
             {
                 "type": "price_snapshot",
@@ -304,6 +310,7 @@ class TestBackfill:
                 "horizon": "close",
                 "px": 101.5,
                 "ret_long_vs_t0": 0.015,
+                "spread_bps": 5.0,
             },
         ]
         log_path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
@@ -312,10 +319,16 @@ class TestBackfill:
         try:
             count = backfill_from_logs(db, logs_dir, snaps_dir)
             assert count == 1
-            row = db.query("SELECT ret_t5m, ret_t20m, ret_close, exit_ret_pct FROM trades WHERE event_id = 'embedded001'")[0]
+            row = db.query(
+                "SELECT ret_t5m, ret_t20m, ret_close, exit_ret_pct, spread_t0, spread_t20m, spread_close "
+                "FROM trades WHERE event_id = 'embedded001'"
+            )[0]
             assert row["ret_t5m"] == 1.0
             assert row["ret_t20m"] == 2.0
             assert row["ret_close"] == 1.5
             assert row["exit_ret_pct"] is not None
+            assert row["spread_t0"] == 10.0
+            assert row["spread_t20m"] == 6.0
+            assert row["spread_close"] == 5.0
         finally:
             db.close()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -85,7 +86,14 @@ def _format_blocked_detail_line(label: str, detail: dict[str, Any], *, primary_k
     return " ".join(parts)
 
 
-def send_telegram_message(text: str, bot_token: str, chat_id: str, *, timeout_s: float = 10.0) -> bool:
+def send_telegram_message(
+    text: str,
+    bot_token: str,
+    chat_id: str,
+    *,
+    timeout_s: float = 10.0,
+    opener: Callable[..., Any] | None = None,
+) -> bool:
     """Send a Telegram Bot API message using only stdlib."""
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = json.dumps(
@@ -96,7 +104,8 @@ def send_telegram_message(text: str, bot_token: str, chat_id: str, *, timeout_s:
         }
     ).encode("utf-8")
     req = Request(url, data=payload, headers={"Content-Type": "application/json"})
-    with urlopen(req, timeout=timeout_s) as resp:
+    request_opener = opener or urlopen
+    with request_opener(req, timeout=timeout_s) as resp:
         result = json.loads(resp.read())
     return bool(result.get("ok"))
 
