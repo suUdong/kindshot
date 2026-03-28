@@ -384,7 +384,13 @@ class SnapshotScheduler:
         position_closed: bool = True,
         remaining_position_pct: float = 0.0,
     ) -> None:
+        logger.info(
+            "TRADE_CLOSE_ENTER [%s] %s: exit_type=%s horizon=%s ret=%.4f px=%.2f pos_closed=%s sell_triggered=%s",
+            snap.ticker, snap.event_id[:8], exit_type, horizon, ret_long, exit_px,
+            position_closed, snap.event_id in self._sell_triggered,
+        )
         if position_closed and snap.event_id in self._sell_triggered:
+            logger.warning("TRADE_CLOSE_SKIP [%s] %s: already in _sell_triggered", snap.ticker, snap.event_id[:8])
             return
         initial_size = self._event_order_size.get(snap.event_id, self._config.order_size)
         active_fraction = self._remaining_position_pct.get(snap.event_id, 1.0)
@@ -414,26 +420,43 @@ class SnapshotScheduler:
         if self._pnl_callback:
             self._pnl_callback(snap.ticker, pnl_won)
         if self._trade_close_callback and entry_px is not None:
-            self._trade_close_callback(
-                event_id=snap.event_id,
-                ticker=snap.ticker,
-                entry_px=entry_px,
-                exit_px=exit_px,
-                ret_pct=ret_long * 100,
-                pnl_won=pnl_won,
-                exit_type=exit_type,
-                horizon=horizon,
-                hold_seconds=hold_seconds,
-                size_won=realized_size,
-                confidence=self._event_confidence.get(snap.event_id, 0),
-                mode=snap.mode,
-                position_closed=position_closed,
-                remaining_size_won=initial_size * remaining_position_pct,
-                exit_fraction=realized_fraction,
-                initial_size_won=initial_size,
-                cumulative_pnl_won=cumulative_pnl_won,
-                cumulative_ret_pct=cumulative_ret_pct,
-                average_exit_px=average_exit_px,
+            logger.info(
+                "TRADE_CLOSE_CALLBACK [%s] %s: entry=%.2f exit=%.2f ret=%.2f%% pnl=%.0f size=%.0f",
+                snap.ticker, snap.event_id[:8], entry_px, exit_px, ret_long * 100, pnl_won, realized_size,
+            )
+            try:
+                self._trade_close_callback(
+                    event_id=snap.event_id,
+                    ticker=snap.ticker,
+                    entry_px=entry_px,
+                    exit_px=exit_px,
+                    ret_pct=ret_long * 100,
+                    pnl_won=pnl_won,
+                    exit_type=exit_type,
+                    horizon=horizon,
+                    hold_seconds=hold_seconds,
+                    size_won=realized_size,
+                    confidence=self._event_confidence.get(snap.event_id, 0),
+                    mode=snap.mode,
+                    position_closed=position_closed,
+                    remaining_size_won=initial_size * remaining_position_pct,
+                    exit_fraction=realized_fraction,
+                    initial_size_won=initial_size,
+                    cumulative_pnl_won=cumulative_pnl_won,
+                    cumulative_ret_pct=cumulative_ret_pct,
+                    average_exit_px=average_exit_px,
+                )
+            except Exception:
+                logger.exception("TRADE_CLOSE_CALLBACK_ERROR [%s] %s", snap.ticker, snap.event_id[:8])
+        elif entry_px is None:
+            logger.warning(
+                "TRADE_CLOSE_NO_ENTRY_PX [%s] %s: t0_prices=%s",
+                snap.ticker, snap.event_id[:8], snap.event_id in self._t0_prices,
+            )
+        elif not self._trade_close_callback:
+            logger.warning(
+                "TRADE_CLOSE_NO_CALLBACK [%s] %s: callback not set",
+                snap.ticker, snap.event_id[:8],
             )
 
     def _cleanup_event_tracking(self, event_id: str) -> None:
@@ -710,10 +733,18 @@ class SnapshotScheduler:
                             )
 
         # 가상 청산: paper는 즉시 close 처리, live는 실매도 성공 시 close 처리
+        _ve = snap.event_id in self._virtual_exits
+        _st = snap.event_id in self._sell_triggered
+        if snap.is_buy_decision and _ve:
+            logger.info(
+                "VIRTUAL_EXIT_CHECK [%s] %s: virtual_exit=%s sell_triggered=%s ret_long=%s px=%s order_exec=%s horizon=%s",
+                snap.ticker, snap.event_id[:8], _ve, _st, ret_long, px,
+                self._order_executor is not None, snap.horizon,
+            )
         if (
             snap.is_buy_decision
-            and snap.event_id in self._virtual_exits
-            and snap.event_id not in self._sell_triggered
+            and _ve
+            and not _st
         ):
             exit_type = self._virtual_exit_reasons.get(snap.event_id, "virtual_exit")
             if self._order_executor is not None:

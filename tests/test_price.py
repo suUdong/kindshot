@@ -722,7 +722,8 @@ async def test_t5m_gap_down_hits_stop_loss_before_loss_checkpoint():
 
     assert scheduler._virtual_exits["evt1"] == "t+5m"
     assert scheduler._t5m_profitable["evt1"] is False
-    assert "PAPER SL hit" in mock_info.call_args.args[0]
+    all_info_msgs = [call.args[0] for call in mock_info.call_args_list if call.args]
+    assert any("PAPER SL hit" in msg for msg in all_info_msgs), f"Expected 'PAPER SL hit' in info logs, got: {all_info_msgs}"
 
 
 async def test_t5m_gap_up_marks_profitable_checkpoint():
