@@ -1,0 +1,146 @@
+{
+  "summary": {
+    "total_pos_events": 1339,
+    "guardrail_eligible_events": 229,
+    "v78_passed": 136,
+    "v78_blocked": 93,
+    "v78_pass_rate_pct": 59.4,
+    "old_passed": 132,
+    "old_blocked": 97,
+    "old_pass_rate_pct": 57.6,
+    "newly_passed_count": 4,
+    "pass_rate_improvement_pct": 1.7
+  },
+  "v78_block_reasons": {
+    "ADV_TOO_LOW": 31,
+    "PRE_OPENING_LOW_CONFIDENCE": 24,
+    "MARKET_CLOSE_CUTOFF": 18,
+    "LOW_CONFIDENCE": 7,
+    "OPENING_LOW_CONFIDENCE": 4,
+    "ORDERBOOK_TOP_LEVEL_LIQUIDITY": 4,
+    "CLOSING_LOW_CONFIDENCE": 2,
+    "CHASE_BUY_BLOCKED": 1,
+    "PRIOR_VOLUME_TOO_THIN": 1,
+    "AFTERNOON_LOW_CONFIDENCE": 1
+  },
+  "old_block_reasons": {
+    "ADV_TOO_LOW": 31,
+    "PRE_OPENING_LOW_CONFIDENCE": 21,
+    "LOW_CONFIDENCE": 20,
+    "MARKET_CLOSE_CUTOFF": 12,
+    "OPENING_LOW_CONFIDENCE": 4,
+    "ORDERBOOK_TOP_LEVEL_LIQUIDITY": 3,
+    "CHASE_BUY_BLOCKED": 2,
+    "INTRADAY_VALUE_TOO_THIN": 2,
+    "PRIOR_VOLUME_TOO_THIN": 1,
+    "CLOSING_LOW_CONFIDENCE": 1
+  },
+  "threshold_changes": {
+    "min_buy_confidence": {
+      "old": 78,
+      "new": 73
+    },
+    "min_intraday_value_vs_adv20d": {
+      "old": 0.15,
+      "new": 0.05
+    },
+    "chase_buy_pct": {
+      "old": 3.0,
+      "new": 5.0
+    },
+    "fast_profile_no_buy_after": {
+      "old": "14:00",
+      "new": "14:30"
+    },
+    "no_buy_after": {
+      "old": "15:00",
+      "new": "15:15"
+    },
+    "orderbook_liquidity_pct": {
+      "old": "100%",
+      "new": "50%"
+    }
+  },
+  "day_stats": {
+    "2026-03-18": {
+      "v78_passed": 0,
+      "v78_blocked": 4,
+      "old_passed": 0,
+      "old_blocked": 4
+    },
+    "2026-03-19": {
+      "v78_passed": 24,
+      "v78_blocked": 10,
+      "old_passed": 24,
+      "old_blocked": 10
+    },
+    "2026-03-20": {
+      "v78_passed": 20,
+      "v78_blocked": 21,
+      "old_passed": 17,
+      "old_blocked": 24
+    },
+    "2026-03-23": {
+      "v78_passed": 21,
+      "v78_blocked": 1,
+      "old_passed": 21,
+      "old_blocked": 1
+    },
+    "2026-03-24": {
+      "v78_passed": 6,
+      "v78_blocked": 0,
+      "old_passed": 6,
+      "old_blocked": 0
+    },
+    "2026-03-26": {
+      "v78_passed": 41,
+      "v78_blocked": 25,
+      "old_passed": 41,
+      "old_blocked": 25
+    },
+    "2026-03-27": {
+      "v78_passed": 24,
+      "v78_blocked": 32,
+      "old_passed": 23,
+      "old_blocked": 33
+    }
+  },
+  "newly_passed_events": [
+    {
+      "event_id": "8b617031a655",
+      "ticker": "358570",
+      "headline": "지아이이노베이션, J&J 자회사 얀센과 전립선암 병용 임상 착수",
+      "bucket": "POS_WEAK",
+      "confidence": 75,
+      "old_block_reason": "LOW_CONFIDENCE",
+      "time": "2026-03-20"
+    },
+    {
+      "event_id": "204d07d656fd",
+      "ticker": "259960",
+      "headline": "장병규 크래프톤 의장, 100억원대 자사주 매입한다",
+      "bucket": "POS_STRONG",
+      "confidence": 76,
+      "old_block_reason": "INTRADAY_VALUE_TOO_THIN",
+      "time": "2026-03-20"
+    },
+    {
+      "event_id": "b7deceb9cfc3",
+      "ticker": "373220",
+      "headline": "LG엔솔 김동명 \"올해 ESS 기회…경쟁사와 특허 갈등 없을 것\"",
+      "bucket": "POS_STRONG",
+      "confidence": 78,
+      "old_block_reason": "INTRADAY_VALUE_TOO_THIN",
+      "time": "2026-03-20"
+    },
+    {
+      "event_id": "cf446f1e38d7",
+      "ticker": "272210",
+      "headline": "한화시스템(주) 단일판매ㆍ공급계약체결",
+      "bucket": "POS_STRONG",
+      "confidence": 74,
+      "old_block_reason": "LOW_CONFIDENCE",
+      "time": "2026-03-27"
+    }
+  ]
+}
