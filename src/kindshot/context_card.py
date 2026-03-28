@@ -286,11 +286,16 @@ async def build_context_card(
     ticker: str,
     kis: Optional[KisClient] = None,
     config: Optional[Config] = None,
+    sector_snapshot_prefetched: dict | None = None,
 ) -> tuple[ContextCard, ContextCardData]:
     """Build context card for a ticker.
 
     Returns (ContextCard, ContextCardData) with additional normalized
     fields needed by quant and guardrail checks.
+
+    Args:
+        sector_snapshot_prefetched: pipeline_loop에서 이미 fetch한 sector snapshot.
+            전달 시 중복 HTTP 호출 제거 (v77 레이턴시 최적화).
     """
     if config is not None:
         configure_cache(config.pykrx_cache_ttl_s, config.pykrx_cache_max_size)
@@ -306,12 +311,14 @@ async def build_context_card(
                 ticker,
             )
         )
-        sector_task = asyncio.create_task(
-            fetch_alpha_scanner_sector_snapshot(
-                config.alpha_scanner_api_base_url,
-                config.alpha_scanner_api_timeout_s,
+        # sector_snapshot가 이미 있으면 중복 fetch 생략
+        if sector_snapshot_prefetched is None:
+            sector_task = asyncio.create_task(
+                fetch_alpha_scanner_sector_snapshot(
+                    config.alpha_scanner_api_base_url,
+                    config.alpha_scanner_api_timeout_s,
+                )
             )
-        )
 
     pending_tasks = [hist_task]
     if price_task is not None:
@@ -394,6 +401,22 @@ async def build_context_card(
                     generated_at=sector_result.get("generated_at"),
                     is_rising=rotation_signal in {"LEADING", "IMPROVING"},
                 )
+    elif sector_snapshot_prefetched is not None:
+        # pipeline_loop에서 이미 fetch된 sector_snapshot 재사용
+        sector_row = lookup_sector_snapshot_ticker(sector_snapshot_prefetched, ticker)
+        if sector_row is not None:
+            rotation_signal = sector_row.get("sector_rotation_signal")
+            sector_momentum = SectorMomentumContext(
+                ticker=ticker,
+                sector=sector_row.get("sector"),
+                sector_rotation_signal=rotation_signal,
+                sector_momentum_score=sector_row.get("sector_momentum_score"),
+                sector_rank=sector_row.get("sector_rank"),
+                sector_score_adjustment=sector_row.get("sector_score_adjustment"),
+                priority_score=sector_row.get("priority_score"),
+                generated_at=sector_snapshot_prefetched.get("generated_at"),
+                is_rising=rotation_signal in {"LEADING", "IMPROVING"},
+            )
 
     # 당일 누적거래량 / 20일 평균거래량 비율
     volume_ratio_vs_avg20d: Optional[float] = None

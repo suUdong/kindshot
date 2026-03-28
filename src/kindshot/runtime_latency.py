@@ -10,9 +10,13 @@ from kindshot.models import PipelineLatencyProfile
 
 _STAGE_FIELDS = (
     "news_to_pipeline_ms",
+    "bucket_classify_ms",
+    "news_signal_ms",
+    "pre_guardrail_ms",
     "context_card_ms",
     "decision_total_ms",
     "guardrail_ms",
+    "confidence_adj_ms",
     "order_attempt_ms",
     "pipeline_total_ms",
     "llm_latency_ms",

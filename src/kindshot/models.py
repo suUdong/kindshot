@@ -182,9 +182,13 @@ class ContextCard(BaseModel):
 
 class PipelineLatencyProfile(BaseModel):
     news_to_pipeline_ms: Optional[int] = None
+    bucket_classify_ms: Optional[int] = None
+    news_signal_ms: Optional[int] = None
+    pre_guardrail_ms: Optional[int] = None
     context_card_ms: Optional[int] = None
     decision_total_ms: Optional[int] = None
     guardrail_ms: Optional[int] = None
+    confidence_adj_ms: Optional[int] = None
     order_attempt_ms: Optional[int] = None
     pipeline_total_ms: Optional[int] = None
     llm_latency_ms: Optional[int] = None

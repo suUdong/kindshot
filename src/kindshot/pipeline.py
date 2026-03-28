@@ -148,9 +148,13 @@ def _elapsed_since_detected_at_ms(detected_at: datetime) -> int:
 def _build_pipeline_profile(
     *,
     detected_at: datetime,
+    bucket_classify_ms: int | None = None,
+    news_signal_ms: int | None = None,
+    pre_guardrail_ms: int | None = None,
     context_card_ms: int | None = None,
     decision_total_ms: int | None = None,
     guardrail_ms: int | None = None,
+    confidence_adj_ms: int | None = None,
     order_attempt_ms: int | None = None,
     pipeline_total_ms: int | None = None,
     llm_latency_ms: int | None = None,
@@ -158,9 +162,13 @@ def _build_pipeline_profile(
 ) -> PipelineLatencyProfile:
     profile = PipelineLatencyProfile(
         news_to_pipeline_ms=_elapsed_since_detected_at_ms(detected_at),
+        bucket_classify_ms=bucket_classify_ms,
+        news_signal_ms=news_signal_ms,
+        pre_guardrail_ms=pre_guardrail_ms,
         context_card_ms=context_card_ms,
         decision_total_ms=decision_total_ms,
         guardrail_ms=guardrail_ms,
+        confidence_adj_ms=confidence_adj_ms,
         order_attempt_ms=order_attempt_ms,
         pipeline_total_ms=pipeline_total_ms,
         llm_latency_ms=llm_latency_ms,
@@ -279,6 +287,7 @@ async def execute_bucket_path(
     promotion_confidence: Optional[int] = None,
     promotion_policy: Optional[str] = None,
     news_signal: Optional[NewsSignalContext] = None,
+    sector_snapshot_prefetched: dict | None = None,
 ) -> ProcessOutcome:
     detected_at = raw.detected_at
     analysis_headline = news_signal.analysis_headline if news_signal is not None else normalize_analysis_headline(raw.title)
@@ -318,8 +327,73 @@ async def execute_bucket_path(
         analysis_tag = analysis_tag or "SHORT_WATCH"
         should_track_price = True
     elif bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
+        # ── Pre-context-card guardrails (ctx 불필요, 비싼 context_card 빌드 전에 체크) ──
+        if guardrail_state is not None:
+            if raw.ticker in guardrail_state.bought_tickers:
+                event_rec = EventRecord(
+                    mode=mode, schema_version=config.schema_version, run_id=run_id,
+                    event_id=processed.event_id, event_id_method=processed.event_id_method,
+                    event_kind=processed.event_kind, parent_id=processed.parent_id,
+                    event_group_id=processed.event_group_id,
+                    parent_match_method=processed.parent_match_method,
+                    parent_match_score=processed.parent_match_score,
+                    parent_candidate_count=processed.parent_candidate_count,
+                    source=feed_source, dorg=raw.dorg, rss_guid=raw.rss_guid,
+                    rss_link=raw.link, kind_uid=processed.kind_uid,
+                    detected_at=detected_at, ticker=raw.ticker, corp_name=raw.corp_name,
+                    headline=raw.title, analysis_headline=analysis_headline,
+                    bucket=bucket, keyword_hits=keyword_hits, news_category=news_cat,
+                    news_signal=news_signal, skip_stage=SkipStage.GUARDRAIL,
+                    skip_reason="SAME_STOCK_REBUY", market_ctx=market.snapshot,
+                    promotion_original_event_id=promotion_original_event_id,
+                    promotion_original_bucket=promotion_original_bucket,
+                    promotion_confidence=promotion_confidence,
+                    promotion_policy=promotion_policy,
+                )
+                profile = _build_pipeline_profile(detected_at=detected_at)
+                event_rec.pipeline_profile = profile
+                await log.write(event_rec)
+                _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="SAME_STOCK_REBUY")
+                return ProcessOutcome(
+                    event_id=processed.event_id,
+                    skip_stage=SkipStage.GUARDRAIL,
+                    skip_reason="SAME_STOCK_REBUY",
+                    pipeline_profile=profile,
+                )
+            if guardrail_state.position_count >= config.max_positions:
+                event_rec = EventRecord(
+                    mode=mode, schema_version=config.schema_version, run_id=run_id,
+                    event_id=processed.event_id, event_id_method=processed.event_id_method,
+                    event_kind=processed.event_kind, parent_id=processed.parent_id,
+                    event_group_id=processed.event_group_id,
+                    parent_match_method=processed.parent_match_method,
+                    parent_match_score=processed.parent_match_score,
+                    parent_candidate_count=processed.parent_candidate_count,
+                    source=feed_source, dorg=raw.dorg, rss_guid=raw.rss_guid,
+                    rss_link=raw.link, kind_uid=processed.kind_uid,
+                    detected_at=detected_at, ticker=raw.ticker, corp_name=raw.corp_name,
+                    headline=raw.title, analysis_headline=analysis_headline,
+                    bucket=bucket, keyword_hits=keyword_hits, news_category=news_cat,
+                    news_signal=news_signal, skip_stage=SkipStage.GUARDRAIL,
+                    skip_reason="MAX_POSITIONS", market_ctx=market.snapshot,
+                    promotion_original_event_id=promotion_original_event_id,
+                    promotion_original_bucket=promotion_original_bucket,
+                    promotion_confidence=promotion_confidence,
+                    promotion_policy=promotion_policy,
+                )
+                profile = _build_pipeline_profile(detected_at=detected_at)
+                event_rec.pipeline_profile = profile
+                await log.write(event_rec)
+                _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MAX_POSITIONS")
+                return ProcessOutcome(
+                    event_id=processed.event_id,
+                    skip_stage=SkipStage.GUARDRAIL,
+                    skip_reason="MAX_POSITIONS",
+                    pipeline_profile=profile,
+                )
+
         _ctx_t0 = time.monotonic()
-        ctx_card, raw_data = await build_context_card(raw.ticker, kis, config=config)
+        ctx_card, raw_data = await build_context_card(raw.ticker, kis, config=config, sector_snapshot_prefetched=sector_snapshot_prefetched)
         ctx = ctx_card
         context_card_ms = int((time.monotonic() - _ctx_t0) * 1000)
         if context_card_ms > 500:
@@ -390,6 +464,8 @@ async def execute_bucket_path(
         promotion_policy=promotion_policy,
     )
 
+    confidence_adj_ms: int | None = None
+
     def _finalize_profile(decision: DecisionRecord | None = None) -> PipelineLatencyProfile:
         pipeline_total_ms = int((time.monotonic() - _pipeline_t0) * 1000)
         profile = _build_pipeline_profile(
@@ -397,6 +473,7 @@ async def execute_bucket_path(
             context_card_ms=context_card_ms,
             decision_total_ms=decision_total_ms,
             guardrail_ms=guardrail_ms,
+            confidence_adj_ms=confidence_adj_ms,
             order_attempt_ms=order_attempt_ms,
             pipeline_total_ms=pipeline_total_ms,
             llm_latency_ms=decision.llm_latency_ms if decision is not None else None,
@@ -527,31 +604,7 @@ async def execute_bucket_path(
     )
 
     # Pre-LLM guardrail checks (LLM 비용 절감)
-    if guardrail_state is not None:
-        if raw.ticker in guardrail_state.bought_tickers:
-            event_rec.skip_stage = SkipStage.GUARDRAIL
-            event_rec.skip_reason = "SAME_STOCK_REBUY"
-            profile = _finalize_profile()
-            await log.write(event_rec)
-            _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="SAME_STOCK_REBUY")
-            return ProcessOutcome(
-                event_id=processed.event_id,
-                skip_stage=SkipStage.GUARDRAIL,
-                skip_reason="SAME_STOCK_REBUY",
-                pipeline_profile=profile,
-            )
-        if guardrail_state.position_count >= config.max_positions:
-            event_rec.skip_stage = SkipStage.GUARDRAIL
-            event_rec.skip_reason = "MAX_POSITIONS"
-            profile = _finalize_profile()
-            await log.write(event_rec)
-            _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason="MAX_POSITIONS")
-            return ProcessOutcome(
-                event_id=processed.event_id,
-                skip_stage=SkipStage.GUARDRAIL,
-                skip_reason="MAX_POSITIONS",
-                pipeline_profile=profile,
-            )
+    # NOTE: SAME_STOCK_REBUY, MAX_POSITIONS는 context_card 빌드 전으로 이동됨 (v77 레이턴시 최적화)
     if _is_fast_profile_late_entry(
         config=config,
         hold_minutes=decision_hold_minutes,
@@ -649,6 +702,7 @@ async def execute_bucket_path(
     effective_entry_delay_ms = None
 
     if decision.action == Action.BUY:
+        _t_conf_adj = time.monotonic()
         llm_original_conf = decision.confidence
         # v73: graduated cap 완화 — 강촉매 보호 + 약촉매 감점 확대
         # 88+: cap 8 → 최악 80 (BUY 유지)
@@ -917,6 +971,9 @@ async def execute_bucket_path(
                 pattern_boost.count,
                 pattern_boost.total_pnl_pct,
             )
+
+    if decision.action == Action.BUY:
+        confidence_adj_ms = int((time.monotonic() - _t_conf_adj) * 1000)
 
     # v76: MTF task cleanup — BUY가 아니면 cancel
     if _mtf_task is not None and not _mtf_task.done():
@@ -1271,6 +1328,7 @@ async def process_registered_event(
     registry: Optional[EventRegistry] = None,
     premarket_pending: Optional[list] = None,
     news_cluster_tracker: Optional[TickerNewsClusterTracker] = None,
+    sector_snapshot_prefetched: dict | None = None,
 ) -> None:
     """Process an event that already passed dedup/registry."""
     _tracer = get_tracer()
@@ -1323,7 +1381,10 @@ async def process_registered_event(
         return
 
     # 2. Bucket classification
+    _t_bucket = time.monotonic()
     bucket_result = classify(raw.title)
+    _bucket_classify_ms = int((time.monotonic() - _t_bucket) * 1000)
+    _t_signal = time.monotonic()
     news_signal = build_news_signal(
         headline=raw.title,
         ticker=raw.ticker,
@@ -1333,6 +1394,7 @@ async def process_registered_event(
         keyword_hits=bucket_result.keyword_hits,
         cluster_tracker=news_cluster_tracker,
     )
+    _news_signal_ms = int((time.monotonic() - _t_signal) * 1000)
     if bucket_result.bucket == Bucket.UNKNOWN:
         _append_unknown_headline(config.log_dir, raw.title, raw.ticker)
         review_request = UnknownReviewRequest(
@@ -1380,6 +1442,7 @@ async def process_registered_event(
             order_executor=order_executor,
             recent_pattern_profile=recent_pattern_profile,
             news_signal=news_signal,
+            sector_snapshot_prefetched=sector_snapshot_prefetched,
         )
     except (LlmTimeoutError, LlmCallError, LlmParseError) as llm_exc:
         err_type = type(llm_exc).__name__
@@ -1417,6 +1480,7 @@ async def process_registered_event(
                     order_executor=order_executor,
                     recent_pattern_profile=recent_pattern_profile,
                     news_signal=news_signal,
+                    sector_snapshot_prefetched=sector_snapshot_prefetched,
                 )
             except Exception:
                 logger.warning("Rule fallback retry also failed for [%s]", raw.ticker, exc_info=True)
@@ -1663,7 +1727,7 @@ async def pipeline_loop(
                 _priority, _sequence, payload = item
                 if payload is None:
                     return
-                raw, processed = payload
+                raw, processed, sector_snapshot_cached = payload
                 await process_registered_event(
                     raw=raw,
                     processed=processed,
@@ -1685,6 +1749,7 @@ async def pipeline_loop(
                     registry=registry,
                     premarket_pending=premarket_pending,
                     news_cluster_tracker=news_cluster_tracker,
+                    sector_snapshot_prefetched=sector_snapshot_cached,
                 )
             except LogWriteError:
                 logger.critical("Log write failed in worker %d — initiating shutdown", worker_idx)
@@ -1763,7 +1828,7 @@ async def pipeline_loop(
                         config.alpha_scanner_api_timeout_s,
                     )
                     sector_row = lookup_sector_snapshot_ticker(sector_snapshot, raw.ticker)
-                priority_item = (*_queue_priority_key(sector_row, enqueue_sequence), (raw, processed))
+                priority_item = (*_queue_priority_key(sector_row, enqueue_sequence), (raw, processed, sector_snapshot))
                 enqueue_sequence += 1
                 await queue.put(priority_item)
                 if _tracer and _t_q is not None:
@@ -1787,7 +1852,7 @@ async def pipeline_loop(
                                 config.alpha_scanner_api_timeout_s,
                             )
                             sector_row = lookup_sector_snapshot_ticker(sector_snapshot, p_raw.ticker)
-                        priority_item = (*_queue_priority_key(sector_row, enqueue_sequence), (p_raw, p_processed))
+                        priority_item = (*_queue_priority_key(sector_row, enqueue_sequence), (p_raw, p_processed, sector_snapshot))
                         enqueue_sequence += 1
                         await queue.put(priority_item)
                     premarket_pending.clear()
