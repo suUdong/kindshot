@@ -412,17 +412,16 @@ class SnapshotScheduler:
             if self._realized_closed_size_won[snap.event_id] > 0
             else exit_px
         )
-        if position_closed:
-            self._remaining_position_pct[snap.event_id] = 0.0
-            self._sell_triggered.add(snap.event_id)
-        else:
+        if not position_closed:
             self._remaining_position_pct[snap.event_id] = remaining_position_pct
         if self._pnl_callback:
             self._pnl_callback(snap.ticker, pnl_won)
+        # 콜백 성공 후에만 _sell_triggered 설정 — 실패 시 close 스냅샷에서 재시도 가능
+        callback_ok = False
         if self._trade_close_callback and entry_px is not None:
             logger.info(
-                "TRADE_CLOSE_CALLBACK [%s] %s: entry=%.2f exit=%.2f ret=%.2f%% pnl=%.0f size=%.0f",
-                snap.ticker, snap.event_id[:8], entry_px, exit_px, ret_long * 100, pnl_won, realized_size,
+                "TRADE_CLOSE_CALLBACK [%s] %s: entry=%.2f exit=%.2f ret=%.2f%% pnl=%.0f size=%.0f type=%s",
+                snap.ticker, snap.event_id[:8], entry_px, exit_px, ret_long * 100, pnl_won, realized_size, exit_type,
             )
             try:
                 self._trade_close_callback(
@@ -446,6 +445,7 @@ class SnapshotScheduler:
                     cumulative_ret_pct=cumulative_ret_pct,
                     average_exit_px=average_exit_px,
                 )
+                callback_ok = True
             except Exception:
                 logger.exception("TRADE_CLOSE_CALLBACK_ERROR [%s] %s", snap.ticker, snap.event_id[:8])
         elif entry_px is None:
@@ -458,6 +458,9 @@ class SnapshotScheduler:
                 "TRADE_CLOSE_NO_CALLBACK [%s] %s: callback not set",
                 snap.ticker, snap.event_id[:8],
             )
+        if position_closed and callback_ok:
+            self._remaining_position_pct[snap.event_id] = 0.0
+            self._sell_triggered.add(snap.event_id)
 
     def _cleanup_event_tracking(self, event_id: str) -> None:
         self._t0_prices.pop(event_id, None)
