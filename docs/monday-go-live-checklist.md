@@ -1,7 +1,7 @@
 # 월요일 장 시작 전 실거래 체크리스트
 
-> 작성일: 2026-03-28 (토)
-> 대상: 2026-03-30 (월) 장 시작 전 점검
+> 작성일: 2026-03-28 (토), 최종 점검: 2026-03-29 (일) 02:41 KST
+> 대상: 2026-03-31 (월) 장 시작 전 점검
 
 ---
 
@@ -182,13 +182,52 @@ ssh kindshot-server "sudo systemctl stop kindshot"
 
 ---
 
-## 7. 코드 동기화 상태
+## 7. exit_ret_pct 미수집 문제 (해결됨)
+
+### 원인 분석 (2026-03-29)
+- **증상**: 87 signals, 0 exits — trade_history.db에서 exit_ret_pct 전부 NULL
+- **근본 원인**: `backfill_from_logs`가 가드레일 차단 BUY(73건)를 실거래로 포함
+  - 차단 이벤트는 `decision_action=BUY` + `skip_stage=GUARDRAIL`
+  - 스냅샷 스케줄링 안 됨 → 가격 데이터 없음 → 전부 NULL
+- **수정**: `trade_db.py` — 실거래(`skip_stage` 없음)와 차단 이벤트 분리
+- **수정**: `strategy_observability.py` — `t5m_loss_exit_threshold_pct` 라이브와 동기화 (-0.3%)
+
+### 수정 후 결과
+| 구분 | 건수 | exit 확보 |
+|------|------|-----------|
+| 실거래 (가드레일 통과) | 14 | 14 (100%) |
+| 가드레일 차단 | 73 | 0 (정상) |
+| **합계** | **87** | **14** |
+
+### 실거래 성과 (14건)
+- 승률: 14.3% (2/14)
+- 평균 수익률: -0.42%
+- 총 누적: -5.84%
+- 주요 exit: t5m_loss_exit 7건, stop_loss 3건, max_hold 2건, timeout 1건
+
+---
+
+## 8. 코드 동기화 상태
 
 | 항목 | 상태 |
 |------|------|
-| 로컬 ↔ 서버 소스 파일 | ✅ 동일 (44개 .py 파일) |
+| 로컬 ↔ 서버 소스 파일 | ⚠️ 재배포 필요 (trade_db.py, strategy_observability.py 수정) |
 | 서버 배포 방식 | rsync (git 없음) |
 | 최신 배포 시간 | 2026-03-28 22:05 (config.py 기준) |
 | LLM_MODEL (서버) | claude-haiku-4-5-20251001 |
 | LLM_PROVIDER 기본값 | nvidia (NVIDIA_API_KEY 미설정 → Anthropic fallback) |
 | FEED_SOURCE (서버) | KIS |
+
+### 월요일 배포 순서
+```bash
+# 1. 코드 배포 (exit_ret_pct 수정 포함)
+rsync -avz --exclude='.venv' --exclude='data/' --exclude='logs/' --exclude='.env' --exclude='__pycache__' --exclude='.git' src/ kindshot-server:/opt/kindshot/src/
+rsync -avz --exclude='__pycache__' deploy/ kindshot-server:/opt/kindshot/deploy/
+
+# 2. 실거래 전환 (go-live.sh 사용)
+ssh kindshot-server "cd /opt/kindshot && bash deploy/go-live.sh"        # 체크리스트 확인
+ssh kindshot-server "cd /opt/kindshot && bash deploy/go-live.sh --apply" # 전환 적용
+
+# 3. 전환 후 검증
+ssh kindshot-server "cd /opt/kindshot && bash deploy/go-live.sh --verify"
+```

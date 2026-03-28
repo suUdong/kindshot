@@ -511,12 +511,16 @@ def backfill_from_logs(
                     if horizon:
                         snap_by_event.setdefault(eid, {})[horizon] = record
 
-        # BUY 이벤트 필터
+        # BUY 이벤트 필터: 가드레일 통과한 실거래만 + 차단 이벤트는 별도 보관
         buy_events = {
             eid: ev for eid, ev in events.items()
-            if ev.get("decision_action") == "BUY"
+            if ev.get("decision_action") == "BUY" and not ev.get("skip_stage")
         }
-        if not buy_events:
+        blocked_events = {
+            eid: ev for eid, ev in events.items()
+            if ev.get("decision_action") == "BUY" and ev.get("skip_stage")
+        }
+        if not buy_events and not blocked_events:
             continue
 
         # 스냅샷 로드: 로그 내 embedded snapshot을 기본으로 두고,
@@ -672,8 +676,100 @@ def backfill_from_logs(
             db.upsert_trade(data)
             total_inserted += 1
 
+        # 가드레일 차단 이벤트: shadow 스냅샷 매칭 (기회비용 분석용)
+        for eid, ev in blocked_events.items():
+            ctx = ev.get("ctx") or {}
+            mctx = ev.get("market_ctx") or {}
+            shadow_eid = f"shadow_{eid}"
+            snaps = snap_by_event.get(shadow_eid, {})
+
+            def _snap_ret_blocked(h: str) -> Optional[float]:
+                s = snaps.get(h)
+                if s and s.get("ret_long_vs_t0") is not None:
+                    return round(s["ret_long_vs_t0"] * 100, 4)
+                return None
+
+            def _snap_spread_blocked(h: str) -> Optional[float]:
+                s = snaps.get(h)
+                if s is None:
+                    return None
+                spread = s.get("spread_bps")
+                if isinstance(spread, (int, float)):
+                    return round(float(spread), 4)
+                return None
+
+            kw_hits = ev.get("keyword_hits") or []
+            detected_at = ev.get("detected_at", "")
+            hour_slot = _parse_hour(detected_at)
+            news_signal = ev.get("news_signal") or {}
+            cluster = news_signal.get("cluster") or {}
+
+            data = {
+                "event_id": eid,
+                "date": date_str,
+                "detected_at": detected_at,
+                "ticker": ev.get("ticker", ""),
+                "corp_name": ev.get("corp_name", ""),
+                "headline": ev.get("headline", ""),
+                "bucket": ev.get("bucket", ""),
+                "keyword_hits": json.dumps(kw_hits, ensure_ascii=False),
+                "news_category": ev.get("news_category", ""),
+                "news_cluster_id": cluster.get("cluster_id", ""),
+                "news_cluster_size": cluster.get("cluster_size", 0),
+                "contract_amount_eok": news_signal.get("contract_amount_eok"),
+                "impact_score": news_signal.get("impact_score", 0),
+                "decision_action": "BUY",
+                "confidence": ev.get("decision_confidence", 0),
+                "size_hint": ev.get("decision_size_hint", "M"),
+                "decision_reason": ev.get("decision_reason", ""),
+                "decision_source": "",
+                "guardrail_result": ev.get("guardrail_result", ""),
+                "skip_stage": ev.get("skip_stage", ""),
+                "adv_value_20d": ctx.get("adv_value_20d"),
+                "spread_bps": ctx.get("spread_bps"),
+                "ret_today": ctx.get("ret_today"),
+                "rsi_14": ctx.get("rsi_14"),
+                "vol_pct_20d": ctx.get("vol_pct_20d"),
+                "kospi_change_pct": mctx.get("kospi_change_pct"),
+                "kosdaq_change_pct": mctx.get("kosdaq_change_pct"),
+                "kospi_breadth": mctx.get("kospi_breadth_ratio"),
+                "kosdaq_breadth": mctx.get("kosdaq_breadth_ratio"),
+                "ret_t0": _snap_ret_blocked("t0"),
+                "ret_t30s": _snap_ret_blocked("t+30s"),
+                "ret_t1m": _snap_ret_blocked("t+1m"),
+                "ret_t2m": _snap_ret_blocked("t+2m"),
+                "ret_t5m": _snap_ret_blocked("t+5m"),
+                "ret_t10m": _snap_ret_blocked("t+10m"),
+                "ret_t15m": _snap_ret_blocked("t+15m"),
+                "ret_t20m": _snap_ret_blocked("t+20m"),
+                "ret_t30m": _snap_ret_blocked("t+30m"),
+                "ret_close": _snap_ret_blocked("close"),
+                "spread_t0": _snap_spread_blocked("t0"),
+                "spread_t30s": _snap_spread_blocked("t+30s"),
+                "spread_t1m": _snap_spread_blocked("t+1m"),
+                "spread_t2m": _snap_spread_blocked("t+2m"),
+                "spread_t5m": _snap_spread_blocked("t+5m"),
+                "spread_t10m": _snap_spread_blocked("t+10m"),
+                "spread_t15m": _snap_spread_blocked("t+15m"),
+                "spread_t20m": _snap_spread_blocked("t+20m"),
+                "spread_t30m": _snap_spread_blocked("t+30m"),
+                "spread_close": _snap_spread_blocked("close"),
+                "entry_px": None,
+                "exit_type": "",
+                "exit_horizon": "",
+                "exit_ret_pct": None,
+                "peak_ret_pct": None,
+                "version_tag": version_tag,
+                "hour_slot": hour_slot,
+            }
+            db.upsert_trade(data)
+            total_inserted += 1
+
         db.commit()
-        logger.info("Backfilled %s: %d BUY trades", date_str, len(buy_events))
+        logger.info(
+            "Backfilled %s: %d traded + %d blocked BUY events",
+            date_str, len(buy_events), len(blocked_events),
+        )
 
     return total_inserted
 

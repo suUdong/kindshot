@@ -8,6 +8,50 @@ echo "=== systemd status ==="
 sudo systemctl status kindshot --no-pager 2>/dev/null || echo "(서비스 미등록)"
 
 echo ""
+echo "=== 헬스 엔드포인트 ==="
+# /health 응답으로 현재 상태, 가드레일, 모드 확인
+HEALTH_JSON=$(curl -s --connect-timeout 3 http://127.0.0.1:8080/health 2>/dev/null || echo "")
+if [[ -n "$HEALTH_JSON" && "$HEALTH_JSON" != *"Connection refused"* ]]; then
+    echo "  응답: $HEALTH_JSON"
+    # 주요 필드 파싱
+    python3 -c "
+import sys, json
+try:
+    h = json.loads('''$HEALTH_JSON''')
+    status   = h.get('status', '?')
+    mode     = h.get('mode', '?')
+    daily    = h.get('daily_pnl', '?')
+    pos_cnt  = h.get('position_count', '?')
+    events   = h.get('events_seen', '?')
+    print(f'  상태: {status} | 모드: {mode} | daily_pnl: {daily} | 포지션: {pos_cnt} | 이벤트수신: {events}')
+except Exception as e:
+    print(f'  (파싱 실패: {e})')
+" 2>/dev/null || true
+else
+    echo "  (헬스 엔드포인트 응답 없음 — 서비스 미실행 또는 포트 불일치)"
+fi
+
+echo ""
+echo "=== 운영 모드 ==="
+# systemd ExecStart에서 --paper 플래그 여부로 paper/live 판별
+if grep -q -- '--paper' /etc/systemd/system/kindshot.service 2>/dev/null; then
+    echo "  모드: PAPER (실거래 아님)"
+else
+    echo "  모드: LIVE (실거래)"
+fi
+
+echo ""
+echo "=== ERROR/CRITICAL 로그 (최근 50줄 기준) ==="
+# 최근 journalctl에서 오류 레벨 항목만 필터
+ERR_LINES=$(sudo journalctl -u kindshot --no-pager -n 50 2>/dev/null \
+    | grep -iE 'ERROR|CRITICAL' || true)
+if [[ -n "$ERR_LINES" ]]; then
+    echo "$ERR_LINES"
+else
+    echo "  (없음)"
+fi
+
+echo ""
 echo "=== 최근 journalctl (20줄) ==="
 sudo journalctl -u kindshot --no-pager -n 20 2>/dev/null || echo "(로그 없음)"
 

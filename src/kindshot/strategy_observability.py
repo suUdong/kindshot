@@ -34,6 +34,7 @@ class StrategyReportConfig:
     trailing_stop_mid_pct: float = 0.8   # v65: 0.5→0.8
     trailing_stop_late_pct: float = 1.0  # v65: 0.7→1.0
     max_hold_minutes: int = field(default_factory=lambda: Config().max_hold_minutes)
+    t5m_loss_exit_threshold_pct: float = -0.3  # 라이브와 동일: 미미한 손실은 홀드
 
 
 def _ret_pct(snapshots: dict[str, dict[str, Any]], horizon: str) -> float | None:
@@ -81,11 +82,12 @@ def classify_buy_exit(
         if sl_active and ret_pct <= config.paper_stop_loss_pct:
             return "stop_loss", horizon
         # t+5m 체크포인트: 5분+ 경과 손실 포지션 즉시 청산
+        # threshold 적용: 미미한 손실(-0.3% 이내)은 수익으로 간주 (라이브와 동일)
         is_past_5m = horizon in {"t+5m", "t+10m", "t+15m", "t+20m", "t+30m"}
-        if is_past_5m and ret_pct <= 0 and hold_minutes != 0:
-            # 이전 horizon들에서 수익이었는지 체크 (첫 5m+ 시점의 수익 여부)
+        t5m_threshold = config.t5m_loss_exit_threshold_pct if hasattr(config, "t5m_loss_exit_threshold_pct") else -0.3
+        if is_past_5m and ret_pct <= t5m_threshold and hold_minutes != 0:
             t5m_ret = _ret_pct(snapshots, "t+5m")
-            if t5m_ret is not None and t5m_ret <= 0:
+            if t5m_ret is not None and t5m_ret <= t5m_threshold:
                 return "t5m_loss_exit", horizon
         if (
             config.trailing_stop_enabled
