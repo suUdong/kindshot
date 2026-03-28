@@ -623,7 +623,7 @@ def check_guardrails(
     return GuardrailResult(passed=True)
 
 
-def get_dynamic_stop_loss_pct(config: Config, confidence: int, hold_minutes: int = 0) -> float:
+def get_dynamic_stop_loss_pct(config: Config, confidence: int, hold_minutes: int = 0, volatility_regime: str = "normal") -> float:
     """confidence + hold_profile 기반 동적 손절 비율.
 
     v65 개선: SL을 넓혀서 V자 반등 기회 보존.
@@ -646,10 +646,16 @@ def get_dynamic_stop_loss_pct(config: Config, confidence: int, hold_minutes: int
     if hold_minutes == 0:
         sl = min(sl * 1.3, -1.5)  # 최소 -1.5%, 최대 약 -3.9%
 
+    # 변동성 레짐 보정: HIGH면 SL 넓혀서 whipsaw 방지, LOW면 타이트하게
+    if volatility_regime == "high":
+        sl = sl * 1.3  # 30% 넓게 (e.g. -2.0% → -2.6%)
+    elif volatility_regime == "low":
+        sl = sl * 0.8  # 20% 타이트 (e.g. -2.0% → -1.6%)
+
     return sl
 
 
-def get_dynamic_tp_pct(config: Config, confidence: int, hold_minutes: int = 0) -> float:
+def get_dynamic_tp_pct(config: Config, confidence: int, hold_minutes: int = 0, volatility_regime: str = "normal") -> float:
     """confidence + hold_profile 기반 동적 익절 비율.
 
     v65 개선: TP를 넓혀서 리워드/리스크 비율 개선.
@@ -674,6 +680,12 @@ def get_dynamic_tp_pct(config: Config, confidence: int, hold_minutes: int = 0) -
     elif hold_minutes <= 20:
         # 수주/공급계약: 반전 리스크 — TP 0.9배 (기존 0.85 → 약간 완화)
         tp = tp * 0.9
+
+    # 변동성 레짐 보정: HIGH면 TP 넓혀서 큰 수익 포착, LOW면 보수적
+    if volatility_regime == "high":
+        tp = tp * 1.3
+    elif volatility_regime == "low":
+        tp = tp * 0.8
 
     return tp
 

@@ -898,6 +898,56 @@ def test_dynamic_tp_low_confidence():
     assert get_dynamic_tp_pct(cfg, 70, hold_minutes=25) == 2.0
 
 
+# ── v74: 변동성 레짐 기반 TP/SL 조정 테스트 ──────────────
+
+
+def test_dynamic_stop_loss_high_volatility():
+    """HIGH volatility → SL 30% 넓게."""
+    cfg = _cfg(paper_stop_loss_pct=-1.5)
+    normal_sl = get_dynamic_stop_loss_pct(cfg, 80, hold_minutes=20, volatility_regime="normal")
+    high_sl = get_dynamic_stop_loss_pct(cfg, 80, hold_minutes=20, volatility_regime="high")
+    assert high_sl < normal_sl  # 더 큰 음수 = 더 넓은 SL
+    assert high_sl == pytest.approx(normal_sl * 1.3, rel=1e-6)
+
+
+def test_dynamic_stop_loss_low_volatility():
+    """LOW volatility → SL 20% 타이트."""
+    cfg = _cfg(paper_stop_loss_pct=-1.5)
+    normal_sl = get_dynamic_stop_loss_pct(cfg, 80, hold_minutes=20, volatility_regime="normal")
+    low_sl = get_dynamic_stop_loss_pct(cfg, 80, hold_minutes=20, volatility_regime="low")
+    assert low_sl > normal_sl  # 덜 음수 = 타이트
+    assert low_sl == pytest.approx(normal_sl * 0.8, rel=1e-6)
+
+
+def test_dynamic_tp_high_volatility():
+    """HIGH volatility → TP 30% 넓게."""
+    cfg = _cfg(paper_take_profit_pct=2.0)
+    normal_tp = get_dynamic_tp_pct(cfg, 85, hold_minutes=20, volatility_regime="normal")
+    high_tp = get_dynamic_tp_pct(cfg, 85, hold_minutes=20, volatility_regime="high")
+    assert high_tp > normal_tp
+    assert high_tp == pytest.approx(normal_tp * 1.3, rel=1e-6)
+
+
+def test_dynamic_tp_low_volatility():
+    """LOW volatility → TP 20% 보수적."""
+    cfg = _cfg(paper_take_profit_pct=2.0)
+    normal_tp = get_dynamic_tp_pct(cfg, 85, hold_minutes=20, volatility_regime="normal")
+    low_tp = get_dynamic_tp_pct(cfg, 85, hold_minutes=20, volatility_regime="low")
+    assert low_tp < normal_tp
+    assert low_tp == pytest.approx(normal_tp * 0.8, rel=1e-6)
+
+
+def test_dynamic_tpsl_normal_regime_unchanged():
+    """NORMAL volatility → 기존 값 그대로."""
+    cfg = _cfg(paper_stop_loss_pct=-1.5, paper_take_profit_pct=2.0)
+    sl_default = get_dynamic_stop_loss_pct(cfg, 80, hold_minutes=20)
+    sl_normal = get_dynamic_stop_loss_pct(cfg, 80, hold_minutes=20, volatility_regime="normal")
+    assert sl_default == sl_normal
+    tp_default = get_dynamic_tp_pct(cfg, 80, hold_minutes=20)
+    tp_normal = get_dynamic_tp_pct(cfg, 80, hold_minutes=20, volatility_regime="normal")
+    assert tp_default == tp_normal
+
+
 # ── US-003: ADV confidence 조정 테스트 ──────────────────
 
 def test_adv_confidence_mega_cap():

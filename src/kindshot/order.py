@@ -95,6 +95,45 @@ class OrderExecutor:
             logger.warning("LIVE BUY FAIL [%s]: %s", ticker, resp.message)
         return result
 
+    async def buy_market_with_retry(
+        self,
+        event_id: str,
+        ticker: str,
+        target_won: float,
+        current_price: float,
+        *,
+        max_retries: int = 2,
+        base_delay_s: float = 0.5,
+    ) -> OrderResult:
+        """시장가 매수 with exponential backoff retry.
+
+        max_retries회까지 재시도. 성공하면 즉시 반환, 모두 실패 시 마지막 결과 반환.
+        """
+        import asyncio
+        last_result: Optional[OrderResult] = None
+        for attempt in range(1 + max_retries):
+            result = await self.buy_market(event_id, ticker, target_won, current_price)
+            if result.success:
+                if attempt > 0:
+                    logger.info(
+                        "LIVE BUY retry succeeded [%s] attempt=%d/%d",
+                        ticker, attempt + 1, 1 + max_retries,
+                    )
+                return result
+            last_result = result
+            if attempt < max_retries:
+                delay = base_delay_s * (2 ** attempt)
+                logger.warning(
+                    "LIVE BUY retry [%s] attempt=%d/%d failed: %s (retry in %.1fs)",
+                    ticker, attempt + 1, 1 + max_retries, result.message, delay,
+                )
+                await asyncio.sleep(delay)
+        logger.warning(
+            "LIVE BUY all retries exhausted [%s]: %s",
+            ticker, last_result.message if last_result else "no result",
+        )
+        return last_result  # type: ignore[return-value]
+
     async def sell_position(self, event_id: str, ticker: str) -> Optional[OrderResult]:
         """event_id 포지션 시장가 매도. 포지션 없으면 None 반환."""
         pos = self._positions.pop(event_id, None)

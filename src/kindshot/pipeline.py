@@ -30,7 +30,7 @@ from kindshot.entry_filter_analysis import compute_effective_entry_delay_ms
 from kindshot.event_registry import EventRegistry, ProcessedEvent
 from kindshot.feed import RawDisclosure
 from kindshot.headline_parser import normalize_analysis_headline
-from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_volume_ratio_confidence_adjustment, apply_sector_momentum_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile, detect_volatility_regime, apply_volatility_confidence_adjustment, apply_news_category_confidence_adjustment, apply_mtf_confidence_adjustment, resolve_daily_loss_budget
+from kindshot.guardrails import GuardrailState, check_guardrails, get_kill_switch_size_hint, apply_adv_confidence_adjustment, apply_market_confidence_adjustment, apply_delay_confidence_adjustment, apply_price_reaction_adjustment, apply_volume_confidence_adjustment, apply_volume_ratio_confidence_adjustment, apply_sector_momentum_confidence_adjustment, apply_dorg_confidence_adjustment, apply_time_session_confidence_adjustment, apply_trend_confidence_adjustment, apply_technical_confidence_adjustment, apply_headline_quality_adjustment, resolve_dynamic_guardrail_profile, detect_volatility_regime, apply_volatility_confidence_adjustment, apply_news_category_confidence_adjustment, apply_mtf_confidence_adjustment, resolve_daily_loss_budget, calculate_position_size
 from kindshot.news_category import classify_news_type
 from kindshot.pattern_profile import match_loss_guardrail, match_profit_boost
 from kindshot.ticker_learning import TickerLearner
@@ -486,7 +486,7 @@ async def execute_bucket_path(
         and market_snapshot.kosdaq_breadth_ratio < config.min_market_breadth_ratio
     ):
         # 고확신 촉매(conf>=82 키워드)는 하락장에서도 LLM 판단 허용
-        if has_high_conviction_keyword(analysis_headline, keyword_hits, min_conf=86):
+        if has_high_conviction_keyword(analysis_headline, keyword_hits, min_conf=84):  # v73: 86→84 (breadth RISK_OFF 바이패스 범위 확대)
             logger.info(
                 "MARKET_BREADTH_RISK_OFF bypassed for high-conviction catalyst [%s]: %s",
                 raw.ticker, analysis_headline[:80],
@@ -644,16 +644,16 @@ async def execute_bucket_path(
 
     if decision.action == Action.BUY:
         llm_original_conf = decision.confidence
-        # v66: graduated cap 보호 강화 — 유효 촉매 과다 차단 방지
-        # 88+: cap 6 → 최악 82 (BUY 유지 확실)
-        # 83-87: cap 8 → 최악 75-79 (BUY 유지 가능)
-        # <83: cap 12 → 최악 ~71 (약한 시그널은 감점 허용)
+        # v73: graduated cap 완화 — 강촉매 보호 + 약촉매 감점 확대
+        # 88+: cap 8 → 최악 80 (BUY 유지)
+        # 83-87: cap 10 → 최악 73-77 (경계선)
+        # <83: cap 15 → 최악 65-68 (약시그널 SKIP 유도)
         if llm_original_conf >= 88:
-            _MAX_TOTAL_PENALTY = 6
-        elif llm_original_conf >= 83:
             _MAX_TOTAL_PENALTY = 8
+        elif llm_original_conf >= 83:
+            _MAX_TOTAL_PENALTY = 10
         else:
-            _MAX_TOTAL_PENALTY = 12
+            _MAX_TOTAL_PENALTY = 15
 
         # 0. Post-LLM 기사/미확정 패턴 감점: LLM이 기사 헤드라인에 BUY를 줄 때 conf -10
         if decision.decision_source == "LLM" and has_article_pattern(
@@ -1061,11 +1061,29 @@ async def execute_bucket_path(
         try:
             _order_t0 = time.monotonic()
             _macro_mult = market.snapshot.macro_position_multiplier or 1.0
-            _base_order_won = config.order_size_for_hint(decision.size_hint.value)
-            _buy_result = await order_executor.buy_market(
+            _account_bal = guardrail_state.account_balance if guardrail_state is not None else 0.0
+            _ob = raw_data.orderbook_snapshot if ctx else None
+            _ask_depth = (_ob.ask_price1 * _ob.ask_size1) if _ob is not None else 0.0
+            _target_won = calculate_position_size(
+                config,
+                decision.size_hint.value,
+                account_balance=_account_bal,
+                ask_depth_notional=_ask_depth,
+                macro_position_multiplier=_macro_mult,
+            )
+            logger.info(
+                "LIVE position sizing [%s]: hint=%s macro=%.2f acct=%.0f ask_depth=%.0f => target=%.0f won",
+                raw.ticker,
+                decision.size_hint.value,
+                _macro_mult,
+                _account_bal,
+                _ask_depth,
+                _target_won,
+            )
+            _buy_result = await order_executor.buy_market_with_retry(
                 event_id=processed.event_id,
                 ticker=raw.ticker,
-                target_won=_base_order_won * _macro_mult,
+                target_won=_target_won,
                 current_price=raw_data.px if raw_data.px else 0,
             )
             order_attempt_ms = int((time.monotonic() - _order_t0) * 1000)
@@ -1126,8 +1144,12 @@ async def execute_bucket_path(
         from kindshot.telegram_ops import try_send_buy_signal
         from kindshot.guardrails import get_dynamic_tp_pct, get_dynamic_stop_loss_pct
         adv_display = f"{raw_data.adv_value_20d/1e8:.0f}억" if raw_data.adv_value_20d else ""
-        buy_tp = get_dynamic_tp_pct(config, decision.confidence, hold_minutes)
-        buy_sl = get_dynamic_stop_loss_pct(config, decision.confidence, hold_minutes)
+        _vol_regime = detect_volatility_regime(
+            kospi_change_pct=market.snapshot.kospi_change_pct if market.snapshot else None,
+            kosdaq_change_pct=market.snapshot.kosdaq_change_pct if market.snapshot else None,
+        )
+        buy_tp = get_dynamic_tp_pct(config, decision.confidence, hold_minutes, volatility_regime=_vol_regime)
+        buy_sl = get_dynamic_stop_loss_pct(config, decision.confidence, hold_minutes, volatility_regime=_vol_regime)
         try_send_buy_signal(
             ticker=raw.ticker,
             corp_name=raw.corp_name,
