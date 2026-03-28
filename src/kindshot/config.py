@@ -142,7 +142,7 @@ class Config:
     extreme_move_pct: float = 20.0
     spread_check_enabled: bool = field(default_factory=lambda: _env_bool("SPREAD_CHECK_ENABLED", True))
     spread_missing_policy: str = field(default_factory=lambda: _env("SPREAD_MISSING_POLICY", "pass"))  # "pass" = fail-open, "fail" = fail-close
-    min_intraday_value_vs_adv20d: float = field(default_factory=lambda: _env_float("MIN_INTRADAY_VALUE_VS_ADV20D", 0.15))
+    min_intraday_value_vs_adv20d: float = field(default_factory=lambda: _env_float("MIN_INTRADAY_VALUE_VS_ADV20D", 0.05))  # 0.15→0.05: 뉴스 직후 거래대금 자연히 낮음, 과도 차단 완화
     max_entry_delay_ms: int = field(default_factory=lambda: _env_int("MAX_ENTRY_DELAY_MS", 60_000))
     orderbook_bid_ask_ratio_min: float = field(default_factory=lambda: _env_float("ORDERBOOK_BID_ASK_RATIO_MIN", 0.8))
     min_prior_volume_rate: float = field(default_factory=lambda: _env_float("MIN_PRIOR_VOLUME_RATE", 70.0))
@@ -151,10 +151,10 @@ class Config:
     volume_ratio_surge_threshold: float = field(default_factory=lambda: _env_float("VOLUME_RATIO_SURGE_THRESHOLD", 2.0))  # 200% → 급증 부스트
     prior_volume_gate_start_kst_hour: int = field(default_factory=lambda: _env_int("PRIOR_VOLUME_GATE_START_KST_HOUR", 10))
     prior_volume_gate_start_kst_minute: int = field(default_factory=lambda: _env_int("PRIOR_VOLUME_GATE_START_KST_MINUTE", 0))
-    chase_buy_pct: float = field(default_factory=lambda: _env_float("CHASE_BUY_PCT", 3.0))  # 당일 3%+ 상승 시 BUY 차단 (추격매수 방지)
-    min_buy_confidence: int = field(default_factory=lambda: _env_int("MIN_BUY_CONFIDENCE", 78))  # BUY 최소 confidence (75→78: 성과 분석 기반 상향)
+    chase_buy_pct: float = field(default_factory=lambda: _env_float("CHASE_BUY_PCT", 5.0))  # 3.0→5.0: 뉴스 기반 3-5% 상승은 정상 반응, 추격매수 기준 완화
+    min_buy_confidence: int = field(default_factory=lambda: _env_int("MIN_BUY_CONFIDENCE", 73))  # 78→73: 84% 차단률 과도, POS_STRONG conf 73-77 시그널 허용
     no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_HOUR", 15))  # 15시 이후 BUY 차단
-    no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_MINUTE", 0))  # 15:00 이후 차단
+    no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_MINUTE", 15))  # 15:00→15:15: KRX 15:30 마감, 15분 여유 확보
     # 가상 익절/손절 (paper mode 추적용)
     paper_take_profit_pct: float = field(default_factory=lambda: _env_float("PAPER_TAKE_PROFIT_PCT", 2.0))  # 2.0% 기본 익절 (v65: 1.0→2.0, R:R 비율 개선)
     paper_stop_loss_pct: float = field(default_factory=lambda: _env_float("PAPER_STOP_LOSS_PCT", -1.5))  # -1.5% 손절 (V자 반등 대응, 기존 -0.7%에서 완화)
@@ -227,8 +227,8 @@ class Config:
     afternoon_min_confidence: int = field(default_factory=lambda: _env_int("AFTERNOON_MIN_CONFIDENCE", 80))  # 13:00-14:30 BUY 최소 confidence (오후 승률 저조)
     closing_min_confidence: int = field(default_factory=lambda: _env_int("CLOSING_MIN_CONFIDENCE", 85))  # 14:30-15:00 BUY 최소 confidence
     fast_profile_hold_minutes: int = field(default_factory=lambda: _env_int("FAST_PROFILE_HOLD_MINUTES", 20))  # fast-decay hold profile 기준값 (수주/공급계약)
-    fast_profile_no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("FAST_PROFILE_NO_BUY_AFTER_KST_HOUR", 14))  # 14:00+ fast profile BUY 차단
-    fast_profile_no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("FAST_PROFILE_NO_BUY_AFTER_KST_MINUTE", 0))
+    fast_profile_no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("FAST_PROFILE_NO_BUY_AFTER_KST_HOUR", 14))  # fast profile BUY 차단
+    fast_profile_no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("FAST_PROFILE_NO_BUY_AFTER_KST_MINUTE", 30))  # 14:00→14:30: 20분 보유 가능 시간 확보
     dynamic_guardrails_enabled: bool = field(default_factory=lambda: _env_bool("DYNAMIC_GUARDRAILS_ENABLED", True))
     dynamic_guardrail_supportive_index_change_pct: float = field(default_factory=lambda: _env_float("DYNAMIC_GUARDRAIL_SUPPORTIVE_INDEX_CHANGE_PCT", 0.3))
     dynamic_guardrail_supportive_breadth_ratio: float = field(default_factory=lambda: _env_float("DYNAMIC_GUARDRAIL_SUPPORTIVE_BREADTH_RATIO", 0.55))

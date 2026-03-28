@@ -99,7 +99,7 @@ def test_trailing_stop_defaults():
         assert cfg.max_hold_minutes == 20  # v70: 15→20
         assert cfg.fast_profile_hold_minutes == 20
         assert cfg.fast_profile_no_buy_after_kst_hour == 14
-        assert cfg.fast_profile_no_buy_after_kst_minute == 0
+        assert cfg.fast_profile_no_buy_after_kst_minute == 30  # v78: 0→30 (14:30까지 허용)
 
 
 def test_unknown_review_defaults_enabled():

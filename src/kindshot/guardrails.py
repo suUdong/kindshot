@@ -315,9 +315,9 @@ def resolve_dynamic_guardrail_profile(
     )
     fast_hour, fast_minute = _minutes_to_hhmm(fast_cutoff_minutes)
     return DynamicGuardrailProfile(
-        min_buy_confidence=max(76, config.min_buy_confidence - relax),
+        min_buy_confidence=max(71, config.min_buy_confidence - relax),
         opening_min_confidence=max(80, config.opening_min_confidence - min(relax, 1)),
-        afternoon_min_confidence=max(78, config.afternoon_min_confidence - relax),
+        afternoon_min_confidence=max(75, config.afternoon_min_confidence - relax),
         closing_min_confidence=config.closing_min_confidence,
         fast_profile_no_buy_after_kst_hour=fast_hour,
         fast_profile_no_buy_after_kst_minute=fast_minute,
@@ -529,13 +529,14 @@ def check_guardrails(
     _effective_order_size = config.order_size_for_hint(_size_hint)
     if decision_action == Action.BUY and orderbook_snapshot is not None:
         best_ask_notional = orderbook_snapshot.ask_price1 * orderbook_snapshot.ask_size1
-        if best_ask_notional < _effective_order_size:
+        # 1호가에 주문금액의 50% 이상이면 통과 (나머지는 2호가 이하에서 체결 가능)
+        if best_ask_notional < _effective_order_size * 0.5:
             return GuardrailResult(passed=False, reason="ORDERBOOK_TOP_LEVEL_LIQUIDITY")
         _level1_ratio, total_ratio = compute_orderbook_bid_ask_ratios(orderbook_snapshot)
         if total_ratio is not None and total_ratio < config.orderbook_bid_ask_ratio_min:
             return GuardrailResult(passed=False, reason="ORDERBOOK_IMBALANCE")
     if decision_action == Action.BUY and top_ask_notional is not None:
-        if top_ask_notional < _effective_order_size:
+        if top_ask_notional < _effective_order_size * 0.5:
             return GuardrailResult(passed=False, reason="ORDERBOOK_TOP_LEVEL_LIQUIDITY")
 
     # 7. Participation confirmation (시간 보정: 장 초반은 누적 거래대금 자연히 낮음).

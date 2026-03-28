@@ -545,9 +545,9 @@ async def test_pipeline_passes_supportive_dynamic_guardrail_profile(tmp_path):
 
     profile = guardrail_calls[0].kwargs["dynamic_profile"]
     assert profile.supportive_market is True
-    assert profile.min_buy_confidence == 76
-    assert profile.afternoon_min_confidence == 78
-    assert (profile.fast_profile_no_buy_after_kst_hour, profile.fast_profile_no_buy_after_kst_minute) == (15, 0)
+    assert profile.min_buy_confidence == 71  # max(71, 73-2)
+    assert profile.afternoon_min_confidence == 78  # max(75, 80-2)
+    assert (profile.fast_profile_no_buy_after_kst_hour, profile.fast_profile_no_buy_after_kst_minute) == (15, 15)  # min(15:15, 15:30)
 
 
 async def test_pipeline_skips_fast_profile_late_entry_before_llm(tmp_path):
@@ -555,10 +555,10 @@ async def test_pipeline_skips_fast_profile_late_entry_before_llm(tmp_path):
         title="삼성전자(005930) - 공급계약 체결",
         link="https://kind.krx.co.kr/?rcpNo=20260305000001",
         rss_guid="guid1",
-        published="2026-03-24T13:10:00+09:00",
+        published="2026-03-24T14:40:00+09:00",  # v78: cutoff 14:30 이후
         ticker="005930",
         corp_name="삼성전자",
-        detected_at=datetime(2026, 3, 24, 5, 10, 0, tzinfo=timezone.utc),
+        detected_at=datetime(2026, 3, 24, 5, 40, 0, tzinfo=timezone.utc),
     )
 
     records, guardrail_calls = await _run_pipeline_once(

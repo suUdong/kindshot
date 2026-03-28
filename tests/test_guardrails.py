@@ -226,6 +226,7 @@ def test_liquidation_trade_blocks_trade():
 
 
 def test_orderbook_top_level_liquidity_blocks_buy():
+    # best_ask_notional = 50,000 * 20 = 1,000,000 < 5,000,000 * 0.5 = 2,500,000 → 차단
     cfg = _cfg(order_size=5_000_000, no_buy_after_kst_hour=24)
     r = check_guardrails(
         "005930",
@@ -233,7 +234,7 @@ def test_orderbook_top_level_liquidity_blocks_buy():
         orderbook_snapshot=OrderbookSnapshot(
             ask_price1=50_000.0,
             bid_price1=49_900.0,
-            ask_size1=50,
+            ask_size1=20,
             bid_size1=100,
             total_ask_size=500,
             total_bid_size=800,
@@ -377,11 +378,12 @@ def test_normalized_quote_temp_stop_blocks_without_raw_dataclass():
 
 
 def test_normalized_top_ask_notional_blocks_buy_without_raw_dataclass():
+    # top_ask_notional=2,000,000 < 5,000,000 * 0.5 = 2,500,000 → 차단
     cfg = _cfg(order_size=5_000_000, no_buy_after_kst_hour=24)
     r = check_guardrails(
         "005930",
         cfg,
-        top_ask_notional=4_000_000.0,
+        top_ask_notional=2_000_000.0,
         decision_action=Action.BUY,
         **_base_args(),
     )
@@ -475,7 +477,7 @@ def test_chase_buy_blocked():
         config=_cfg(spread_check_enabled=True, no_buy_after_kst_hour=24),
         spread_bps=10.0,
         adv_value_20d=10e9,
-        ret_today=3.5,
+        ret_today=5.5,  # chase_buy_pct=5.0 초과 → 차단
         decision_action=Action.BUY,
     )
     assert r.passed is False
@@ -1795,10 +1797,10 @@ def test_resolve_dynamic_guardrail_profile_relaxes_supportive_market():
         kosdaq_breadth_ratio=0.61,
     )
     assert profile.supportive_market is True
-    assert profile.min_buy_confidence == 76
-    assert profile.opening_min_confidence == 81
-    assert profile.afternoon_min_confidence == 78
-    assert (profile.fast_profile_no_buy_after_kst_hour, profile.fast_profile_no_buy_after_kst_minute) == (15, 0)
+    assert profile.min_buy_confidence == 76  # max(71, 78-2)=76 (테스트 cfg는 min_buy_confidence=78)
+    assert profile.opening_min_confidence == 81  # max(80, 82-1)
+    assert profile.afternoon_min_confidence == 78  # max(75, 80-2)
+    assert (profile.fast_profile_no_buy_after_kst_hour, profile.fast_profile_no_buy_after_kst_minute) == (15, 0)  # min(15:00, 15:00)
 
 
 def test_dynamic_fast_profile_cutoff_never_exceeds_market_close():
