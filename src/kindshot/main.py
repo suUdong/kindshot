@@ -58,6 +58,94 @@ def _run_mode(config: Config) -> str:
     return "live"
 
 
+def _handle_trade_close(
+    *,
+    guardrail_state: GuardrailState,
+    performance_tracker: PerformanceTracker,
+    event_id: str,
+    ticker: str,
+    entry_px: float,
+    exit_px: float,
+    ret_pct: float,
+    pnl_won: float,
+    exit_type: str,
+    horizon: str,
+    hold_seconds: int,
+    size_won: float,
+    confidence: int,
+    mode: str,
+    position_closed: bool = True,
+    remaining_size_won: float = 0.0,
+    exit_fraction: float = 1.0,
+    initial_size_won: float = 0.0,
+    cumulative_pnl_won: float | None = None,
+    cumulative_ret_pct: float | None = None,
+    average_exit_px: float | None = None,
+) -> None:
+    """Apply the runtime side effects for a trade close callback."""
+    guardrail_state.record_pnl(pnl_won)
+    final_pnl_won = cumulative_pnl_won if cumulative_pnl_won is not None else pnl_won
+    final_ret_pct = cumulative_ret_pct if cumulative_ret_pct is not None else ret_pct
+    final_exit_px = average_exit_px if average_exit_px is not None else exit_px
+    final_size_won = initial_size_won if initial_size_won > 0 else size_won
+
+    if position_closed:
+        guardrail_state.record_sell(ticker)
+        if final_pnl_won < 0:
+            guardrail_state.record_stop_loss()
+        else:
+            guardrail_state.record_profitable_exit()
+        try:
+            performance_tracker.record_trade(
+                ticker,
+                entry_px,
+                final_exit_px,
+                final_ret_pct,
+                event_id=event_id,
+                size_won=final_size_won,
+                hold_seconds=hold_seconds,
+                exit_type=exit_type,
+                confidence=confidence,
+                position_closed=position_closed,
+                remaining_size_won=remaining_size_won,
+                initial_size_won=initial_size_won,
+                exit_fraction=exit_fraction,
+                cumulative_pnl_won=final_pnl_won,
+                cumulative_ret_pct=final_ret_pct,
+            )
+        except Exception:
+            logger.warning("Failed to record trade for %s", ticker, exc_info=True)
+
+    try_send_sell_signal(
+        ticker=ticker,
+        exit_type=exit_type,
+        horizon=horizon,
+        ret_pct=ret_pct,
+        pnl_won=pnl_won,
+        confidence=confidence,
+        size_won=size_won,
+        hold_seconds=hold_seconds,
+        mode=mode,
+        open_positions=guardrail_state.position_count,
+        position_closed=position_closed,
+        remaining_size_won=remaining_size_won,
+        exit_fraction=exit_fraction,
+        cumulative_pnl_won=final_pnl_won if position_closed else 0.0,
+        cumulative_ret_pct=final_ret_pct if position_closed else 0.0,
+    )
+    logger.info(
+        "Trade close event: %s %s %.0f won (ret=%.2f%%, final=%s, remain=%.0f, daily total: %.0f, positions: %d)",
+        ticker,
+        exit_type,
+        pnl_won,
+        ret_pct,
+        position_closed,
+        remaining_size_won,
+        guardrail_state.daily_pnl,
+        guardrail_state.position_count,
+    )
+
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="kindshot MVP")
     p.add_argument("--dry-run", action="store_true", help="Skip LLM calls, log events only")
@@ -321,64 +409,28 @@ async def run() -> None:
             cumulative_ret_pct: float | None = None,
             average_exit_px: float | None = None,
         ) -> None:
-            guardrail_state.record_pnl(pnl_won)
-            final_pnl_won = cumulative_pnl_won if cumulative_pnl_won is not None else pnl_won
-            final_ret_pct = cumulative_ret_pct if cumulative_ret_pct is not None else ret_pct
-            final_exit_px = average_exit_px if average_exit_px is not None else exit_px
-            final_size_won = initial_size_won if initial_size_won > 0 else size_won
-            if position_closed:
-                guardrail_state.record_sell(ticker)
-                if final_pnl_won < 0:
-                    guardrail_state.record_stop_loss()
-                else:
-                    guardrail_state.record_profitable_exit()
-                try:
-                    performance_tracker.record_trade(
-                        ticker,
-                        entry_px,
-                        final_exit_px,
-                        final_ret_pct,
-                        event_id=event_id,
-                        size_won=final_size_won,
-                        hold_seconds=hold_seconds,
-                        exit_type=exit_type,
-                        confidence=confidence,
-                        position_closed=position_closed,
-                        remaining_size_won=remaining_size_won,
-                        initial_size_won=initial_size_won,
-                        exit_fraction=exit_fraction,
-                        cumulative_pnl_won=final_pnl_won,
-                        cumulative_ret_pct=final_ret_pct,
-                    )
-                except Exception:
-                    logger.warning("Failed to record trade for %s", ticker, exc_info=True)
-            try_send_sell_signal(
+            _handle_trade_close(
+                guardrail_state=guardrail_state,
+                performance_tracker=performance_tracker,
+                event_id=event_id,
                 ticker=ticker,
-                exit_type=exit_type,
-                horizon=horizon,
+                entry_px=entry_px,
+                exit_px=exit_px,
                 ret_pct=ret_pct,
                 pnl_won=pnl_won,
-                confidence=confidence,
-                size_won=size_won,
+                exit_type=exit_type,
+                horizon=horizon,
                 hold_seconds=hold_seconds,
+                size_won=size_won,
+                confidence=confidence,
                 mode=mode,
-                open_positions=guardrail_state.position_count,
                 position_closed=position_closed,
                 remaining_size_won=remaining_size_won,
                 exit_fraction=exit_fraction,
-                cumulative_pnl_won=final_pnl_won if position_closed else 0.0,
-                cumulative_ret_pct=final_ret_pct if position_closed else 0.0,
-            )
-            logger.info(
-                "Trade close event: %s %s %.0f won (ret=%.2f%%, final=%s, remain=%.0f, daily total: %.0f, positions: %d)",
-                ticker,
-                exit_type,
-                pnl_won,
-                ret_pct,
-                position_closed,
-                remaining_size_won,
-                guardrail_state.daily_pnl,
-                guardrail_state.position_count,
+                initial_size_won=initial_size_won,
+                cumulative_pnl_won=cumulative_pnl_won,
+                cumulative_ret_pct=cumulative_ret_pct,
+                average_exit_px=average_exit_px,
             )
 
         scheduler = SnapshotScheduler(
