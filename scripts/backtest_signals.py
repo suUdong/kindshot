@@ -5,16 +5,18 @@ v78 가드레일 완화 기준으로 통과 시그널을 재판정하고,
 pykrx 실제 주가로 T+1 / T+5 / T+30 수익률을 분석한다.
 """
 
+import argparse
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 from pykrx import stock as pykrx
 
-DB_PATH = Path(__file__).resolve().parents[1] / "data" / "trade_history.db"
-REPORT_PATH = Path(__file__).resolve().parents[1] / "reports" / "signal-backtest-result.md"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "trade_history.db"
+DEFAULT_REPORT_PATH = PROJECT_ROOT / "reports" / "signal-backtest-result.md"
 
 # v78 가드레일 완화 기준
 V78_MIN_CONFIDENCE = 73
@@ -23,9 +25,9 @@ V78_NO_BUY_AFTER_HOUR = 15  # 15:15 cutoff → hour_slot <= 15
 V78_FAST_PROFILE_HOUR = 14  # 14:30 cutoff → hour_slot <= 14
 
 
-def load_signals() -> list[dict]:
+def load_signals(db_path: Path) -> list[dict]:
     """DB에서 전체 BUY 시그널 로드."""
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM trades WHERE decision_action='BUY' ORDER BY date, hour_slot")
@@ -101,9 +103,26 @@ def find_t_plus_n(trading_days: list[str], signal_date: str, n: int) -> str | No
     return None
 
 
-def run_backtest():
+def summarize_signal_counts(total_signals: int, blocked_count: int, deduped_count: int) -> dict[str, int]:
+    raw_passed_count = total_signals - blocked_count
+    return {
+        "total_signals": total_signals,
+        "blocked_count": blocked_count,
+        "raw_passed_count": raw_passed_count,
+        "deduped_count": deduped_count,
+        "duplicate_removed_count": raw_passed_count - deduped_count,
+    }
+
+
+def run_backtest(
+    db_path: Path,
+    trading_day_start: str = "20260318",
+    trading_day_end: str = "20260430",
+    price_start_date: str = "20260317",
+    price_end_date: str = "20260430",
+):
     """백테스트 메인 로직."""
-    signals = load_signals()
+    signals = load_signals(db_path)
     print(f"총 시그널: {len(signals)}건")
 
     # v78 가드레일 재판정
@@ -128,13 +147,13 @@ def run_backtest():
     print(f"중복 제거 후: {len(signals_to_test)}건")
 
     # 거래일 목록 조회
-    trading_days = get_trading_days("20260318", "20260430")
-    print(f"거래일 수: {len(trading_days)}일 (20260318~최신)")
+    trading_days = get_trading_days(trading_day_start, trading_day_end)
+    print(f"거래일 수: {len(trading_days)}일 ({trading_day_start}~최신)")
 
     # 종목별 종가 조회
     tickers = list({s["ticker"] for s in signals_to_test})
     print(f"종목 수: {len(tickers)}개, 가격 조회 중...")
-    prices = fetch_close_prices(tickers, "20260317", "20260430")
+    prices = fetch_close_prices(tickers, price_start_date, price_end_date)
     print(f"가격 조회 완료: {len(prices)}개 종목")
 
     # T+1, T+5, T+30 수익률 계산
@@ -175,8 +194,16 @@ def run_backtest():
 
         results.append(row)
 
+    summary_counts = summarize_signal_counts(len(signals), len(blocked), len(results))
     print(f"\n분석 완료: {len(results)}건")
-    return results, blocked, signals
+    print(
+        "요약 카운트: "
+        f"raw_passed={summary_counts['raw_passed_count']}, "
+        f"blocked={summary_counts['blocked_count']}, "
+        f"deduped={summary_counts['deduped_count']}, "
+        f"duplicates_removed={summary_counts['duplicate_removed_count']}"
+    )
+    return results, blocked, signals, summary_counts
 
 
 def compute_stats(results: list[dict], horizon: str) -> dict:
@@ -198,7 +225,7 @@ def compute_stats(results: list[dict], horizon: str) -> dict:
     }
 
 
-def generate_report(results: list[dict], blocked: list, all_signals: list) -> str:
+def generate_report(results: list[dict], blocked: list, all_signals: list, summary_counts: dict[str, int]) -> str:
     """마크다운 리포트 생성."""
     stats_t1 = compute_stats(results, "t1")
     stats_t5 = compute_stats(results, "t5")
@@ -225,8 +252,10 @@ def generate_report(results: list[dict], blocked: list, all_signals: list) -> st
         "## 요약",
         "",
         f"- 전체 BUY 시그널: {len(all_signals)}건",
-        f"- v78 가드레일 완화 통과: {len(results)}건 (중복 제거 후)",
+        f"- v78 가드레일 완화 raw 통과: {summary_counts['raw_passed_count']}건",
+        f"- v78 가드레일 완화 통과: {summary_counts['deduped_count']}건 (중복 제거 후)",
         f"- v78 가드레일 차단: {len(blocked)}건",
+        f"- 중복 제거로 제외된 통과 시그널: {summary_counts['duplicate_removed_count']}건",
         f"- 분석 기간: 20260318 ~ 20260327",
         "",
         "### v78 가드레일 완화 기준",
@@ -305,17 +334,42 @@ def generate_report(results: list[dict], blocked: list, all_signals: list) -> st
     return "\n".join(lines)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Backtest v78-relaxed BUY signals from trade_history.db")
+    parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH))
+    parser.add_argument("--report-path", default=str(DEFAULT_REPORT_PATH))
+    parser.add_argument("--trading-day-start", default="20260318")
+    parser.add_argument("--trading-day-end", default="20260430")
+    parser.add_argument("--price-start-date", default="20260317")
+    parser.add_argument("--price-end-date", default="20260430")
+    return parser.parse_args()
+
+
 def main():
-    results, blocked, all_signals = run_backtest()
+    args = parse_args()
+    db_path = Path(args.db_path)
+    report_path = Path(args.report_path)
+
+    if not db_path.exists():
+        print(f"ERROR: DB not found: {db_path}")
+        sys.exit(1)
+
+    results, blocked, all_signals, summary_counts = run_backtest(
+        db_path=db_path,
+        trading_day_start=args.trading_day_start,
+        trading_day_end=args.trading_day_end,
+        price_start_date=args.price_start_date,
+        price_end_date=args.price_end_date,
+    )
 
     if not results:
         print("ERROR: 분석 가능한 시그널 없음")
         sys.exit(1)
 
-    report = generate_report(results, blocked, all_signals)
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text(report, encoding="utf-8")
-    print(f"\n리포트 저장: {REPORT_PATH}")
+    report = generate_report(results, blocked, all_signals, summary_counts)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(report, encoding="utf-8")
+    print(f"\n리포트 저장: {report_path}")
 
     # 요약 출력
     stats = compute_stats(results, "t1")

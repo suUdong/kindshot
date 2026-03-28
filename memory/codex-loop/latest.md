@@ -1,59 +1,43 @@
-Hypothesis: If the remote runtime tree is reconciled to local `main` at `44783ee` and both services restart cleanly, then Kindshot will be deployment-consistent for the full `v71 + NLP + volume + sector` stack, and the remaining uncertainty will narrow to whether fresh live events arrive to exercise those paths.
+Hypothesis: If `910a331`의 v78 가드레일 완화 산출물을 raw throughput 면과 deduped profitability 면으로 분리해 재검증하면, 완화 효과의 실제 크기와 과장 위험을 더 명확하게 판단할 수 있다.
 
 Changed files:
-- `DEPLOYMENT_LOG.md`
+- `docs/plans/2026-03-29-v78-guardrail-profitability-validation.md`
+- `scripts/backtest_signals.py`
+- `scripts/v78_guardrail_profitability_validation.py`
+- `tests/test_backtest_signals.py`
+- `tests/test_v78_guardrail_profitability_validation.py`
+- `reports/v78-guardrail-profitability-validation.md`
 - `memory/codex-loop/latest.md`
 - `memory/codex-loop/session.md`
-- `.omx/context/ralph-kindshot-final-deploy-20260328T010904Z.md`
 
 Implementation summary:
-- Reconciled `/opt/kindshot` with local `main` via `rsync`, closing remote drift in `src/kindshot/config.py`, `src/kindshot/main.py`, `src/kindshot/telegram_ops.py`, and `tests/test_telegram_ops.py`.
-- Recompiled and reinstalled the remote package, then restarted both `kindshot` and `kindshot-dashboard`.
-- Verified `/health` and dashboard HTTP after warm-up, then watched live journal and polling output for roughly 150 seconds to determine whether new market events exercised the runtime.
-
-Deployment evidence summary:
-- Remote host: `kindshot-server` (`/opt/kindshot`)
-- Target commit synced from local: `44783ee`
-- Services:
-  - `kindshot` active since `2026-03-28 10:16:13 KST`
-  - `kindshot-dashboard` active since `2026-03-28 10:16:13 KST`
-- Remote `/health` after warm-up returned:
-  - `status=healthy`
-  - `started_at=2026-03-28T10:16:15.416286+09:00`
-  - `last_poll_source=feed`
-  - `last_poll_age_seconds=7`
-  - `events_seen=0`
-  - `events_processed=0`
-  - `llm_calls=0`
-- Remote dashboard probe returned:
-  - `HEAD http://127.0.0.1:8501/` → `200`
-  - `Content-Type: text/html`
+- Added a dedicated validation script that parses `reports/signal-backtest-result.md`, reloads `pykrx` close data, verifies the reported T+1/T+5 returns, and cross-references `reports/guardrail_sim.json` for pre/post block-rate comparison.
+- Generated a new report under `reports/` that separates the two evidence surfaces: raw guardrail throughput (`229` eligible events from `guardrail_sim.json`) and deduped profitability (`42` rows from `signal-backtest-result.md`).
+- Documented the main `910a331` caveat: the original summary mixes `87 total BUY / 42 deduped pass / 32 raw blocked`, which is not a single denominator. The validation report infers `55` raw passes and `13` duplicate-pass removals instead of treating `42+32` as a valid total.
+- Updated `scripts/backtest_signals.py` so future reruns can take `--db-path` / `--report-path` and report `raw pass`, `deduped pass`, and `duplicate removed` counts explicitly instead of hiding that framing gap.
 
 Validation:
-- local `python3 -m compileall src tests scripts dashboard`
-- local `.venv/bin/python -m pytest tests/test_news_semantics.py tests/test_decision.py tests/test_pipeline.py tests/test_trade_db.py tests/test_context_card.py tests/test_guardrails.py tests/test_entry_filter_analysis.py tests/test_dashboard.py tests/test_volatility_regime.py -q` → `363 passed`
-- local `.venv/bin/python -m pytest -q` → `1030 passed, 1 skipped, 1 warning`
-- local diagnostics `lsp_diagnostics_directory` → `0 errors`, `0 warnings`
-- remote `rsync --dry-run --checksum` found drift in `config.py`, `main.py`, `telegram_ops.py`, and `tests/test_telegram_ops.py`
-- remote `rsync --checksum` synced `src/`, `dashboard/`, `tests/`, `scripts/`, `pyproject.toml`, `README.md`, `requirements.lock`
-- remote `./.venv/bin/python -m compileall src/kindshot tests scripts dashboard`
-- remote `./.venv/bin/python -m pip install -e . --quiet`
-- remote `sudo -n systemctl restart kindshot kindshot-dashboard`
-- remote `curl -fsS http://127.0.0.1:8080/health`
-- remote dashboard `HEAD http://127.0.0.1:8501/`
-- remote live monitor window:
-  - journal heartbeats only, no post-start runtime error
-  - polling trace repeated `items=0 raw=40 dup=40 max_t=235650 last_t=235650`
-  - `polling_trace_20260328.jsonl` stats showed `2137` polls, `2` total new items, `0` errors
+- `python3 scripts/v78_guardrail_profitability_validation.py`
+- `python3 -m pytest tests/test_v78_guardrail_profitability_validation.py tests/test_backtest_signals.py -q` → `5 passed`
+- `python3 -m compileall scripts/v78_guardrail_profitability_validation.py scripts/backtest_signals.py tests/test_v78_guardrail_profitability_validation.py tests/test_backtest_signals.py`
+- `lsp_diagnostics_directory` on workspace → `0 errors`, `0 warnings`
+- architect verification via `codex exec` → `APPROVED`
+
+Key findings:
+- `signal-backtest-result.md` 상세 42행은 현재 `pykrx` 종가로 재검산했을 때 T+1/T+5 mismatch `0건`이었다.
+- Throughput 면에서 v78 완화 효과는 `132 -> 136 pass`, `97 -> 93 block`, `57.6% -> 59.4% pass rate`, `42.4% -> 40.6% block rate`로 확인됐다.
+- Profitability 면에서 전체 T+1 평균은 `-4.25%`, 전체 T+5 평균은 `+2.39%`로 재확인됐다.
+- Deduped 표본 안에서 기존 `PASSED` cohort의 T+5 평균은 `-0.81%`, 완화로 새로 편입된 cohort의 T+5 평균은 `+3.79%`였지만, bootstrap 90% 구간이 `[-1.55%, 9.80%]`로 넓어서 안정적 양의 기대수익으로 단정할 수준은 아니다.
 
 Simplifications made:
-- Kept deployment file-based with direct `rsync` and remote reinstall instead of changing `deploy/` automation.
-- Reused existing health endpoint, dashboard probe, journal, and polling trace surfaces rather than adding new operator tooling in this run.
+- Missing `trade_history.db` 때문에 기존 `scripts/backtest_signals.py` 재실행 대신, 남아 있는 markdown table + `pykrx` + `guardrail_sim.json` 조합으로 독립 검증 경로를 만들었다.
+- 전략 로직이나 배포 동작은 건드리지 않고, 분석/보고 surface만 추가했다.
 
 Remaining risks:
-- No fresh live events arrived during the monitor window, so the NLP / sector / volume decision paths were not exercised after restart.
-- No current-day `kindshot_20260328.jsonl` existed during monitoring, which matches the `events_seen=0` state but leaves structured-event verification pending the next live item.
-- The server remains in VTS-backed paper mode because `KIS_REAL_APP_KEY` / `KIS_REAL_APP_SECRET` are absent; stale-exit and T5M loss-exit behavior remain limited in this environment.
+- `trade_history.db`가 없어 `910a331` 스크립트의 원본 DB replay는 현 워크트리에서 검증하지 못했다.
+- Throughput 비교와 profitability 비교는 서로 다른 표본면을 사용한다.
+- Newly admitted cohort의 T+5 개선은 소수 대형 승자에 민감해 표본 확장 전까지는 exploratory evidence로만 봐야 한다.
+- 새 validation/reporting surface는 `guardrail_sim.json` schema drift나 report rendering 전체를 테스트로 잠그지는 않았다.
 
 Rollback note:
-- Re-sync the prior known-good runtime tree to `/opt/kindshot`, rerun `./.venv/bin/python -m pip install -e . --quiet`, and restart `kindshot` plus `kindshot-dashboard`.
+- Added validation artifacts only. Remove the new validation script, report, plan, and test if this reporting surface should be rolled back.
