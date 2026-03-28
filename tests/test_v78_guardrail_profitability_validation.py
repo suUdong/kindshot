@@ -2,6 +2,7 @@ from scripts.v78_guardrail_profitability_validation import (
     bootstrap_mean,
     horizon_stats,
     infer_910a331_summary,
+    parse_signal_report,
     parse_signal_rows,
     verify_returns_with_pykrx,
 )
@@ -22,6 +23,21 @@ def test_parse_signal_rows_extracts_detail_table() -> None:
     assert rows[0].entry_px == 522000
     assert rows[0].ret_t5 == -6.13
     assert rows[1].original_guardrail == "MARKET_CLOSE_CUTOFF"
+
+
+def test_parse_signal_report_extracts_summary_counts() -> None:
+    markdown = """
+# Report
+- 전체 BUY 시그널: 87건
+- v78 가드레일 차단: 32건
+
+| 20260319 | 005380 | POS_STRONG | 78 | 522,000 | -0.96 | -6.13 | N/A | PASSED |
+""".strip()
+
+    rows, summary = parse_signal_report(markdown)
+
+    assert len(rows) == 1
+    assert summary == {"total_buy_signals": 87, "raw_blocked": 32}
 
 
 def test_infer_910a331_summary_separates_raw_and_deduped_counts() -> None:
@@ -47,6 +63,21 @@ def test_horizon_stats_and_bootstrap_mean_cover_basic_shapes() -> None:
     assert stats.avg_ret == 9.85
     assert interval is not None
     assert interval.p05 <= interval.mean <= interval.p95
+
+
+def test_horizon_stats_uses_true_median_for_even_sample() -> None:
+    rows = parse_signal_rows(
+        """
+| 20260319 | 005380 | POS_STRONG | 78 | 522,000 | -1.0 | -6.0 | N/A | PASSED |
+| 20260320 | 007810 | POS_STRONG | 75 | 64,600 | -2.0 | 2.0 | N/A | MARKET_CLOSE_CUTOFF |
+| 20260320 | 237690 | POS_STRONG | 82 | 150,800 | -3.0 | 4.0 | N/A | ORDERBOOK_TOP_LEVEL_LIQUIDITY |
+| 20260321 | 000660 | POS_STRONG | 82 | 1,013,000 | -4.0 | 30.0 | N/A | PASSED |
+""".strip()
+    )
+
+    stats = horizon_stats(rows, "ret_t5")
+
+    assert stats.median_ret == 3.0
 
 
 def test_verify_returns_with_pykrx_checks_entry_and_future_returns(monkeypatch) -> None:

@@ -1,6 +1,6 @@
 # v78 Guardrail Profitability Validation
 
-생성일: 2026-03-29 05:28
+생성일: 2026-03-29 05:32
 
 ## 1. Validation Scope
 
@@ -36,12 +36,12 @@
 
 | Cohort | Matured trades | Win rate | Avg ret | Total ret | Median |
 |--------|----------------|----------|---------|-----------|--------|
-| All T+1 | 24 | 12.5% | -4.25% | -101.95% | -5.34% |
+| All T+1 | 24 | 12.5% | -4.25% | -101.95% | -5.42% |
 | All T+5 | 23 | 47.8% | 2.39% | 54.95% | -2.16% |
 | Baseline PASSED T+1 | 7 | 0.0% | -4.28% | -29.96% | -5.19% |
 | Baseline PASSED T+5 | 7 | 42.9% | -0.81% | -5.67% | -2.16% |
 | Newly admitted T+1 | 17 | 17.6% | -4.23% | -71.99% | -5.50% |
-| Newly admitted T+5 | 16 | 50.0% | 3.79% | 60.62% | 0.75% |
+| Newly admitted T+5 | 16 | 50.0% | 3.79% | 60.62% | -1.28% |
 
 새로 편입된 시그널 원래 차단 사유:
 
@@ -58,11 +58,14 @@
 핵심 관찰:
 - T+1은 baseline(-4.28%)과 newly admitted(-4.23%) 모두 부진하다.
 - T+5는 baseline cohort가 `-0.81%`, newly admitted cohort가 `+3.79%` 로 갈린다.
-- `910a331` 표본에서는 완화로 추가된 시그널이 T+5 총합 `60.62%` 를 만들어 전체 평균을 `-0.81% -> +2.39%` 로 바꿨다. 다만 이는 관측 표본 설명이지, 미래 기대수익 일반화는 아니다.
+- `910a331` 표본에서는 non-`PASSED` cohort가 T+5 총합 `60.62%` 를 만들어 전체 평균을 `-0.81% -> +2.39%` 로 바꿨다.
+- 이 cohort는 `guardrail_sim.json` 의 `+4` extra pass와 동일 집합이 아니므로, 여기서 확인되는 것은 realized uplift가 아니라 proxy signal이다.
 
 ## 6. Expected Return Simulation
 
-가정: `guardrail_sim.json` 의 `+4` extra pass가 `signal-backtest-result.md` 의 newly admitted cohort와 비슷한 수익률 분포를 가진다고 본다.
+가정: `guardrail_sim.json` 의 `+4` extra pass가 `signal-backtest-result.md` 의 newly admitted cohort와 비슷한 수익률 분포를 가진다고 보는 proxy 시뮬레이션이다.
+
+이 절은 realized uplift 증명이 아니라, 현재 표본으로 본 민감도 추정이다.
 
 - extra pass count: 4 / eligible events: 229
 - proxy newly admitted T+1 avg: -4.23%
@@ -83,8 +86,8 @@ bootstrap sanity check:
 - `910a331` 의 상세 테이블은 현재 시점 `pykrx` 종가로 재검산했을 때 entry/T+1/T+5 mismatch가 없었다.
 - 다만 commit 본문/기존 리포트는 raw throughput 수치와 deduped profitability 수치를 같은 summary에 섞어 써서 해석 혼선이 있다.
 - v78 완화는 throughput 측면에서는 `+1.7%p` 개선에 그쳤다.
-- profitability 측면에서는 표본 내 newly admitted cohort가 T+5에서 유의미한 개선 신호를 보였지만, bootstrap 90% 구간이 `[-1.55%, 9.80%]` 로 넓어 과신하면 안 된다.
-- 결론적으로 `v78 완화가 수익성 개선 가능성을 열었다` 까지는 지지되지만, `안정적으로 기대수익이 양수로 전환됐다` 고 단정할 근거는 아직 부족하다.
+- profitability 측면에서는 표본 내 non-`PASSED` cohort가 T+5에서 개선 신호를 보였지만, 이는 `+4` extra pass의 realized PnL이 아니라 더 넓은 proxy cohort를 사용한 결과다.
+- bootstrap 90% 구간이 `[-1.55%, 9.80%]` 로 넓고 0을 포함하므로, 현재 근거는 `개선 가능성 탐색` 수준이지 `안정적 양의 기대수익 확인` 수준은 아니다.
 
 ## 8. Risks
 

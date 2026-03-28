@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,6 +19,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SIGNAL_REPORT = PROJECT_ROOT / "reports" / "signal-backtest-result.md"
 DEFAULT_GUARDRAIL_SIM = PROJECT_ROOT / "reports" / "guardrail_sim.json"
 DEFAULT_OUTPUT = PROJECT_ROOT / "reports" / "v78-guardrail-profitability-validation.md"
+SUMMARY_PATTERNS = {
+    "total_buy_signals": re.compile(r"^- 전체 BUY 시그널: (\d+)건$"),
+    "raw_blocked": re.compile(r"^- v78 가드레일 차단: (\d+)건$"),
+}
 
 
 @dataclass(frozen=True)
@@ -84,6 +89,17 @@ def parse_signal_rows(markdown: str) -> list[SignalRow]:
     return rows
 
 
+def parse_signal_report(markdown: str) -> tuple[list[SignalRow], dict[str, int]]:
+    summary: dict[str, int] = {}
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        for key, pattern in SUMMARY_PATTERNS.items():
+            match = pattern.match(stripped)
+            if match:
+                summary[key] = int(match.group(1))
+    return parse_signal_rows(markdown), summary
+
+
 def horizon_stats(rows: list[SignalRow], attr: str, predicate: Callable[[SignalRow], bool] | None = None) -> HorizonStats:
     selected = [row for row in rows if (predicate(row) if predicate else True)]
     values = [getattr(row, attr) for row in selected if getattr(row, attr) is not None]
@@ -91,11 +107,16 @@ def horizon_stats(rows: list[SignalRow], attr: str, predicate: Callable[[SignalR
         return HorizonStats(0, None, None, None, None, None, None)
     ordered = sorted(values)
     wins = sum(1 for value in values if value > 0)
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2:
+        median = ordered[midpoint]
+    else:
+        median = (ordered[midpoint - 1] + ordered[midpoint]) / 2
     return HorizonStats(
         count=len(values),
         win_rate=round(wins / len(values) * 100, 1),
         avg_ret=round(sum(values) / len(values), 2),
-        median_ret=round(ordered[len(ordered) // 2], 2),
+        median_ret=round(median, 2),
         total_ret=round(sum(values), 2),
         min_ret=round(min(values), 2),
         max_ret=round(max(values), 2),
@@ -238,12 +259,17 @@ def _render_bootstrap(label: str, summary: BootstrapSummary | None) -> str:
 def render_report(
     *,
     rows: list[SignalRow],
+    report_summary: dict[str, int],
     verification: ReturnVerificationSummary,
     guardrail_sim: dict,
     output_path: Path,
 ) -> str:
     summary = guardrail_sim["summary"]
-    inferred = infer_910a331_summary(total_buy_signals=87, deduped_passed=len(rows), raw_blocked=32)
+    inferred = infer_910a331_summary(
+        total_buy_signals=report_summary["total_buy_signals"],
+        deduped_passed=len(rows),
+        raw_blocked=report_summary["raw_blocked"],
+    )
     baseline_rows = [row for row in rows if row.original_guardrail == "PASSED"]
     newly_admitted_rows = [row for row in rows if row.original_guardrail != "PASSED"]
     original_reason_counts = Counter(row.original_guardrail for row in rows if row.original_guardrail != "PASSED")
@@ -266,6 +292,10 @@ def render_report(
     t5_extra_gross = round((t5_new.avg_ret or 0.0) * extra_passes, 2) if t5_new.avg_ret is not None else None
     t1_extra_per_event = round(t1_extra_gross / eligible_events, 4) if t1_extra_gross is not None else None
     t5_extra_per_event = round(t5_extra_gross / eligible_events, 4) if t5_extra_gross is not None else None
+    try:
+        output_label = str(output_path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        output_label = str(output_path)
 
     lines = [
         "# v78 Guardrail Profitability Validation",
@@ -340,11 +370,14 @@ def render_report(
         "핵심 관찰:",
         f"- T+1은 baseline(-4.28%)과 newly admitted(-4.23%) 모두 부진하다.",
         f"- T+5는 baseline cohort가 `-0.81%`, newly admitted cohort가 `+3.79%` 로 갈린다.",
-        f"- `910a331` 표본에서는 완화로 추가된 시그널이 T+5 총합 `{_fmt_pct(t5_new.total_ret)}` 를 만들어 전체 평균을 `-0.81% -> +2.39%` 로 바꿨다. 다만 이는 관측 표본 설명이지, 미래 기대수익 일반화는 아니다.",
+        f"- `910a331` 표본에서는 non-`PASSED` cohort가 T+5 총합 `{_fmt_pct(t5_new.total_ret)}` 를 만들어 전체 평균을 `-0.81% -> +2.39%` 로 바꿨다.",
+        "- 이 cohort는 `guardrail_sim.json` 의 `+4` extra pass와 동일 집합이 아니므로, 여기서 확인되는 것은 realized uplift가 아니라 proxy signal이다.",
         "",
         "## 6. Expected Return Simulation",
         "",
-        "가정: `guardrail_sim.json` 의 `+4` extra pass가 `signal-backtest-result.md` 의 newly admitted cohort와 비슷한 수익률 분포를 가진다고 본다.",
+        "가정: `guardrail_sim.json` 의 `+4` extra pass가 `signal-backtest-result.md` 의 newly admitted cohort와 비슷한 수익률 분포를 가진다고 보는 proxy 시뮬레이션이다.",
+        "",
+        "이 절은 realized uplift 증명이 아니라, 현재 표본으로 본 민감도 추정이다.",
         "",
         f"- extra pass count: {extra_passes} / eligible events: {eligible_events}",
         f"- proxy newly admitted T+1 avg: {_fmt_pct(t1_new.avg_ret)}",
@@ -365,8 +398,8 @@ def render_report(
         "- `910a331` 의 상세 테이블은 현재 시점 `pykrx` 종가로 재검산했을 때 entry/T+1/T+5 mismatch가 없었다.",
         "- 다만 commit 본문/기존 리포트는 raw throughput 수치와 deduped profitability 수치를 같은 summary에 섞어 써서 해석 혼선이 있다.",
         "- v78 완화는 throughput 측면에서는 `+1.7%p` 개선에 그쳤다.",
-        "- profitability 측면에서는 표본 내 newly admitted cohort가 T+5에서 유의미한 개선 신호를 보였지만, bootstrap 90% 구간이 `[-1.55%, 9.80%]` 로 넓어 과신하면 안 된다.",
-        "- 결론적으로 `v78 완화가 수익성 개선 가능성을 열었다` 까지는 지지되지만, `안정적으로 기대수익이 양수로 전환됐다` 고 단정할 근거는 아직 부족하다.",
+        "- profitability 측면에서는 표본 내 non-`PASSED` cohort가 T+5에서 개선 신호를 보였지만, 이는 `+4` extra pass의 realized PnL이 아니라 더 넓은 proxy cohort를 사용한 결과다.",
+        "- bootstrap 90% 구간이 `[-1.55%, 9.80%]` 로 넓고 0을 포함하므로, 현재 근거는 `개선 가능성 탐색` 수준이지 `안정적 양의 기대수익 확인` 수준은 아니다.",
         "",
         "## 8. Risks",
         "",
@@ -374,7 +407,7 @@ def render_report(
         "- throughput 비교(`guardrail_sim.json`)와 profitability 비교(`signal-backtest-result.md`)는 서로 다른 표본면을 사용한다.",
         "- newly admitted cohort의 T+5 개선은 일부 큰 winner(`ORDERBOOK_TOP_LEVEL_LIQUIDITY`, `MARKET_CLOSE_CUTOFF`)에 민감하다.",
         "",
-        f"*Generated by `{Path(__file__).name}` → `{output_path.relative_to(PROJECT_ROOT)}`*",
+        f"*Generated by `{Path(__file__).name}` → `{output_label}`*",
     ]
     return "\n".join(lines) + "\n"
 
@@ -386,11 +419,13 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
 
-    rows = parse_signal_rows(args.signal_report.read_text(encoding="utf-8"))
+    signal_report = args.signal_report.read_text(encoding="utf-8")
+    rows, report_summary = parse_signal_report(signal_report)
     verification = verify_returns_with_pykrx(rows)
     guardrail_sim = load_guardrail_sim(args.guardrail_sim)
     report = render_report(
         rows=rows,
+        report_summary=report_summary,
         verification=verification,
         guardrail_sim=guardrail_sim,
         output_path=args.output,

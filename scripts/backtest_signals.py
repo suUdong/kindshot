@@ -103,7 +103,12 @@ def find_t_plus_n(trading_days: list[str], signal_date: str, n: int) -> str | No
     return None
 
 
-def summarize_signal_counts(total_signals: int, blocked_count: int, deduped_count: int) -> dict[str, int]:
+def summarize_signal_counts(
+    total_signals: int,
+    blocked_count: int,
+    deduped_count: int,
+    analyzable_count: int,
+) -> dict[str, int]:
     raw_passed_count = total_signals - blocked_count
     return {
         "total_signals": total_signals,
@@ -111,6 +116,8 @@ def summarize_signal_counts(total_signals: int, blocked_count: int, deduped_coun
         "raw_passed_count": raw_passed_count,
         "deduped_count": deduped_count,
         "duplicate_removed_count": raw_passed_count - deduped_count,
+        "analyzable_count": analyzable_count,
+        "price_unavailable_count": deduped_count - analyzable_count,
     }
 
 
@@ -194,14 +201,20 @@ def run_backtest(
 
         results.append(row)
 
-    summary_counts = summarize_signal_counts(len(signals), len(blocked), len(results))
+    summary_counts = summarize_signal_counts(
+        len(signals),
+        len(blocked),
+        len(signals_to_test),
+        len(results),
+    )
     print(f"\n분석 완료: {len(results)}건")
     print(
         "요약 카운트: "
         f"raw_passed={summary_counts['raw_passed_count']}, "
         f"blocked={summary_counts['blocked_count']}, "
         f"deduped={summary_counts['deduped_count']}, "
-        f"duplicates_removed={summary_counts['duplicate_removed_count']}"
+        f"duplicates_removed={summary_counts['duplicate_removed_count']}, "
+        f"price_unavailable={summary_counts['price_unavailable_count']}"
     )
     return results, blocked, signals, summary_counts
 
@@ -256,6 +269,8 @@ def generate_report(results: list[dict], blocked: list, all_signals: list, summa
         f"- v78 가드레일 완화 통과: {summary_counts['deduped_count']}건 (중복 제거 후)",
         f"- v78 가드레일 차단: {len(blocked)}건",
         f"- 중복 제거로 제외된 통과 시그널: {summary_counts['duplicate_removed_count']}건",
+        f"- 가격 데이터 부족으로 수익률 계산에서 제외된 통과 시그널: {summary_counts['price_unavailable_count']}건",
+        f"- 실제 수익률 분석 건수: {summary_counts['analyzable_count']}건",
         f"- 분석 기간: 20260318 ~ 20260327",
         "",
         "### v78 가드레일 완화 기준",
