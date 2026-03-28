@@ -352,6 +352,50 @@ def test_fallback_decide_skips_brokerage_contract_commentary_from_raw_headline()
     assert record.reason == "rule_fallback:article_pattern"
 
 
+# ── v82: CEO/인물 발언 하드블록 (따옴표 + 직급 패턴) ──
+
+@pytest.mark.parametrize("headline,expected", [
+    # 따옴표 패턴 — 인물 발언/인터뷰
+    ("LG에너지솔루션 김동명 '올해 ESS 기회'", True),
+    ("삼성전자 부회장 '반도체 투자 확대'", True),
+    ('현대차 사장 "EV 전환 가속"', True),
+    ("SK하이닉스 전무 '올해 HBM 2배'", True),
+    # 직급 키워드 (따옴표 없어도)
+    ("삼성SDI 부회장 간담회에서 투자 확대 언급", True),
+    ("LG전자 사장 신년사 실적 자신감", True),
+    ("SK이노 부사장 컨퍼런스 발표", True),
+    ("현대모비스 상무 기술 브리핑", True),
+    ("인터뷰 통해 공개된 신제품 로드맵", True),
+    ("대표이사 밝혔다 내년 흑자전환", True),
+    # 일반 공시 — article이 아님
+    ("삼성전자 공급계약 체결 500억", False),
+    ("LG화학 자기주식처분 결정", False),
+])
+def test_v82_article_pattern_ceo_speech_hardblock(headline, expected):
+    """v82: 따옴표/직급/발언 패턴이 article_pattern으로 감지되어야 함."""
+    assert has_article_pattern(headline) is expected
+
+
+def test_v82_fallback_skips_ceo_quote_headline():
+    """v82: CEO 발언 직급 헤드라인 → fallback_decide가 SKIP."""
+    cfg = Config(anthropic_api_key="test")
+    engine = DecisionEngine(cfg)
+    ctx = ContextCard(ret_today=0.5, ret_3d=0.5, adv_value_20d=50e9)
+
+    record = engine.fallback_decide(
+        ticker="373220",
+        headline="LG에너지솔루션 부회장 '올해 ESS 기회'",
+        analysis_headline="LG에너지솔루션 부회장 올해 ESS 기회",
+        bucket=Bucket.POS_STRONG,
+        ctx=ctx,
+        keyword_hits=["ESS"],
+        dorg="연합뉴스",
+    )
+
+    assert record.action == Action.SKIP
+    assert "article_pattern" in record.reason
+
+
 def test_cache_key_changes_with_microstructure_context(tmp_path):
     cfg = Config(anthropic_api_key="test", llm_cache_dir=tmp_path / "llm_cache")
     engine = DecisionEngine(cfg)

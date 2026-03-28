@@ -2117,3 +2117,91 @@ async def test_guardrail_block_no_shadow_for_skip_action(tmp_path):
             if str(c).find("shadow_") != -1
         ]
         assert len(shadow_calls) == 0
+
+
+# ── v82: 해외 품목허가 confidence cap 75 ──
+
+async def test_v82_foreign_product_approval_cap(tmp_path):
+    """비FDA/EMA 해외 품목허가 → confidence cap 75 적용 확인.
+
+    cap 후 guardrail 보정(ADV 등)이 추가되어 최종 confidence가 78 이상일 수 있으나,
+    원본 85에서 cap 75로 제한된 후 보정되므로 최종값은 원본보다 낮아야 함.
+    """
+    from kindshot.models import Action, DecisionRecord, SizeHint
+
+    raw = RawDisclosure(
+        title="셀트리온 일본 품목허가 승인",
+        link="https://kind.krx.co.kr/?rcpNo=20260329000001",
+        rss_guid="guid-foreign-approval",
+        published="2026-03-29T10:00:00+09:00",
+        ticker="068270",
+        corp_name="셀트리온",
+        detected_at=datetime(2026, 3, 29, 1, 0, 0, tzinfo=timezone.utc),
+    )
+    decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime(2026, 3, 29, 1, 0, 5, tzinfo=timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=85,
+        size_hint=SizeHint.M,
+        reason="일본 품목허가",
+        decision_source="LLM",
+    )
+
+    records = await _run_pipeline_once(
+        tmp_path,
+        [raw],
+        decision_side_effect=[decision],
+        paper=True,
+        ctx_raw=ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=1.0),
+    )
+
+    # cap 적용 확인: LLM 원본 85 → cap 75 → guardrail 보정 후 최종값은 원본보다 낮아야 함
+    decision_records = [r for r in records if r.get("type") == "decision"]
+    assert len(decision_records) == 1
+    assert decision_records[0]["confidence"] < 85  # cap이 적용되었음
+
+
+async def test_v82_fda_approval_not_capped(tmp_path):
+    """FDA 품목허가는 cap 적용 안 됨 — confidence 유지."""
+    from kindshot.models import Action, DecisionRecord, SizeHint
+
+    raw = RawDisclosure(
+        title="셀트리온 FDA 품목허가 승인",
+        link="https://kind.krx.co.kr/?rcpNo=20260329000002",
+        rss_guid="guid-fda-approval",
+        published="2026-03-29T10:00:00+09:00",
+        ticker="068270",
+        corp_name="셀트리온",
+        detected_at=datetime(2026, 3, 29, 1, 0, 0, tzinfo=timezone.utc),
+    )
+    decision = DecisionRecord(
+        schema_version="0.1.2",
+        run_id="test_run",
+        event_id="",
+        decided_at=datetime(2026, 3, 29, 1, 0, 5, tzinfo=timezone.utc),
+        llm_model="test",
+        llm_latency_ms=10,
+        action=Action.BUY,
+        confidence=85,
+        size_hint=SizeHint.M,
+        reason="FDA 품목허가",
+        decision_source="LLM",
+    )
+
+    records = await _run_pipeline_once(
+        tmp_path,
+        [raw],
+        decision_side_effect=[decision],
+        paper=True,
+        ctx_raw=ContextCardData(adv_value_20d=10e9, spread_bps=10.0, ret_today=1.0),
+    )
+
+    # FDA 품목허가 → cap 미적용 → confidence 유지 → BUY 통과 가능
+    decision_records = [r for r in records if r.get("type") == "decision"]
+    assert len(decision_records) == 1
+    assert decision_records[0]["confidence"] >= 78  # cap 미적용
