@@ -25,6 +25,7 @@ from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.market import MarketMonitor
 from kindshot.performance import PerformanceTracker
 from kindshot.pattern_profile import build_recent_pattern_profile
+from kindshot.dart_buyback_strategy import DartBuybackStrategy
 from kindshot.news_strategy import NewsStrategy
 from kindshot.pipeline import (
     RuntimeCounters,
@@ -82,6 +83,8 @@ def _build_strategy_registry(
     health_state: Optional[object],
     order_executor: Optional[object],
     recent_pattern_profile: Optional[object],
+    session: Optional[aiohttp.ClientSession] = None,
+    buyback_queue: Optional[asyncio.Queue] = None,
 ) -> tuple[StrategyRegistry, NewsStrategy, bool]:
     strategy_registry = StrategyRegistry()
     news_strategy = NewsStrategy(
@@ -107,6 +110,25 @@ def _build_strategy_registry(
             technical_strategy = TechnicalStrategy(config, kis, stop_event=stop_event)
             strategy_registry.register(technical_strategy)
             has_signal_strategies = technical_strategy.enabled
+
+    # DART 자사주 매입 전략
+    if config.dart_buyback_enabled and config.dart_api_key and session and buyback_queue:
+        buyback_strategy = DartBuybackStrategy(
+            config, session, buyback_queue, stop_event=stop_event,
+        )
+        strategy_registry.register(buyback_strategy)
+        if buyback_strategy.enabled:
+            has_signal_strategies = True
+        logger.info("DartBuybackStrategy registered (enabled=%s)", buyback_strategy.enabled)
+    elif config.dart_buyback_enabled:
+        missing = []
+        if not config.dart_api_key:
+            missing.append("DART_API_KEY")
+        if not session:
+            missing.append("session")
+        if not buyback_queue:
+            missing.append("buyback_queue")
+        logger.warning("DartBuybackStrategy requested but missing: %s", ", ".join(missing))
 
     return strategy_registry, news_strategy, has_signal_strategies
 
@@ -300,7 +322,7 @@ async def _watchdog_loop(
         await _wait_or_stop(stop_event, config.watchdog_interval_s)
 
 
-def _build_feed(config, feed_source: str, kis, session, state_dir):
+def _build_feed(config, feed_source: str, kis, session, state_dir, *, buyback_queue=None):
     """Build feed instance(s) from config. Returns (feed, feed_source_label)."""
     sources = [s.strip() for s in feed_source.split(",") if s.strip()]
     if not sources:
@@ -314,7 +336,7 @@ def _build_feed(config, feed_source: str, kis, session, state_dir):
             feeds.append(KisFeed(config, kis, state_dir=state_dir / "feed"))
             labels.append("KIS")
         elif src == "DART" and config.dart_api_key:
-            feeds.append(DartFeed(config, session, state_dir=state_dir / "feed_dart"))
+            feeds.append(DartFeed(config, session, state_dir=state_dir / "feed_dart", buyback_queue=buyback_queue))
             labels.append("DART")
         elif src == "KIND":
             feeds.append(KindFeed(config, session))
@@ -391,7 +413,11 @@ async def run() -> None:
 
         state_dir = config.log_dir / "state" / mode
         feed_source = config.feed_source.upper()
-        feed, feed_source = _build_feed(config, feed_source, kis, session, state_dir)
+        # 자사주 매입 공시 분리 큐 (DartFeed → DartBuybackStrategy)
+        buyback_queue: Optional[asyncio.Queue] = None
+        if config.dart_buyback_enabled and config.dart_api_key:
+            buyback_queue = asyncio.Queue(maxsize=100)
+        feed, feed_source = _build_feed(config, feed_source, kis, session, state_dir, buyback_queue=buyback_queue)
         registry = EventRegistry(state_dir=state_dir)
         decision_engine = DecisionEngine(config)
         unknown_review_engine = UnknownReviewEngine(config) if config.unknown_shadow_review_enabled else None
@@ -629,6 +655,8 @@ async def run() -> None:
             health_state=health_state,
             order_executor=order_executor,
             recent_pattern_profile=recent_pattern_profile,
+            session=session,
+            buyback_queue=buyback_queue,
         )
         await strategy_registry.start_all()
         logger.info("Strategy registry: %d active strategies", len(strategy_registry.active_strategies))

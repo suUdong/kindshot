@@ -592,6 +592,14 @@ class AnalystFeed:
 # ── DART OpenAPI Feed ──────────────────────────────────────────────
 
 
+_BUYBACK_KEYWORDS = ("자기주식취득결정", "자사주취득", "자기주식 취득 결정")
+
+
+def _is_buyback_report(report_nm: str) -> bool:
+    """report_nm이 자사주 매입 공시인지 판별."""
+    return any(kw in report_nm for kw in _BUYBACK_KEYWORDS)
+
+
 class DartFeed:
     """DART 전자공시 OpenAPI 기반 실시간 공시 피드.
 
@@ -599,7 +607,14 @@ class DartFeed:
     당일 공시를 RawDisclosure로 변환한다.
     """
 
-    def __init__(self, config: Config, session: aiohttp.ClientSession, *, state_dir: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        session: aiohttp.ClientSession,
+        *,
+        state_dir: Optional[Path] = None,
+        buyback_queue: Optional[asyncio.Queue] = None,
+    ) -> None:
         self._config = config
         self._session = session
         self._seen_rcept: OrderedDict[str, None] = OrderedDict()
@@ -608,6 +623,7 @@ class DartFeed:
         self._last_poll_at: Optional[datetime] = None
         self._state_dir = state_dir
         self._current_date: Optional[str] = None
+        self._buyback_queue = buyback_queue  # 자사주 매입 공시 분리 큐
         if state_dir:
             state_dir.mkdir(parents=True, exist_ok=True)
             self._load_state()
@@ -749,18 +765,28 @@ class DartFeed:
             # corp_name 포함 형태로 변환하여 기존 bucket 분류와 호환
             title = f"{corp_name}({stock_code}) {report_nm}"
 
-            results.append(
-                RawDisclosure(
-                    title=title,
-                    link=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}",
-                    rss_guid=rcept_no,
-                    published=rcept_dt,
-                    ticker=stock_code,
-                    corp_name=corp_name,
-                    detected_at=now,
-                    dorg=f"DART/{flr_nm}" if flr_nm else "DART",
-                )
+            disc = RawDisclosure(
+                title=title,
+                link=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}",
+                rss_guid=rcept_no,
+                published=rcept_dt,
+                ticker=stock_code,
+                corp_name=corp_name,
+                detected_at=now,
+                dorg=f"DART/{flr_nm}" if flr_nm else "DART",
             )
+
+            # 자사주 매입 공시는 별도 큐로 분리 (뉴스 파이프라인 중복 방지)
+            if self._buyback_queue is not None and _is_buyback_report(report_nm):
+                try:
+                    self._buyback_queue.put_nowait(disc)
+                    logger.info("DART buyback routed to strategy queue: %s %s", stock_code, report_nm)
+                except asyncio.QueueFull:
+                    logger.warning("DART buyback queue full, falling back to news pipeline")
+                    results.append(disc)
+                continue
+
+            results.append(disc)
 
         # Cap seen set
         while len(self._seen_rcept) > 5000:

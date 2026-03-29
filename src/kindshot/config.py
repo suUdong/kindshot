@@ -146,6 +146,12 @@ class Config:
     dart_api_key: str = field(default_factory=lambda: _env("DART_API_KEY"))
     dart_base_url: str = "https://opendart.fss.or.kr/api"
     dart_poll_page_count: int = field(default_factory=lambda: _env_int("DART_POLL_PAGE_COUNT", 20))  # 한 번에 가져올 공시 수
+    # --- DART Buyback Strategy ---
+    dart_buyback_enabled: bool = field(default_factory=lambda: _env_bool("DART_BUYBACK_ENABLED", True))
+    dart_buyback_base_confidence: int = field(default_factory=lambda: _env_int("DART_BUYBACK_BASE_CONFIDENCE", 65))
+    dart_buyback_direct_bonus: int = 15      # 직접매입 보너스
+    dart_buyback_trust_bonus: int = 8        # 신탁매입 보너스
+    dart_buyback_min_amount: int = field(default_factory=lambda: _env_int("DART_BUYBACK_MIN_AMOUNT", 1_000_000_000))  # 최소 10억
     feed_interval_market_s: float = field(default_factory=lambda: _env_float("FEED_INTERVAL_MARKET", 3.0))
     feed_interval_off_s: float = field(default_factory=lambda: _env_float("FEED_INTERVAL_OFF", 15.0))
     feed_overlap_s: int = field(default_factory=lambda: _env_int("FEED_OVERLAP_S", 90))
