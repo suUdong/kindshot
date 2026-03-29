@@ -1136,6 +1136,44 @@ def test_opening_0930_passes():
     assert r.passed is True
 
 
+def test_midmorning_relaxed_confidence():
+    """v84: 10:00~11:30 최적 구간 — min_buy_confidence 통과하면 midmorning 문턱 적용."""
+    from unittest.mock import patch
+    from datetime import datetime, timedelta, timezone
+    _KST = timezone(timedelta(hours=9))
+    midmorning = datetime(2026, 3, 24, 10, 30, 0, tzinfo=_KST)
+    # min_buy_confidence=78, midmorning=75 → 78이 바닥, conf 79로 통과 확인
+    cfg = _cfg(no_buy_after_kst_hour=15, min_buy_confidence=78, midmorning_min_confidence=75)
+    with patch("kindshot.guardrails.datetime") as mock_dt:
+        mock_dt.now.return_value = midmorning
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        r = check_guardrails(
+            "005930", cfg, spread_bps=10.0, adv_value_20d=10e9, ret_today=1.0,
+            decision_action=Action.BUY, decision_confidence=79,
+        )
+    assert r.passed is True
+
+
+def test_midmorning_low_confidence_blocked():
+    """v84: 10:00~11:30 구간에서 conf < midmorning_min_confidence → 차단."""
+    from unittest.mock import patch
+    from datetime import datetime, timedelta, timezone
+    _KST = timezone(timedelta(hours=9))
+    midmorning = datetime(2026, 3, 24, 10, 30, 0, tzinfo=_KST)
+    # min_buy_confidence=70으로 낮춰서 midmorning 문턱(80)이 실제 작동하는지 테스트
+    cfg = _cfg(no_buy_after_kst_hour=15, min_buy_confidence=70, midmorning_min_confidence=80)
+    with patch("kindshot.guardrails.datetime") as mock_dt:
+        mock_dt.now.return_value = midmorning
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        # conf 75: min_buy(70) 통과, midmorning(80) 미달 → 차단
+        r = check_guardrails(
+            "005930", cfg, spread_bps=10.0, adv_value_20d=10e9, ret_today=1.0,
+            decision_action=Action.BUY, decision_confidence=75,
+        )
+    assert r.passed is False
+    assert r.reason == "MIDMORNING_LOW_CONFIDENCE"
+
+
 def test_closing_low_confidence_blocked():
     """14:30-15:00: conf<85 → 차단."""
     from unittest.mock import patch

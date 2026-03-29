@@ -150,8 +150,10 @@ def main() -> None:
     profile_old = DynamicGuardrailProfile(
         min_buy_confidence=OLD_DYNAMIC_PROFILE_OVERRIDES.get("min_buy_confidence", 76),
         opening_min_confidence=config_old.opening_min_confidence,
+        midmorning_min_confidence=config_old.midmorning_min_confidence,
         afternoon_min_confidence=OLD_DYNAMIC_PROFILE_OVERRIDES.get("afternoon_min_confidence", 78),
         closing_min_confidence=config_old.closing_min_confidence,
+        early_session_block_end_minute=config_old.early_session_block_end_minute,
         fast_profile_no_buy_after_kst_hour=config_old.fast_profile_no_buy_after_kst_hour,
         fast_profile_no_buy_after_kst_minute=0,
     )
