@@ -25,12 +25,14 @@ from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.market import MarketMonitor
 from kindshot.performance import PerformanceTracker
 from kindshot.pattern_profile import build_recent_pattern_profile
+from kindshot.news_strategy import NewsStrategy
 from kindshot.pipeline import (
     RuntimeCounters,
     counter_snapshot,
     pipeline_loop,
     process_unknown_promotion,
 )
+from kindshot.strategy import StrategyRegistry
 from kindshot.poll_trace import init_tracer
 from kindshot.price import PriceFetcher, SnapshotScheduler
 from kindshot.sd_notify import notify_ready, notify_watchdog
@@ -556,17 +558,25 @@ async def run() -> None:
 
         notify_ready()
 
+        # ── Strategy Registry: 멀티 전략 프레임워크 ──
+        strategy_registry = StrategyRegistry()
+        news_strategy = NewsStrategy(
+            config, feed, registry, decision_engine, market, scheduler, log,
+            run_id, kis, counters, mode,
+            stop_event=stop_event,
+            guardrail_state=guardrail_state,
+            feed_source=feed_source,
+            unknown_review_queue=unknown_review_queue,
+            health_state=health_state,
+            order_executor=order_executor,
+            recent_pattern_profile=recent_pattern_profile,
+        )
+        strategy_registry.register(news_strategy)
+        await strategy_registry.start_all()
+        logger.info("Strategy registry: %d active strategies", len(strategy_registry.active_strategies))
+
         tasks = [
-            asyncio.create_task(pipeline_loop(
-                feed, registry, decision_engine, market, scheduler, log, config, run_id, kis, counters, mode,
-                stop_event=stop_event,
-                guardrail_state=guardrail_state,
-                feed_source=feed_source,
-                unknown_review_queue=unknown_review_queue,
-                health_state=health_state,
-                order_executor=order_executor,
-                recent_pattern_profile=recent_pattern_profile,
-            ), name="pipeline"),
+            asyncio.create_task(news_strategy.run_pipeline(), name="pipeline"),
             asyncio.create_task(scheduler.run(), name="snapshots"),
             asyncio.create_task(_market_loop(), name="market"),
             asyncio.create_task(_watchdog_loop(feed, counters, config, stop_event), name="watchdog"),
@@ -599,6 +609,7 @@ async def run() -> None:
                 except asyncio.TimeoutError:
                     logger.warning("Unknown review queue drain timed out (5s)")
             scheduler.stop()
+            await strategy_registry.stop_all()
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
