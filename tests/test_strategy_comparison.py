@@ -42,5 +42,5 @@ def test_compute_exit_respects_short_hold_profile():
     exit_type, exit_horizon, exit_ret = mod.compute_exit(event, snapshots)
 
     assert exit_type == "MAX_HOLD"
-    assert exit_horizon == "t+20m"
-    assert exit_ret == pytest.approx(0.4)
+    assert exit_horizon == "t+30m"
+    assert exit_ret == pytest.approx(0.6)

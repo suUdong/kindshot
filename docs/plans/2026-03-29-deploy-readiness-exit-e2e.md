@@ -7,6 +7,7 @@ Raise deployment confidence without touching `deploy/` by adding automated proof
 ## Problem
 
 - The runtime has detailed unit coverage around snapshot scheduling and virtual exits, but deployment readiness still depends on manual trust that the final trade-close callback records the correct terminal metrics.
+- The current tests do not prove that liquidation requests originating in `pipeline.py` (`NEG_STRONG`, correction/withdrawal) traverse the real scheduler path and persist exactly one final trade outcome.
 - The repository contains multiple operator-facing shell scripts under `deploy/`, but there is no automated test surface proving they still parse or that their safe informational branches still run.
 
 ## Scope
@@ -29,6 +30,7 @@ Raise deployment confidence without touching `deploy/` by adding automated proof
 - Prefer testing the real runtime trade-close handling over duplicating callback logic in test code.
 - If the nested callback in `main.py` prevents direct testing, extract the side-effect block into a small helper with the same behavior and cover that helper directly.
 - Assert against persisted performance artifacts, not just mock callback arguments.
+- Add one regression surface for `execute_bucket_path(..., bucket=NEG_STRONG)` and one for `process_registered_event(..., event_kind=CORRECTION)` using the real `SnapshotScheduler` and `_handle_trade_close`, then fire the later `close` snapshot to prove no duplicate final record is written after the forced liquidation.
 
 ### Deploy script proof
 

@@ -1,51 +1,46 @@
-Hypothesis: If the runtime trade-close side effects are exercised end to end through `SnapshotScheduler` and the checked-in deploy shell scripts are validated through automated syntax/smoke tests, then Kindshot server deployment prep can rely on fresh local evidence instead of manual trust for the liquidation path and operator scripts.
+Hypothesis: If Kindshot proves the real `pipeline.py -> SnapshotScheduler.force_exit_ticker() -> _handle_trade_close()` path for both negative-news and correction-triggered liquidations, then the liquidation pipeline can be trusted to close positions and persist final trade outcomes end to end, including after a partial take profit.
 
 Changed files:
-- `src/kindshot/main.py`
+- `src/kindshot/strategy_observability.py`
 - `tests/test_exit_pipeline_e2e.py`
-- `tests/test_deploy_scripts.py`
+- `tests/test_pipeline.py`
+- `tests/test_replay.py`
+- `tests/test_strategy_comparison.py`
+- `tests/test_strategy_observability.py`
+- `docs/plans/2026-03-29-liquidation-pipeline-inspection.md`
 - `docs/plans/2026-03-29-deploy-readiness-exit-e2e.md`
+- `.omx/plans/prd-liquidation-pipeline-inspection-20260329.md`
+- `.omx/plans/test-spec-liquidation-pipeline-inspection-20260329.md`
+- `.omx/context/liquidation-pipeline-inspection-20260329T002141Z.md`
 - `memory/codex-loop/latest.md`
-- `.omx/context/deploy-readiness-exit-e2e-20260328T203750Z.md`
-- `.omx/plans/prd-deploy-readiness-exit-e2e-20260329.md`
-- `.omx/plans/test-spec-deploy-readiness-exit-e2e-20260329.md`
 
 Implementation summary:
-- Extracted the runtime trade-close side-effect block in `main.py` into `_handle_trade_close()` without changing behavior, then left the existing nested callback as a thin wrapper.
-- Added `tests/test_exit_pipeline_e2e.py` to prove:
-  - a paper take-profit exit is recorded once into performance artifacts through the real runtime helper
-  - a partial-take-profit plus final trailing-stop path records only the final cumulative trade outcome once
-- Added `tests/test_deploy_scripts.py` to validate:
-  - every tracked `deploy/*.sh` passes `bash -n`
-  - `deploy/logs.sh help`
-  - `deploy/verify-live.sh --local`
-  - `deploy/go-live.sh --verify`
-  - `deploy/status.sh`
-  all run successfully under stubbed commands with no `deploy/` edits
-- Ran non-destructive remote checks against `kindshot-server` using the existing scripts to confirm the current server still reports healthy paper-mode service state.
+- Added an end-to-end regression proving `execute_bucket_path()` can trigger a `NEG_STRONG` forced liquidation after a partial take profit and still persist exactly one final cumulative trade row through `_handle_trade_close()`, with the later `close` snapshot proving no duplicate final record is emitted.
+- Added an end-to-end regression proving `process_registered_event()` correction handling triggers `correction_exit` liquidation and persists the final realized loss through the real runtime bookkeeping path.
+- Updated the deploy-readiness plan text to record that pipeline-originated liquidation requests are now part of the proof surface.
+- Synced `StrategyReportConfig` with live runtime defaults and refreshed stale replay/strategy test expectations so observability/report reconstruction follows the current 30-minute hold and trailing/t5m defaults.
 
 Validation:
-- `pytest -q tests/test_exit_pipeline_e2e.py tests/test_deploy_scripts.py` -> `7 passed`
+- `pytest -q tests/test_exit_pipeline_e2e.py` -> `4 passed`
+- `pytest -q tests/test_replay.py::test_replay_passes_normalized_guardrail_context tests/test_strategy_comparison.py tests/test_strategy_observability.py` -> `5 passed`
+- `pytest -q tests/test_price.py tests/test_pipeline.py tests/test_exit_pipeline_e2e.py tests/test_sell_triggered_fix.py` -> `86 passed, 1 skipped`
 - `python3 -m compileall src tests` -> success
-- `pytest -q` -> `1087 passed, 1 skipped, 1 warning`
-- diagnostics on changed files:
-  - `src/kindshot/main.py` -> 0 errors
-  - `tests/test_exit_pipeline_e2e.py` -> 0 errors
-  - `tests/test_deploy_scripts.py` -> 0 errors
-- remote non-destructive checks:
-  - `ssh -o BatchMode=yes -o ConnectTimeout=5 kindshot-server "echo connected"` -> `connected`
-  - `bash deploy/go-live.sh --verify` -> service `active`, mode `PAPER`, health responded
-  - `ssh kindshot-server "cd /opt/kindshot && bash deploy/status.sh"` -> service `active`, health/journal visible, today's JSONL file absent
+- `pytest -q` -> `1153 passed, 1 skipped, 1 warning`
+- diagnostics:
+  - `src/kindshot/strategy_observability.py` -> `0 errors`
+  - `tests/test_exit_pipeline_e2e.py` -> `0 errors`
+  - `tests/test_pipeline.py` -> `0 errors`
+  - `tests/test_strategy_comparison.py` -> `0 errors`
+  - `tests/test_strategy_observability.py` -> `0 errors`
 
 Simplifications made:
-- Reused the production trade-close side effects via one extracted helper instead of duplicating callback logic in tests.
-- Validated deploy scripts with subprocess stubs from `tests/` instead of introducing a separate validation framework or editing `deploy/`.
-- Kept the deploy proof focused on safe informational/verification branches only.
+- Reused the existing `_handle_trade_close()` runtime helper and `SnapshotScheduler` instead of introducing new liquidation-specific harness code.
+- Extended the existing exit E2E test file rather than creating separate bespoke pipeline test infrastructure.
+- Removed hard-coded strategy observability defaults in favor of `Config()`-derived values to prevent future drift.
 
 Remaining risks:
-- The deploy script smoke tests stub shell dependencies, so they do not prove every real remote environment assumption; they prove syntax and expected control flow for the covered branches.
-- Remote status still shows no current-day JSONL runtime file, so deployment readiness is improved but live feed inactivity remains an operational observation gap rather than a code/test gap.
-- `bash deploy/go-live.sh --verify` reports `MICRO_LIVE_MAX_ORDER_WON` and `TELEGRAM_BOT_TOKEN` unset on the current server, which matters for eventual live transition but did not block this paper-mode prep slice.
+- The new proof covers paper-mode liquidation bookkeeping; it does not add new live-order evidence.
+- Strategy report reconstruction now follows current runtime defaults, so historical reports generated under older parameter regimes may need an explicit pinned config if exact backdated reproduction is required.
 
 Rollback note:
-- Revert the commit to remove the helper extraction and the new test/docs surfaces; no deploy/runtime rollback is otherwise required because this slice does not change `deploy/`, secrets, or live-order behavior.
+- Revert the added E2E tests, observability default sync, and planning artifacts; no runtime or deploy rollback is required because this slice adds proof/report alignment only.
