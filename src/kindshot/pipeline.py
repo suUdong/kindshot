@@ -35,6 +35,7 @@ from kindshot.news_category import classify_news_type
 from kindshot.pattern_profile import match_loss_guardrail, match_profit_boost
 from kindshot.ticker_learning import TickerLearner
 from kindshot.hold_profile import get_max_hold_minutes
+from kindshot.macro_filter import MacroFilter, MacroSnapshot as MacroFilterSnapshot
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
 from kindshot.market import MarketMonitor
@@ -1047,6 +1048,52 @@ async def execute_bucket_path(
             guardrail_profile.fast_profile_no_buy_after_kst_hour,
             guardrail_profile.fast_profile_no_buy_after_kst_minute,
         )
+
+    # === Macro regime filter (guardrails 직전) ===
+    if decision.action == Action.BUY and config.macro_filter_enabled:
+        _macro_snap = None
+        if market_snapshot.macro_overall_regime is not None:
+            _macro_snap = MacroFilterSnapshot(
+                overall_regime=market_snapshot.macro_overall_regime,
+                overall_confidence=market_snapshot.macro_overall_confidence or 0.0,
+                kr_regime=market_snapshot.macro_kr_regime or "neutral",
+                kr_confidence=0.0,  # kr_confidence는 별도 필드 없으므로 signals 기반
+                kr_signals=market_snapshot.macro_kr_signals or {},
+                transition_watch=market_snapshot.macro_transition_watch or "stable",
+                transition_probability=market_snapshot.macro_transition_probability or 0.0,
+                strategy=market_snapshot.macro_strategy or {},
+            )
+        if _macro_snap is not None:
+            _macro_filter = MacroFilter()
+            _macro_result = _macro_filter.evaluate(_macro_snap)
+            if _macro_result.blocked:
+                event_rec.skip_stage = SkipStage.GUARDRAIL
+                event_rec.skip_reason = _macro_result.reason
+                event_rec.guardrail_result = _macro_result.reason
+                profile = _finalize_profile(decision)
+                await log.write(event_rec)
+                _mark_skip(counters, stage=SkipStage.GUARDRAIL.value, reason=event_rec.skip_reason)
+                logger.warning(
+                    "MACRO GATE BLOCKED [%s]: %s (conf=%d regime=%s)",
+                    raw.ticker, _macro_result.reason, decision.confidence,
+                    _macro_snap.overall_regime,
+                )
+                return ProcessOutcome(
+                    event_id=processed.event_id,
+                    skip_stage=SkipStage.GUARDRAIL,
+                    skip_reason=_macro_result.reason,
+                    decision=decision,
+                    pipeline_profile=profile,
+                )
+            if _macro_result.confidence_adj != 0:
+                before = decision.confidence
+                decision.confidence = max(0, min(100, decision.confidence + _macro_result.confidence_adj))
+                logger.info(
+                    "Macro regime adj [%s]: %d → %d (regime=%s watch=%s adj=%+d)",
+                    raw.ticker, before, decision.confidence,
+                    _macro_snap.overall_regime, _macro_snap.transition_watch,
+                    _macro_result.confidence_adj,
+                )
 
     _guardrail_t0 = time.monotonic()
     pattern_loss = match_loss_guardrail(

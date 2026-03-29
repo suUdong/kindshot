@@ -101,6 +101,11 @@ class MarketContext(BaseModel):
     macro_kr_regime: Optional[str] = None
     macro_crypto_regime: Optional[str] = None
     macro_position_multiplier: Optional[float] = None
+    # KR layer signals for macro filter defense
+    macro_kr_signals: Optional[dict[str, str]] = None
+    macro_transition_watch: Optional[str] = None
+    macro_transition_probability: Optional[float] = None
+    macro_strategy: Optional[dict[str, Any]] = None
 
 
 class AlphaSignalContext(BaseModel):

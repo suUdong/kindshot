@@ -30,11 +30,11 @@ async def _fetch_vkospi() -> Optional[float]:
 
 
 async def _fetch_macro_regime(base_url: str, timeout_s: float) -> dict[str, Any] | None:
-    """Fetch the latest macro regime from macro-intelligence over HTTP."""
+    """Fetch the kindshot-specific macro regime from macro-intelligence downstream endpoint."""
     if not base_url:
         return None
 
-    url = f"{base_url.rstrip('/')}/regime/current"
+    url = f"{base_url.rstrip('/')}/regime/downstream/kindshot"
     timeout = aiohttp.ClientTimeout(total=timeout_s)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url) as response:
@@ -79,6 +79,10 @@ class MarketMonitor:
         self._macro_kr_regime: Optional[str] = None
         self._macro_crypto_regime: Optional[str] = None
         self._macro_position_multiplier: Optional[float] = None
+        self._macro_kr_signals: Optional[dict[str, str]] = None
+        self._macro_transition_watch: Optional[str] = None
+        self._macro_transition_probability: Optional[float] = None
+        self._macro_strategy: Optional[dict[str, Any]] = None
         self._last_ts: Optional[datetime] = None
 
     def _runtime_market_context_path(self, ts: datetime) -> Path:
@@ -113,6 +117,10 @@ class MarketMonitor:
             macro_kr_regime=self._macro_kr_regime,
             macro_crypto_regime=self._macro_crypto_regime,
             macro_position_multiplier=self._macro_position_multiplier,
+            macro_kr_signals=self._macro_kr_signals,
+            macro_transition_watch=self._macro_transition_watch,
+            macro_transition_probability=self._macro_transition_probability,
+            macro_strategy=self._macro_strategy,
         )
 
     async def append_runtime_snapshot(self) -> None:
@@ -224,9 +232,16 @@ class MarketMonitor:
                     self._macro_overall_regime = macro.get("overall_regime")
                     self._macro_overall_confidence = macro.get("overall_confidence")
                     layers = macro.get("layers", {})
-                    self._macro_kr_regime = layers.get("kr", {}).get("regime")
+                    kr_layer = layers.get("kr", {})
+                    self._macro_kr_regime = kr_layer.get("regime")
                     self._macro_crypto_regime = layers.get("crypto", {}).get("regime")
                     self._macro_position_multiplier = self._compute_position_multiplier()
+                    # downstream payload 추가 필드
+                    self._macro_kr_signals = kr_layer.get("signals")
+                    transition = macro.get("transition", {})
+                    self._macro_transition_watch = transition.get("watch")
+                    self._macro_transition_probability = transition.get("probability")
+                    self._macro_strategy = macro.get("strategy")
             except Exception:
                 logger.warning("Macro regime update failed", exc_info=True)
 

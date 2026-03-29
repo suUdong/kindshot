@@ -310,6 +310,7 @@ class Config:
     health_latency_window_size: int = field(default_factory=lambda: _env_int("HEALTH_LATENCY_WINDOW_SIZE", 200))
     macro_api_base_url: str = field(default_factory=lambda: _env("MACRO_API_BASE_URL", ""))
     macro_api_timeout_s: float = field(default_factory=lambda: _env_float("MACRO_API_TIMEOUT_S", 5.0))
+    macro_filter_enabled: bool = field(default_factory=lambda: _env_bool("MACRO_FILTER_ENABLED", True))
     alpha_scanner_api_base_url: str = field(default_factory=lambda: _env("ALPHA_SCANNER_API_BASE_URL", ""))
     alpha_scanner_api_timeout_s: float = field(default_factory=lambda: _env_float("ALPHA_SCANNER_API_TIMEOUT_S", 5.0))
 
