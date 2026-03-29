@@ -35,8 +35,10 @@ class GuardrailResult:
 class DynamicGuardrailProfile:
     min_buy_confidence: int
     opening_min_confidence: int
+    midmorning_min_confidence: int
     afternoon_min_confidence: int
     closing_min_confidence: int
+    early_session_block_end_minute: int
     fast_profile_no_buy_after_kst_hour: int
     fast_profile_no_buy_after_kst_minute: int
     supportive_market: bool = False
@@ -46,8 +48,10 @@ class DynamicGuardrailProfile:
         return cls(
             min_buy_confidence=config.min_buy_confidence,
             opening_min_confidence=config.opening_min_confidence,
+            midmorning_min_confidence=config.midmorning_min_confidence,
             afternoon_min_confidence=config.afternoon_min_confidence,
             closing_min_confidence=config.closing_min_confidence,
+            early_session_block_end_minute=config.early_session_block_end_minute,
             fast_profile_no_buy_after_kst_hour=config.fast_profile_no_buy_after_kst_hour,
             fast_profile_no_buy_after_kst_minute=config.fast_profile_no_buy_after_kst_minute,
         )
@@ -317,8 +321,10 @@ def resolve_dynamic_guardrail_profile(
     return DynamicGuardrailProfile(
         min_buy_confidence=max(71, config.min_buy_confidence - relax),
         opening_min_confidence=max(80, config.opening_min_confidence - min(relax, 1)),
+        midmorning_min_confidence=max(70, config.midmorning_min_confidence - relax),
         afternoon_min_confidence=max(75, config.afternoon_min_confidence - relax),
         closing_min_confidence=config.closing_min_confidence,
+        early_session_block_end_minute=config.early_session_block_end_minute,
         fast_profile_no_buy_after_kst_hour=fast_hour,
         fast_profile_no_buy_after_kst_minute=fast_minute,
         supportive_market=True,
@@ -495,13 +501,16 @@ def check_guardrails(
     if decision_action == Action.BUY and decision_confidence is not None and config.no_buy_after_kst_hour < 24:
         now_kst = _resolve_decision_time_kst(decision_time_kst)
         h, m = now_kst.hour, now_kst.minute
-        # v81: hour<9 장전 BUY 전면 차단 — 14건 분석 결과 hour=8 4건 모두 손실(0% WR)
-        # 장 미개장 상태에서 가격 데이터 없이 max_hold 타이머 소진, 금호건설 peak+2.2%→exit 0%
-        if h < 9:
-            return GuardrailResult(passed=False, reason="PRE_MARKET_BLOCKED")
-        # 09:00~09:30: 변동성 최고, 높은 확신만 진입
-        if h == 9 and m < 30 and decision_confidence < profile.opening_min_confidence:
+        # v84: 장 초반 BUY 전면 차단 — 08-09시 8건 전패(-7.99%), 전체 손실의 88%
+        # early_session_block_end_minute으로 차단 종료 시점 제어 (default 30 = 09:30)
+        if h < 9 or (h == 9 and m < profile.early_session_block_end_minute):
+            return GuardrailResult(passed=False, reason="EARLY_SESSION_BLOCKED")
+        # 09:30~10:00: 개장 초반 잔여 변동성 — 높은 확신만 진입
+        if h == 9 and m >= profile.early_session_block_end_minute and decision_confidence < profile.opening_min_confidence:
             return GuardrailResult(passed=False, reason="OPENING_LOW_CONFIDENCE")
+        # 10:00~11:30: 최적 구간 (승률 60%) — confidence 완화
+        if (h == 10 or (h == 11 and m < 30)) and decision_confidence < profile.midmorning_min_confidence:
+            return GuardrailResult(passed=False, reason="MIDMORNING_LOW_CONFIDENCE")
         # 13:00~14:30: 오후 회복기, 승률 저조 구간 — 높은 확신만
         if (h == 13 or (h == 14 and m < 30)) and decision_confidence < profile.afternoon_min_confidence:
             return GuardrailResult(passed=False, reason="AFTERNOON_LOW_CONFIDENCE")
