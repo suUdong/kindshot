@@ -185,8 +185,22 @@ class CorpCodeMapper:
 # ── DartEnricher ──────────────────────────────────────────
 
 
+@dataclass(frozen=True)
+class EarningsInfo:
+    """전기 단일 회사 주요 재무 데이터 (DS003 fnlttSinglAcnt)."""
+
+    corp_code: str
+    corp_name: str
+    ticker: str
+    bsns_year: str  # 사업연도 (e.g. "2025")
+    reprt_code: str  # 보고서 코드 (11013=1분기, 11012=반기, 11014=3분기, 11011=사업보고서)
+    revenue: int  # 매출액
+    operating_profit: int  # 영업이익
+    net_income: int  # 당기순이익
+
+
 class DartEnricher:
-    """DART DS005 구조화 데이터 조회 (자사주 취득 결정)."""
+    """DART DS005 구조화 데이터 조회 (자사주 취득 결정) + DS003 재무 데이터."""
 
     def __init__(self, config: Config, session: aiohttp.ClientSession, mapper: CorpCodeMapper) -> None:
         self._config = config
@@ -261,4 +275,83 @@ class DartEnricher:
             purpose=item.get("aq_pp", "").strip(),
             period_start=item.get("aq_expd_bgd", "").strip(),
             period_end=item.get("aq_expd_edd", "").strip(),
+        )
+
+    async def fetch_earnings(self, ticker: str, bsns_year: str, reprt_code: str) -> Optional[EarningsInfo]:
+        """DS003 fnlttSinglAcnt — 단일 회사 주요 재무 데이터 조회.
+
+        Args:
+            ticker: 종목코드 (6자리)
+            bsns_year: 사업연도 (e.g. "2024")
+            reprt_code: 보고서 코드 (11013=1분기, 11012=반기, 11014=3분기, 11011=사업보고서)
+
+        Returns:
+            EarningsInfo or None
+        """
+        await self._mapper.ensure_loaded()
+        corp_code = self._mapper.get_corp_code(ticker)
+        if not corp_code:
+            logger.warning("DartEnricher: corp_code not found for ticker=%s", ticker)
+            return None
+
+        api_key = self._config.dart_api_key
+        if not api_key:
+            return None
+
+        params = {
+            "crtfc_key": api_key,
+            "corp_code": corp_code,
+            "bsns_year": bsns_year,
+            "reprt_code": reprt_code,
+        }
+        url = f"{self._config.dart_base_url}/fnlttSinglAcnt.json"
+
+        try:
+            async with self._session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    logger.warning("DartEnricher: DS003 HTTP %d for %s", resp.status, ticker)
+                    return None
+                data = await resp.json(content_type=None)
+        except Exception:
+            logger.exception("DartEnricher: DS003 fetch error for %s", ticker)
+            return None
+
+        status = data.get("status", "")
+        if status == "013":
+            logger.info("DartEnricher: no DS003 data for %s year=%s reprt=%s", ticker, bsns_year, reprt_code)
+            return None
+        if status != "000":
+            logger.warning("DartEnricher: DS003 status=%s message=%s", status, data.get("message", ""))
+            return None
+
+        items = data.get("list", [])
+        if not items:
+            return None
+
+        # 계정과목별로 파싱 (account_nm 기준)
+        revenue = 0
+        operating_profit = 0
+        net_income = 0
+        corp_name = ""
+        for item in items:
+            corp_name = item.get("corp_name", "").strip() or corp_name
+            acnt = item.get("account_nm", "").strip()
+            # thstrm_amount = 당기 금액
+            amount = _parse_int(item.get("thstrm_amount", "0"))
+            if "매출액" in acnt or "수익(매출액)" in acnt:
+                revenue = amount
+            elif "영업이익" in acnt and "손실" not in acnt:
+                operating_profit = amount
+            elif "당기순이익" in acnt and "손실" not in acnt:
+                net_income = amount
+
+        return EarningsInfo(
+            corp_code=corp_code,
+            corp_name=corp_name,
+            ticker=ticker,
+            bsns_year=bsns_year,
+            reprt_code=reprt_code,
+            revenue=revenue,
+            operating_profit=operating_profit,
+            net_income=net_income,
         )

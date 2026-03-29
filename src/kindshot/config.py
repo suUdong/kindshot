@@ -152,6 +152,14 @@ class Config:
     dart_buyback_direct_bonus: int = 15      # 직접매입 보너스
     dart_buyback_trust_bonus: int = 8        # 신탁매입 보너스
     dart_buyback_min_amount: int = field(default_factory=lambda: _env_int("DART_BUYBACK_MIN_AMOUNT", 1_000_000_000))  # 최소 10억
+    # --- DART Earnings (PEAD) Strategy ---
+    dart_earnings_enabled: bool = field(default_factory=lambda: _env_bool("DART_EARNINGS_ENABLED", True))
+    dart_earnings_base_confidence: int = field(default_factory=lambda: _env_int("DART_EARNINGS_BASE_CONFIDENCE", 60))
+    dart_earnings_yoy_bonus_30: int = 10     # YoY 30%+ 보너스
+    dart_earnings_yoy_bonus_50: int = 15     # YoY 50%+ 보너스
+    dart_earnings_yoy_bonus_100: int = 20    # YoY 100%+ 보너스
+    dart_earnings_turnaround_bonus: int = 15  # 흑자전환 보너스
+    dart_earnings_negative_skip: bool = field(default_factory=lambda: _env_bool("DART_EARNINGS_NEGATIVE_SKIP", True))  # 부정 서프라이즈 SKIP
     feed_interval_market_s: float = field(default_factory=lambda: _env_float("FEED_INTERVAL_MARKET", 3.0))
     feed_interval_off_s: float = field(default_factory=lambda: _env_float("FEED_INTERVAL_OFF", 15.0))
     feed_overlap_s: int = field(default_factory=lambda: _env_int("FEED_OVERLAP_S", 90))

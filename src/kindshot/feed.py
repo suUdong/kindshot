@@ -594,10 +594,23 @@ class AnalystFeed:
 
 _BUYBACK_KEYWORDS = ("자기주식취득결정", "자사주취득", "자기주식 취득 결정")
 
+_EARNINGS_KEYWORDS = (
+    "잠정실적",
+    "영업(잠정)실적",
+    "매출액또는손익구조30%이상변경",
+    "매출액 또는 손익구조 30%이상 변경",
+    "매출액또는손익30%이상변동",
+)
+
 
 def _is_buyback_report(report_nm: str) -> bool:
     """report_nm이 자사주 매입 공시인지 판별."""
     return any(kw in report_nm for kw in _BUYBACK_KEYWORDS)
+
+
+def _is_earnings_report(report_nm: str) -> bool:
+    """report_nm이 잠정실적 또는 30%이상 변경 공시인지 판별."""
+    return any(kw in report_nm for kw in _EARNINGS_KEYWORDS)
 
 
 class DartFeed:
@@ -614,6 +627,7 @@ class DartFeed:
         *,
         state_dir: Optional[Path] = None,
         buyback_queue: Optional[asyncio.Queue] = None,
+        earnings_queue: Optional[asyncio.Queue] = None,
     ) -> None:
         self._config = config
         self._session = session
@@ -624,6 +638,7 @@ class DartFeed:
         self._state_dir = state_dir
         self._current_date: Optional[str] = None
         self._buyback_queue = buyback_queue  # 자사주 매입 공시 분리 큐
+        self._earnings_queue = earnings_queue  # 잠정실적/30%변경 공시 분리 큐
         if state_dir:
             state_dir.mkdir(parents=True, exist_ok=True)
             self._load_state()
@@ -783,6 +798,16 @@ class DartFeed:
                     logger.info("DART buyback routed to strategy queue: %s %s", stock_code, report_nm)
                 except asyncio.QueueFull:
                     logger.warning("DART buyback queue full, falling back to news pipeline")
+                    results.append(disc)
+                continue
+
+            # 잠정실적/30%변경 공시는 별도 큐로 분리
+            if self._earnings_queue is not None and _is_earnings_report(report_nm):
+                try:
+                    self._earnings_queue.put_nowait(disc)
+                    logger.info("DART earnings routed to strategy queue: %s %s", stock_code, report_nm)
+                except asyncio.QueueFull:
+                    logger.warning("DART earnings queue full, falling back to news pipeline")
                     results.append(disc)
                 continue
 
