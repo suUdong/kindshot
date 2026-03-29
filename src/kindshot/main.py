@@ -33,6 +33,8 @@ from kindshot.pipeline import (
     process_unknown_promotion,
 )
 from kindshot.strategy import StrategyRegistry
+from kindshot.strategy_runtime import consume_strategy_signals
+from kindshot.technical_strategy import TechnicalStrategy
 from kindshot.poll_trace import init_tracer
 from kindshot.price import PriceFetcher, SnapshotScheduler
 from kindshot.sd_notify import notify_ready, notify_watchdog
@@ -58,6 +60,55 @@ def _run_mode(config: Config) -> str:
     if config.paper:
         return "paper"
     return "live"
+
+
+def _build_strategy_registry(
+    config: Config,
+    *,
+    feed,
+    registry: EventRegistry,
+    decision_engine: DecisionEngine,
+    market: MarketMonitor,
+    scheduler: SnapshotScheduler,
+    log: JsonlLogger,
+    run_id: str,
+    kis: Optional[KisClient],
+    counters: Optional[RuntimeCounters],
+    mode: str,
+    stop_event: asyncio.Event,
+    guardrail_state: GuardrailState,
+    feed_source: str,
+    unknown_review_queue: Optional[asyncio.Queue],
+    health_state: Optional[object],
+    order_executor: Optional[object],
+    recent_pattern_profile: Optional[object],
+) -> tuple[StrategyRegistry, NewsStrategy, bool]:
+    strategy_registry = StrategyRegistry()
+    news_strategy = NewsStrategy(
+        config, feed, registry, decision_engine, market, scheduler, log,
+        run_id, kis, counters, mode,
+        stop_event=stop_event,
+        guardrail_state=guardrail_state,
+        feed_source=feed_source,
+        unknown_review_queue=unknown_review_queue,
+        health_state=health_state,
+        order_executor=order_executor,
+        recent_pattern_profile=recent_pattern_profile,
+    )
+    strategy_registry.register(news_strategy)
+
+    has_signal_strategies = False
+    if config.technical_strategy_enabled:
+        if kis is None:
+            logger.warning("Technical strategy requested but KIS client is unavailable")
+        elif not config.technical_strategy_tickers:
+            logger.warning("Technical strategy requested but TECHNICAL_STRATEGY_TICKERS is empty")
+        else:
+            technical_strategy = TechnicalStrategy(config, kis, stop_event=stop_event)
+            strategy_registry.register(technical_strategy)
+            has_signal_strategies = technical_strategy.enabled
+
+    return strategy_registry, news_strategy, has_signal_strategies
 
 
 def _handle_trade_close(
@@ -559,10 +610,18 @@ async def run() -> None:
         notify_ready()
 
         # ── Strategy Registry: 멀티 전략 프레임워크 ──
-        strategy_registry = StrategyRegistry()
-        news_strategy = NewsStrategy(
-            config, feed, registry, decision_engine, market, scheduler, log,
-            run_id, kis, counters, mode,
+        strategy_registry, news_strategy, has_signal_strategies = _build_strategy_registry(
+            config,
+            feed=feed,
+            registry=registry,
+            decision_engine=decision_engine,
+            market=market,
+            scheduler=scheduler,
+            log=log,
+            run_id=run_id,
+            kis=kis,
+            counters=counters,
+            mode=mode,
             stop_event=stop_event,
             guardrail_state=guardrail_state,
             feed_source=feed_source,
@@ -571,7 +630,6 @@ async def run() -> None:
             order_executor=order_executor,
             recent_pattern_profile=recent_pattern_profile,
         )
-        strategy_registry.register(news_strategy)
         await strategy_registry.start_all()
         logger.info("Strategy registry: %d active strategies", len(strategy_registry.active_strategies))
 
@@ -581,6 +639,27 @@ async def run() -> None:
             asyncio.create_task(_market_loop(), name="market"),
             asyncio.create_task(_watchdog_loop(feed, counters, config, stop_event), name="watchdog"),
         ]
+        if has_signal_strategies:
+            tasks.append(
+                asyncio.create_task(
+                    consume_strategy_signals(
+                        strategy_registry,
+                        log=log,
+                        config=config,
+                        run_id=run_id,
+                        mode=mode,
+                        execute_signals=True,
+                        market=market,
+                        scheduler=scheduler,
+                        kis=kis,
+                        guardrail_state=guardrail_state,
+                        order_executor=order_executor,
+                        health_state=health_state,
+                        counters=counters,
+                    ),
+                    name="strategy-signals",
+                )
+            )
         if daily_summary_notifier is not None:
             tasks.append(asyncio.create_task(_daily_summary_loop(), name="daily-summary"))
         if config.intraday_monitor_enabled and telegram_configured():

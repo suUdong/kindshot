@@ -31,6 +31,21 @@ def _env_float(key: str, default: float = 0.0) -> float:
     return float(v) if v else default
 
 
+def _env_csv_tuple(key: str, default: str = "") -> tuple[str, ...]:
+    raw = _env(key, default)
+    if not raw:
+        return ()
+    items: list[str] = []
+    seen: set[str] = set()
+    for part in raw.split(","):
+        value = part.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        items.append(value)
+    return tuple(items)
+
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RISK_LIMITS_PATH = _REPO_ROOT / "config" / "risk_limits.toml"
 _DEFAULT_MAX_POSITIONS = 4
@@ -121,7 +136,7 @@ class Config:
     analyst_feed_interval_s: float = field(default_factory=lambda: _env_float("ANALYST_FEED_INTERVAL_S", 30.0))
     # --- Y2I (유튜브 인사이트 시그널) ---
     y2i_feed_enabled: bool = field(default_factory=lambda: _env_bool("Y2I_FEED_ENABLED", False))
-    y2i_signal_path: str = field(default_factory=lambda: _env("Y2I_SIGNAL_PATH", str(Path.home() / "workspace/y2i/.omx/state/signal_tracker.json")))
+    y2i_signal_path: str = field(default_factory=lambda: _env("Y2I_SIGNAL_PATH", str(Path.home() / "workspace/y2i/.omx/state/kindshot_feed.json")))
     y2i_min_score: float = field(default_factory=lambda: _env_float("Y2I_MIN_SCORE", 55.0))
     y2i_min_verdict: str = field(default_factory=lambda: _env("Y2I_MIN_VERDICT", "WATCH"))  # WATCH, BUY, STRONG_BUY
     y2i_poll_interval_s: float = field(default_factory=lambda: _env_float("Y2I_POLL_INTERVAL_S", 60.0))
@@ -245,6 +260,17 @@ class Config:
     # --- MTF (Multi-Timeframe) ---
     mtf_enabled: bool = field(default_factory=lambda: _env_bool("MTF_ENABLED", True))
     mtf_cache_ttl_s: int = field(default_factory=lambda: _env_int("MTF_CACHE_TTL_S", 120))
+    technical_strategy_enabled: bool = field(default_factory=lambda: _env_bool("TECHNICAL_STRATEGY_ENABLED", False))
+    technical_strategy_tickers: tuple[str, ...] = field(default_factory=lambda: _env_csv_tuple("TECHNICAL_STRATEGY_TICKERS"))
+    technical_strategy_poll_interval_s: float = field(default_factory=lambda: _env_float("TECHNICAL_STRATEGY_POLL_INTERVAL_S", 120.0))
+    technical_strategy_signal_cooldown_s: float = field(default_factory=lambda: _env_float("TECHNICAL_STRATEGY_SIGNAL_COOLDOWN_S", 1800.0))
+    technical_strategy_min_alignment_score: int = field(default_factory=lambda: _env_int("TECHNICAL_STRATEGY_MIN_ALIGNMENT_SCORE", 75))
+    technical_strategy_min_rsi: float = field(default_factory=lambda: _env_float("TECHNICAL_STRATEGY_MIN_RSI", 52.0))
+    technical_strategy_max_rsi: float = field(default_factory=lambda: _env_float("TECHNICAL_STRATEGY_MAX_RSI", 72.0))
+    technical_strategy_min_macd_hist: float = field(default_factory=lambda: _env_float("TECHNICAL_STRATEGY_MIN_MACD_HIST", 0.0))
+    technical_strategy_max_bb_position: float = field(default_factory=lambda: _env_float("TECHNICAL_STRATEGY_MAX_BB_POSITION", 85.0))
+    technical_strategy_min_volume_ratio_vs_avg20d: float = field(default_factory=lambda: _env_float("TECHNICAL_STRATEGY_MIN_VOLUME_RATIO_VS_AVG20D", 0.15))
+    technical_strategy_min_ret_today: float = field(default_factory=lambda: _env_float("TECHNICAL_STRATEGY_MIN_RET_TODAY", 0.0))
 
     # --- Market ---
     kospi_halt_pct: float = field(default_factory=lambda: _env_float("KOSPI_HALT_PCT", -8.0))
@@ -457,6 +483,22 @@ class Config:
             raise ValueError("recent_pattern_profit_min_win_rate must be within 0..1")
         if not (0.0 <= self.recent_pattern_loss_max_win_rate <= 1.0):
             raise ValueError("recent_pattern_loss_max_win_rate must be within 0..1")
+        if self.technical_strategy_poll_interval_s <= 0:
+            raise ValueError("technical_strategy_poll_interval_s must be positive")
+        if self.technical_strategy_signal_cooldown_s < 0:
+            raise ValueError("technical_strategy_signal_cooldown_s must be non-negative")
+        if not (0 <= self.technical_strategy_min_alignment_score <= 100):
+            raise ValueError("technical_strategy_min_alignment_score must be within 0..100")
+        if not (0 <= self.technical_strategy_min_rsi <= 100):
+            raise ValueError("technical_strategy_min_rsi must be within 0..100")
+        if not (0 <= self.technical_strategy_max_rsi <= 100):
+            raise ValueError("technical_strategy_max_rsi must be within 0..100")
+        if self.technical_strategy_min_rsi > self.technical_strategy_max_rsi:
+            raise ValueError("technical_strategy_min_rsi must be <= technical_strategy_max_rsi")
+        if not (0 <= self.technical_strategy_max_bb_position <= 100):
+            raise ValueError("technical_strategy_max_bb_position must be within 0..100")
+        if self.technical_strategy_min_volume_ratio_vs_avg20d < 0:
+            raise ValueError("technical_strategy_min_volume_ratio_vs_avg20d must be non-negative")
 
         if not self.kis_app_key or not self.kis_app_secret:
             warnings.append("KIS API keys not set")

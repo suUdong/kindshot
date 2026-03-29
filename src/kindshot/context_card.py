@@ -34,6 +34,7 @@ _pykrx_cache: OrderedDict[str, tuple[dict, float]] = OrderedDict()  # ticker -> 
 
 @dataclass(frozen=True)
 class ContextCardData:
+    px: Optional[float] = None
     adv_value_20d: Optional[float] = None
     spread_bps: Optional[float] = None
     ret_today: Optional[float] = None
@@ -459,6 +460,7 @@ async def build_context_card(
     )
 
     raw = ContextCardData(
+        px=price_info.px if kis and price_info else None,
         adv_value_20d=hist.get("adv_value_20d"),
         spread_bps=spread_bps,
         ret_today=ret_today,

@@ -30,6 +30,9 @@ class JsonlLogger:
         today = datetime.now(_KST).strftime("%Y%m%d")
         return self._log_dir / f"{self._file_prefix}_{today}.jsonl"
 
+    def current_path(self) -> Path:
+        return self._today_file()
+
     def _write_sync(self, line: str) -> None:
         path = self._today_file()
         with open(path, "a", encoding="utf-8") as f:

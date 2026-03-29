@@ -56,6 +56,19 @@ def test_alpha_scanner_api_env_override():
         assert cfg.alpha_scanner_api_timeout_s == 2.5
 
 
+def test_technical_strategy_tickers_env_override():
+    with patch.dict(
+        os.environ,
+        {
+            "TECHNICAL_STRATEGY_ENABLED": "true",
+            "TECHNICAL_STRATEGY_TICKERS": "005930, 000660,005930",
+        },
+    ):
+        cfg = Config()
+        assert cfg.technical_strategy_enabled is True
+        assert cfg.technical_strategy_tickers == ("005930", "000660")
+
+
 def test_env_override_int():
     with patch.dict(os.environ, {"MIN_BUY_CONFIDENCE": "80"}):
         cfg = Config()

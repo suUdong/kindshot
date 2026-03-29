@@ -1,6 +1,9 @@
 """멀티 타임프레임 분석 테스트."""
+from unittest.mock import AsyncMock
+
 import pytest
-from kindshot.mtf_analysis import _determine_trend, _calc_alignment_score, MtfResult
+from kindshot.config import Config
+from kindshot.mtf_analysis import _determine_trend, _calc_alignment_score, _mtf_cache, analyze_mtf, configure_mtf_cache, MtfResult
 
 
 def test_determine_trend_up():
@@ -35,6 +38,49 @@ def test_alignment_score_mixed():
     assert _calc_alignment_score("UP", "UP", "DOWN") == 75
     assert _calc_alignment_score("DOWN", "DOWN", "UP") == 25
     assert _calc_alignment_score("UP", "DOWN", "SIDEWAYS") == 50
+
+
+@pytest.mark.asyncio
+async def test_analyze_mtf_disabled():
+    config = Config(mtf_enabled=False)
+    result = await analyze_mtf("005930", AsyncMock(), config)
+    assert result.alignment_score == 50
+    assert "disabled" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_analyze_mtf_caches_result():
+    _mtf_cache.clear()
+    config = Config(mtf_enabled=True)
+    kis = AsyncMock()
+    up_candles = [{"close": c} for c in [110, 108, 105, 103, 100, 98, 95, 93, 90, 88]]
+    kis.fetch_minute_candles = AsyncMock(return_value=up_candles)
+
+    r1 = await analyze_mtf("005930", kis, config)
+    count_after_first = kis.fetch_minute_candles.call_count
+    r2 = await analyze_mtf("005930", kis, config)
+
+    assert r1 == r2
+    assert kis.fetch_minute_candles.call_count == count_after_first
+    _mtf_cache.clear()
+
+
+@pytest.mark.asyncio
+async def test_analyze_mtf_empty_candles_returns_sideways():
+    _mtf_cache.clear()
+    config = Config(mtf_enabled=True)
+    kis = AsyncMock()
+    kis.fetch_minute_candles = AsyncMock(return_value=[])
+    result = await analyze_mtf("005930", kis, config)
+    assert result.trend_5m == "SIDEWAYS"
+    _mtf_cache.clear()
+
+
+def test_configure_mtf_cache_minimum():
+    configure_mtf_cache(0)
+    from kindshot.mtf_analysis import _MTF_CACHE_TTL
+    assert _MTF_CACHE_TTL == 1
+    configure_mtf_cache(120)
 
 
 def test_mtf_confidence_adjustment():

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -263,6 +263,25 @@ class DecisionRecord(BaseModel):
     reason: str = Field(max_length=100)
     decision_source: str = "LLM"  # "LLM" | "CACHE" | "RULE_FALLBACK" | "LLM_FALLBACK_HYBRID" | "RULE_PREFLIGHT"
     cache_layer: Optional[str] = None
+
+
+class StrategySignalRecord(BaseModel):
+    type: str = "strategy_signal"
+    mode: str = "live"
+    schema_version: str
+    run_id: str
+    emitted_at: datetime
+    strategy_name: str
+    source: str
+    ticker: str
+    corp_name: str
+    action: Action
+    confidence: int = Field(ge=0, le=100)
+    size_hint: SizeHint
+    reason: str = ""
+    headline: str = ""
+    event_id: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class PriceSnapshot(BaseModel):

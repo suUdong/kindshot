@@ -79,10 +79,96 @@ def test_summarize_journal_text_extracts_monitor_signals():
     assert "events_seen=0" in summary["latest_heartbeat"]
 
 
+def test_summarize_service_infers_paper_mode(monkeypatch):
+    mod = _load_server_monitor_module()
+    calls = []
+
+    class _Proc:
+        def __init__(self, returncode, stdout):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = ""
+
+    def _fake_run(cmd, capture_output, text, errors, check):
+        calls.append(cmd)
+        if cmd[:3] == ["systemctl", "is-active", "kindshot"]:
+            return _Proc(0, "active\n")
+        if cmd[:3] == ["systemctl", "show", "kindshot"]:
+            return _Proc(0, "MainPID=157326\nSubState=running\nActiveEnterTimestamp=Sun 2026-03-29 09:37:41 KST\n")
+        if cmd[:2] == ["ps", "-p"]:
+            return _Proc(0, "/opt/kindshot/.venv/bin/python -m kindshot --paper\n")
+        return _Proc(1, "")
+
+    monkeypatch.setattr(mod.subprocess, "run", _fake_run)
+
+    summary = mod.summarize_service("kindshot")
+    assert summary["active_state"] == "active"
+    assert summary["sub_state"] == "running"
+    assert summary["main_pid"] == 157326
+    assert summary["mode"] == "paper"
+    assert "--paper" in summary["cmdline"]
+    assert calls[0][:3] == ["systemctl", "is-active", "kindshot"]
+
+
+def test_summarize_health_extracts_compact_fields():
+    mod = _load_server_monitor_module()
+    summary = mod.summarize_health(
+        {
+            "status": "healthy",
+            "last_poll_age_seconds": 13,
+            "events_seen": 2,
+            "events_processed": 1,
+            "buy_count": 1,
+            "skip_count": 0,
+            "error_count": 0,
+            "llm_calls": 1,
+            "kis_calls": 3,
+            "guardrail_state": {"position_count": 1, "configured_max_positions": 4},
+            "circuit_breaker": {"nvidia_open": False, "anthropic_open": False},
+        },
+        url="http://127.0.0.1:8080/health",
+    )
+    assert summary["reachable"] is True
+    assert summary["status"] == "healthy"
+    assert summary["last_poll_age_seconds"] == 13
+    assert summary["position_count"] == 1
+    assert summary["configured_max_positions"] == 4
+    assert summary["kis_calls"] == 3
+
+
 def test_render_summary_reports_missing_runtime_log(tmp_path):
     mod = _load_server_monitor_module()
     summary = {
         "date": "20260327",
+        "services": {
+            "kindshot": {
+                "active_state": "active",
+                "sub_state": "running",
+                "mode": "paper",
+                "main_pid": 157326,
+                "active_enter_timestamp": "Sun 2026-03-29 09:37:41 KST",
+            },
+            "kindshot-dashboard": {
+                "active_state": "active",
+                "sub_state": "running",
+                "main_pid": 144309,
+            },
+        },
+        "health": {
+            "reachable": True,
+            "status": "healthy",
+            "last_poll_age_seconds": 13,
+            "events_seen": 0,
+            "error_count": 0,
+            "llm_calls": 0,
+            "kis_calls": 0,
+            "position_count": 0,
+            "configured_max_positions": 4,
+            "buy_count": 0,
+            "skip_count": 0,
+            "nvidia_open": False,
+            "anthropic_open": False,
+        },
         "runtime": {"exists": False, "path": str(tmp_path / "kindshot_20260327.jsonl")},
         "polling": {
             "exists": True,
@@ -105,10 +191,12 @@ def test_render_summary_reports_missing_runtime_log(tmp_path):
     }
 
     rendered = mod.render_summary(summary)
+    assert "kindshot: active sub=running mode=paper pid=157326" in rendered
+    assert "status=healthy last_poll_age_s=13 events_seen=0 errors=0 llm_calls=0 kis_calls=0" in rendered
     assert "runtime_log: missing" in rendered
     assert "raw_items=5" in rendered
     assert "latest_heartbeat: Heartbeat: last_poll=04:30:02, events_seen=2" in rendered
-    assert "Verdict: polling active but no structured runtime log yet" in rendered
+    assert "Verdict: service alive, polling active, no structured runtime log yet" in rendered
 
 
 def test_journal_text_falls_back_to_sudo_without_stderr_noise(monkeypatch):

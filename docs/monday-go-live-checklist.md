@@ -1,7 +1,7 @@
 # 월요일 장 시작 전 실거래 체크리스트
 
-> 작성일: 2026-03-28 (토), 최종 점검: 2026-03-29 (일) 06:41 KST
-> 대상: 2026-03-31 (월) 장 시작 전 점검
+> 작성일: 2026-03-28 (토), 최종 점검: 2026-03-29 (일) 10:27 KST
+> 대상: 2026-03-30 (월) 장 시작 전 점검
 
 ---
 
@@ -24,8 +24,9 @@
 - **검증**: 콜백 실패 시에도 매도가 재시도되는지 로그에서 확인
 
 ### v79 — Y2iFeed 유튜브 인사이트 시그널 연동 (472db9c)
-- **내용**: y2i 프로젝트의 signal_tracker.json을 읽어 유튜브 기반 투자 시그널을 파이프라인에 공급
+- **내용**: y2i 프로젝트의 `kindshot_feed.json`을 기본으로 읽어 유튜브 기반 투자 시그널을 파이프라인에 공급
 - **설정 필요**: `Y2I_FEED_ENABLED=true`, `Y2I_SIGNAL_PATH` (서버에 y2i 데이터 경로)
+- **기본 경로**: `~/workspace/y2i/.omx/state/kindshot_feed.json` (legacy `signal_tracker.json`도 호환)
 - **현재 상태**: ⚠️ 서버 .env에 Y2I 관련 변수 미설정 → 비활성 상태 (기본값 `false`)
 - **조치**: 월요일 바로 활성화할 필요 없음. Y2I 데이터가 서버에 준비된 후 활성화
 
@@ -59,15 +60,22 @@ ssh kindshot-server "journalctl -u kindshot -n 50 --no-pager | grep -E '(ERROR|C
 # Health endpoint
 ssh kindshot-server "curl -s http://127.0.0.1:8080/health | python3 -m json.tool | head -20"
 # 기대: status=healthy, circuit_breaker 모두 false
+
+# 통합 read-only readiness summary
+# 로컬 workspace의 최신 스크립트를 stdin으로 흘려 보내므로 서버 scripts/ 미동기화 상태에서도 사용 가능
+ssh kindshot-server "cd /opt/kindshot && python3 - 20260329" < scripts/server_monitor.py
+# 기대: service active, dashboard active, health healthy,
+#       polling active, no structured runtime log yet (일요일)
 ```
 
-### 2026-03-29 06:41 진단 결과 (v82 코드 동기화 후)
+### 2026-03-29 10:27 진단 결과 (v82 코드 동기화 후)
 | 항목 | 상태 | 비고 |
 |------|------|------|
-| kindshot.service | ✅ active (running) | paper 모드, PID 156789, v82 코드 |
-| kindshot-dashboard.service | ✅ active (running) | port 8501, 20시간+ 가동 |
+| kindshot.service | ✅ active (running) | paper 모드, PID 157326, v82 코드 |
+| kindshot-dashboard.service | ✅ active (running) | port 8501, 24시간+ 가동 |
 | Health endpoint | ✅ healthy | circuit breaker 정상, error_count=0 |
-| Heartbeat | ✅ 30초 간격 정상 | events_seen=0 (장 마감 후) |
+| Heartbeat | ✅ 30초 간격 정상 | events_seen=0 (일요일, 장 외 시간대) |
+| polling_trace_20260329 | ✅ present | positive poll 1건, runtime log는 아직 없음 |
 | 에러/Exception | ✅ 없음 | 클린 로그 |
 | 코드 동기화 | ✅ 완료 | src/ tests/ scripts/ deploy/ rsync 완료 |
 
@@ -163,6 +171,7 @@ TELEGRAM_CHAT_ID=<채팅방 ID>
 - [ ] `kindshot.service` 정상 구동 확인
 - [ ] `kindshot-dashboard.service` 정상 구동 확인
 - [ ] Health endpoint 정상 (`curl http://127.0.0.1:8080/health`)
+- [ ] `python3 scripts/server_monitor.py YYYYMMDD` 로 service/health/polling/runtime 요약 확인
 - [ ] 최근 로그에 ERROR/CRITICAL 없음
 - [ ] KIS 토큰 발급 정상
 - [ ] (선택) 텔레그램 알림 설정 완료
@@ -233,6 +242,7 @@ ssh kindshot-server "sudo systemctl stop kindshot"
 ```bash
 # 1. 코드 배포 (exit_ret_pct 수정 포함)
 rsync -avz --exclude='.venv' --exclude='data/' --exclude='logs/' --exclude='.env' --exclude='__pycache__' --exclude='.git' src/ kindshot-server:/opt/kindshot/src/
+rsync -avz --exclude='__pycache__' scripts/ kindshot-server:/opt/kindshot/scripts/
 rsync -avz --exclude='__pycache__' deploy/ kindshot-server:/opt/kindshot/deploy/
 
 # 2. 실거래 전환 (go-live.sh 사용)
@@ -240,5 +250,7 @@ ssh kindshot-server "cd /opt/kindshot && bash deploy/go-live.sh"        # 체크
 ssh kindshot-server "cd /opt/kindshot && bash deploy/go-live.sh --apply" # 전환 적용
 
 # 3. 전환 후 검증
-ssh kindshot-server "cd /opt/kindshot && bash deploy/go-live.sh --verify"
+bash deploy/verify-live.sh                    # 로컬에서 원격 서버 검증
+ssh kindshot-server "cd /opt/kindshot && bash deploy/verify-live.sh --local" # 서버에서 직접 검증
+ssh kindshot-server "cd /opt/kindshot && python3 scripts/server_monitor.py $(TZ=Asia/Seoul date +%Y%m%d)"
 ```

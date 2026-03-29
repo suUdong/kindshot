@@ -1,5 +1,6 @@
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def _load_module():
@@ -166,6 +167,60 @@ def test_render_report_includes_new_sections():
     assert "Top Entry Conditions" in rendered
     assert "Exit Optimization Candidates" in rendered
     assert "Trades Detail" in rendered
+
+
+def test_exit_candidate_ranking_uses_relative_improvement(monkeypatch):
+    mod = _load_module()
+    baseline = mod.ExitSimulationConfig(
+        paper_take_profit_pct=2.0,
+        paper_stop_loss_pct=-1.5,
+        trailing_stop_activation_pct=0.2,
+        trailing_stop_early_pct=0.3,
+        trailing_stop_mid_pct=0.8,
+        trailing_stop_late_pct=1.0,
+        max_hold_minutes=20,
+        t5m_loss_exit_enabled=True,
+    )
+    trades = [
+        SimpleNamespace(event_id="0", detected_at="2026-03-27T09:00:00+09:00"),
+        SimpleNamespace(event_id="1", detected_at="2026-03-27T09:01:00+09:00"),
+        SimpleNamespace(event_id="2", detected_at="2026-03-27T09:02:00+09:00"),
+    ]
+    baseline_pnls = [-0.5, -0.6, -0.4]
+    improved_pnls = [-0.2, -0.3, -0.1]
+
+    def fake_simulate_trade_exit(trade, config):
+        idx = int(trade.event_id)
+        if (
+            config.paper_take_profit_pct == 1.5
+            and config.paper_stop_loss_pct == -1.0
+            and config.trailing_stop_activation_pct == 0.8
+            and config.trailing_stop_early_pct == 0.4
+            and config.trailing_stop_mid_pct == 0.6
+            and config.trailing_stop_late_pct == 0.8
+            and config.max_hold_minutes == 20
+            and config.t5m_loss_exit_enabled is True
+        ):
+            pnl = improved_pnls[idx]
+        else:
+            pnl = baseline_pnls[idx]
+        return mod.ExitSimulationResult(
+            exit_type="SIM",
+            exit_horizon="t+5m",
+            exit_pnl_pct=pnl,
+            hold_minutes=5.0,
+        )
+
+    monkeypatch.setattr(mod, "simulate_trade_exit", fake_simulate_trade_exit)
+
+    _baseline_candidate, ranked = mod._evaluate_exit_candidates(trades, baseline)
+
+    top = ranked[0]
+    assert top["params"]["paper_take_profit_pct"] == 1.5
+    assert top["params"]["paper_stop_loss_pct"] == -1.0
+    assert top["params"]["trailing_stop_activation_pct"] == 0.8
+    assert top["score"] > 0
+    assert top["delta_total_pnl"] > 0
 
 
 def test_recent_pattern_profile_normalizes_news_category_strings():

@@ -762,6 +762,22 @@ def _condition_score(candidate_stats: dict[str, Any], baseline_stats: dict[str, 
     )
 
 
+def _profit_factor_component(profit_factor: float) -> float:
+    return min(4.0, profit_factor if math.isfinite(profit_factor) else 4.0)
+
+
+def _exit_candidate_score(summary: dict[str, float], baseline_summary: dict[str, float]) -> float:
+    candidate_pf = _profit_factor_component(summary["profit_factor"])
+    baseline_pf = _profit_factor_component(baseline_summary["profit_factor"])
+    return (
+        (summary["total_pnl"] - baseline_summary["total_pnl"]) * 2.0
+        + (summary["avg_pnl"] - baseline_summary["avg_pnl"]) * 18.0
+        + (summary["win_rate"] - baseline_summary["win_rate"]) / 10.0
+        + (candidate_pf - baseline_pf)
+        + (abs(baseline_summary["mdd_pct"]) - abs(summary["mdd_pct"])) / 4.0
+    )
+
+
 def rank_entry_conditions(trades: list[Trade], baseline_stats: dict[str, Any]) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     definitions = [
@@ -883,13 +899,7 @@ def _evaluate_exit_candidates(
             result = simulate_trade_exit(trade, candidate)
             ordered_pnls.append(result.exit_pnl_pct)
         summary = _summarize_pnls(ordered_pnls, ordered_pnls)
-        score = (
-            (summary["total_pnl"] - baseline_summary["total_pnl"]) * 2.0
-            + summary["avg_pnl"] * 18.0
-            + (summary["win_rate"] - baseline_summary["win_rate"]) / 10.0
-            + min(4.0, summary["profit_factor"] if math.isfinite(summary["profit_factor"]) else 4.0)
-            - abs(summary["mdd_pct"]) / 4.0
-        )
+        score = _exit_candidate_score(summary, baseline_summary)
         candidates.append(
             {
                 "params": candidate.to_dict(),

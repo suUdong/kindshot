@@ -799,11 +799,12 @@ _Y2I_VERDICT_RANK = {"REJECT": 0, "WATCH": 1, "BUY": 2, "STRONG_BUY": 3}
 
 
 class Y2iFeed:
-    """y2i(유튜브 인사이트) signal_tracker.json을 폴링하여 KRX 시그널을 RawDisclosure로 변환.
+    """y2i exported signal feed를 폴링하여 KRX 시그널을 RawDisclosure로 변환.
 
     - KRX 종목(.KS, .KQ)만 필터
+    - `kindshot_feed.json`을 기본 계약으로 읽고, legacy `signal_tracker.json`도 호환 지원
     - score >= y2i_min_score && verdict >= y2i_min_verdict 통과한 시그널만 emit
-    - (ticker, signal_date) 기반 중복 제거
+    - 동일 (ticker, signal_date)는 가장 강한 시그널 1건만 emit
     - y2i_lookback_days 이내 시그널만 처리
     """
 
@@ -823,7 +824,7 @@ class Y2iFeed:
         self._stop_event.set()
 
     def _parse_signal_file(self) -> list[dict]:
-        """signal_tracker.json 파싱. 실패 시 빈 목록 반환."""
+        """Y2I signal file 파싱. 실패 시 빈 목록 반환."""
         try:
             raw = self._signal_path.read_text(encoding="utf-8")
             data = json.loads(raw)
@@ -831,6 +832,52 @@ class Y2iFeed:
         except (OSError, json.JSONDecodeError, KeyError):
             logger.warning("Y2iFeed: failed to read %s", self._signal_path)
             return []
+
+    @staticmethod
+    def _signal_channel(sig: dict) -> str:
+        return str(sig.get("channel") or sig.get("channel_slug") or "").strip()
+
+    @staticmethod
+    def _signal_score(sig: dict) -> float:
+        raw_score = sig.get("signal_score")
+        if raw_score is not None:
+            try:
+                return float(raw_score)
+            except (TypeError, ValueError):
+                return 0.0
+        raw_confidence = sig.get("confidence")
+        try:
+            return float(raw_confidence or 0.0) * 100.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _signal_confidence(sig: dict) -> float:
+        raw_confidence = sig.get("confidence")
+        if raw_confidence is not None:
+            try:
+                return float(raw_confidence)
+            except (TypeError, ValueError):
+                return 0.0
+        return Y2iFeed._signal_score(sig) / 100.0
+
+    @staticmethod
+    def _signal_channel_weight(sig: dict) -> float:
+        try:
+            return float(sig.get("channel_weight") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _candidate_rank(sig: dict) -> tuple[int, float, float, float, int]:
+        verdict = str(sig.get("verdict", "")).upper()
+        return (
+            1 if bool(sig.get("consensus_signal")) else 0,
+            Y2iFeed._signal_score(sig),
+            Y2iFeed._signal_confidence(sig),
+            Y2iFeed._signal_channel_weight(sig),
+            _Y2I_VERDICT_RANK.get(verdict, 0),
+        )
 
     @staticmethod
     def _extract_krx_ticker(ticker_str: str) -> Optional[str]:
@@ -845,7 +892,7 @@ class Y2iFeed:
 
     def _qualifies(self, sig: dict) -> bool:
         """score 및 verdict 기준 통과 여부."""
-        score = sig.get("signal_score", 0) or 0
+        score = self._signal_score(sig)
         if score < self._config.y2i_min_score:
             return False
         verdict = str(sig.get("verdict", "")).upper()
@@ -860,7 +907,7 @@ class Y2iFeed:
 
         now = datetime.now(_KST)
         cutoff = (now - timedelta(days=self._config.y2i_lookback_days)).date()
-        results: list[RawDisclosure] = []
+        best_by_key: dict[str, tuple[tuple[int, float, float, float, int], RawDisclosure]] = {}
 
         for sig in signals:
             ticker_raw = sig.get("ticker", "")
@@ -884,27 +931,35 @@ class Y2iFeed:
             dedup_key = f"{krx_code}:{signal_date_str}"
             if dedup_key in self._seen_keys:
                 continue
-            self._seen_keys[dedup_key] = None
 
             company = sig.get("company_name", "")
-            score = sig.get("signal_score", 0)
-            verdict = sig.get("verdict", "")
-            channel = sig.get("channel_slug", "")
+            score = self._signal_score(sig)
+            verdict = str(sig.get("verdict", "")).upper()
+            channel = self._signal_channel(sig)
 
             title = f"{company}({krx_code}) [Y2I:{channel}] {verdict} score={score:.0f}"
 
-            results.append(
-                RawDisclosure(
-                    title=title,
-                    link=f"y2i://signal/{krx_code}/{signal_date_str}",
-                    rss_guid=dedup_key,
-                    published=signal_date_str,
-                    ticker=krx_code,
-                    corp_name=company,
-                    detected_at=now,
-                    dorg="y2i",
-                )
+            raw_item = RawDisclosure(
+                title=title,
+                link=f"y2i://signal/{krx_code}/{signal_date_str}",
+                rss_guid=dedup_key,
+                published=signal_date_str,
+                ticker=krx_code,
+                corp_name=company,
+                detected_at=now,
+                dorg="y2i",
             )
+            rank = self._candidate_rank(sig)
+            existing = best_by_key.get(dedup_key)
+            if existing is None or rank > existing[0]:
+                best_by_key[dedup_key] = (rank, raw_item)
+
+        results = [item for _, item in best_by_key.values()]
+        results.sort(key=lambda item: ((item.published or ""), item.ticker, item.title), reverse=True)
+
+        for item in results:
+            if item.rss_guid:
+                self._seen_keys[item.rss_guid] = None
 
         # seen_keys 상한
         while len(self._seen_keys) > 5000:

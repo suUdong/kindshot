@@ -114,8 +114,9 @@ tests/test_sell_triggered_fix.py: 4 passed in 0.25s
 ### 3.1 Y2iFeed (v79)
 
 - **기능**: y2i 유튜브 인사이트 시그널을 kindshot 파이프라인에 주입
-- **경로**: `~/workspace/y2i/.omx/state/signal_tracker.json` 폴링
-- **필터**: score ≥ 55, verdict ≥ WATCH, lookback 3일, ticker+date 기준 중복 제거
+- **기본 경로**: `~/workspace/y2i/.omx/state/kindshot_feed.json` 폴링
+- **호환 경로**: legacy `signal_tracker.json`도 계속 지원
+- **필터**: normalized score ≥ 55, verdict ≥ WATCH, lookback 3일, ticker+date 기준 strongest candidate 1건 유지
 - **활성화**: `Y2I_FEED_ENABLED=true` (기본 비활성)
 - **파이프라인 통합**: `MultiFeed`에 `Y2iFeed` 추가, `dorg="y2i"`로 태깅
 - **테스트**: `tests/test_y2i_feed.py` 전체 통과

@@ -4,7 +4,7 @@ import asyncio
 import pytest
 
 from kindshot.config import Config
-from kindshot.main import _parse_args, _run_mode, _wait_or_stop
+from kindshot.main import _build_strategy_registry, _parse_args, _run_mode, _wait_or_stop
 
 
 def test_parse_args_default():
@@ -108,3 +108,70 @@ async def test_wait_or_stop_interrupted_by_event():
     stop.set()
     await _wait_or_stop(stop, 10.0)  # would block 10s without event
     assert stop.is_set()
+
+
+def test_build_strategy_registry_registers_technical_when_enabled(monkeypatch):
+    class DummyNewsStrategy:
+        def __init__(self, *args, **kwargs):
+            self.name = "news"
+            self.source = type("Source", (), {"value": "NEWS"})()
+            self.enabled = True
+
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+        async def stream_signals(self):
+            if False:
+                yield None
+
+    class DummyTechnicalStrategy:
+        def __init__(self, *args, **kwargs):
+            self.name = "technical"
+            self.source = type("Source", (), {"value": "TECHNICAL"})()
+            self.enabled = True
+
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+        async def stream_signals(self):
+            if False:
+                yield None
+
+    import kindshot.main as mod
+
+    monkeypatch.setattr(mod, "NewsStrategy", DummyNewsStrategy)
+    monkeypatch.setattr(mod, "TechnicalStrategy", DummyTechnicalStrategy)
+
+    registry, _news, has_signal_strategies = _build_strategy_registry(
+        Config(
+            technical_strategy_enabled=True,
+            technical_strategy_tickers=("005930",),
+        ),
+        feed=object(),
+        registry=object(),
+        decision_engine=object(),
+        market=object(),
+        scheduler=object(),
+        log=object(),
+        run_id="run_test",
+        kis=object(),
+        counters=None,
+        mode="paper",
+        stop_event=asyncio.Event(),
+        guardrail_state=object(),
+        feed_source="KIS",
+        unknown_review_queue=None,
+        health_state=None,
+        order_executor=None,
+        recent_pattern_profile=None,
+    )
+
+    assert registry.get("news") is not None
+    assert registry.get("technical") is not None
+    assert has_signal_strategies is True
