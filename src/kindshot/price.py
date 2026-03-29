@@ -120,9 +120,9 @@ class SnapshotScheduler:
         self._realized_exit_notional: dict[str, float] = {}
         self._support_reference_px: dict[str, float] = {}
         self._active_buy_events_by_ticker: dict[str, set[str]] = {}
-        # Stale position 감지: 3분 경과 후 모멘텀 소멸 시 exit (5분→3분 타이트닝)
-        self._stale_threshold_pct_default: float = 0.2
-        self._stale_min_elapsed_s: float = 180.0  # 3분
+        # Stale position 감지: 5분 경과 후 모멘텀 소멸 시 exit (v83: 3분→5분, 뉴스 반응 5-10분 소요)
+        self._stale_threshold_pct_default: float = 0.3  # v83: 0.2→0.3% (더 넓은 데드존)
+        self._stale_min_elapsed_s: float = 300.0  # v83: 180→300초 (뉴스 가격발견 시간 확보)
         # VTS 모드: real API 키 없으면 가격이 항상 stale → 모멘텀 기반 exit 비활성화
         self._using_vts = not config.kis_real_app_key
         if self._using_vts:

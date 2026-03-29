@@ -126,4 +126,4 @@ def test_build_eval_cases_derives_hindsight_label(tmp_path):
 
     assert len(cases) == 1
     assert cases[0].target_action == "BUY"
-    assert cases[0].hold_minutes == 20
+    assert cases[0].hold_minutes == 30

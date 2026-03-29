@@ -168,15 +168,15 @@ class Config:
     # Trailing stop + 30분 룰
     trailing_stop_enabled: bool = field(default_factory=lambda: _env_bool("TRAILING_STOP_ENABLED", True))
     trailing_stop_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_PCT", 1.0))  # v70: 0.8→1.0% (3/27: 조기 trailing→종가 수익 유실 방지)
-    trailing_stop_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_ACTIVATION_PCT", 0.2))  # v82: 0.3→0.2% (GC녹십자 -0.17% — 소폭 수익 peak에서 trailing 미활성, 수익 유실)
+    trailing_stop_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_ACTIVATION_PCT", 0.5))  # v83: 0.2→0.5% (14건 분석: 0.2%=노이즈, 너무 조기 활성→peak 못 잡음)
     # 시간대별 trailing stop 폭 (진입 후 경과 시간 기준) — v65: 전체 완화
-    trailing_stop_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_EARLY_PCT", 0.3))  # v82: 0.4→0.3 (activation 0.2%와 조합, 소폭 수익 peak 보호 강화)
+    trailing_stop_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_EARLY_PCT", 0.5))  # v83: 0.3→0.5 (activation 0.5%와 조합, 노이즈 pullback에 조기 청산 방지)
     trailing_stop_mid_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_MID_PCT", 0.8))  # 5~30분: v65 0.5→0.8 (추세 유지)
     trailing_stop_late_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_LATE_PCT", 1.0))  # 30분+: v65 0.7→1.0 (장기 홀드 여유)
-    max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 20))  # v70: 15→20분 (3/27: TIMEOUT→종가 +0.35% 개선, 18건 중 10건 종가가 높음)
+    max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 30))  # v83: 20→30분 (002990: peak +2.2% at t+30m, 20분 max_hold로 0% 청산 — 모멘텀 소화 시간 확보)
     # t+5m 체크포인트 청산: 5분 경과 시 손실이면 즉시 청산, 수익이면 타이트 trailing
     t5m_loss_exit_enabled: bool = field(default_factory=lambda: _env_bool("T5M_LOSS_EXIT_ENABLED", True))
-    t5m_loss_exit_threshold_pct: float = field(default_factory=lambda: _env_float("T5M_LOSS_EXIT_THRESHOLD_PCT", -0.15))  # v82: -0.3→-0.15% (셀트리온 -0.61% — t+5m에서 -0.2% 수준 홀드→추가 하락, 조기 컷)
+    t5m_loss_exit_threshold_pct: float = field(default_factory=lambda: _env_float("T5M_LOSS_EXIT_THRESHOLD_PCT", -0.3))  # v83: -0.15→-0.3% (068270: t5m -0.61%→t30m -0.12% 회복 가능, -0.15%는 과도한 조기 컷)
     t5m_profit_trailing_pct: float = field(default_factory=lambda: _env_float("T5M_PROFIT_TRAILING_PCT", 0.5))  # v65: 0.2→0.5% t+5m 이후 수익 포지션 trailing (기존 너무 타이트)
     partial_take_profit_enabled: bool = field(default_factory=lambda: _env_bool("PARTIAL_TAKE_PROFIT_ENABLED", True))
     partial_take_profit_target_ratio: float = field(default_factory=lambda: _env_float("PARTIAL_TAKE_PROFIT_TARGET_RATIO", 1.0))
@@ -188,7 +188,7 @@ class Config:
     support_exit_enabled: bool = field(default_factory=lambda: _env_bool("SUPPORT_EXIT_ENABLED", True))
     support_exit_buffer_pct: float = field(default_factory=lambda: _env_float("SUPPORT_EXIT_BUFFER_PCT", 0.2))
     # 시간대별 청산 차등
-    session_early_sl_multiplier: float = field(default_factory=lambda: _env_float("SESSION_EARLY_SL_MULT", 0.7))  # 09:00-09:30 SL 강화 (기본값 × 0.7)
+    session_early_sl_multiplier: float = field(default_factory=lambda: _env_float("SESSION_EARLY_SL_MULT", 1.0))  # v83: 0.7→1.0 (세션 초반 SL 타이트닝 제거 — 259960: SL -1.37% vs close -0.53%, whipsaw 손실 유발)
     session_late_max_hold_divisor: float = field(default_factory=lambda: _env_float("SESSION_LATE_MAX_HOLD_DIV", 2.0))  # 14:00+ max_hold 축소 (÷2)
     quant_fail_sample_rate: float = 0.10
     daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 3_000_000))  # won
@@ -233,7 +233,7 @@ class Config:
     opening_min_confidence: int = field(default_factory=lambda: _env_int("OPENING_MIN_CONFIDENCE", 88))  # v73: 85→88 (09시대 87% 손실률 — 최고 확신만 진입)
     afternoon_min_confidence: int = field(default_factory=lambda: _env_int("AFTERNOON_MIN_CONFIDENCE", 80))  # 13:00-14:30 BUY 최소 confidence (오후 승률 저조)
     closing_min_confidence: int = field(default_factory=lambda: _env_int("CLOSING_MIN_CONFIDENCE", 85))  # 14:30-15:00 BUY 최소 confidence
-    fast_profile_hold_minutes: int = field(default_factory=lambda: _env_int("FAST_PROFILE_HOLD_MINUTES", 20))  # fast-decay hold profile 기준값 (수주/공급계약)
+    fast_profile_hold_minutes: int = field(default_factory=lambda: _env_int("FAST_PROFILE_HOLD_MINUTES", 30))  # v83: 20→30 (hold_profile 수주/공급계약 30분과 일치)
     fast_profile_no_buy_after_kst_hour: int = field(default_factory=lambda: _env_int("FAST_PROFILE_NO_BUY_AFTER_KST_HOUR", 14))  # fast profile BUY 차단
     fast_profile_no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("FAST_PROFILE_NO_BUY_AFTER_KST_MINUTE", 30))  # 14:00→14:30: 20분 보유 가능 시간 확보
     dynamic_guardrails_enabled: bool = field(default_factory=lambda: _env_bool("DYNAMIC_GUARDRAILS_ENABLED", True))

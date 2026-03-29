@@ -4,16 +4,16 @@ from kindshot.config import Config
 from kindshot.hold_profile import get_max_hold_minutes, resolve_hold_profile
 
 
-def test_supply_contract_20min():
-    """공급계약 키워드 → 20분."""
+def test_supply_contract_30min():
+    """공급계약 키워드 → 30분."""
     cfg = Config()
-    assert get_max_hold_minutes("삼성전자 1000억 규모 공급계약 체결", ["공급계약"], cfg) == 20
+    assert get_max_hold_minutes("삼성전자 1000억 규모 공급계약 체결", ["공급계약"], cfg) == 30
 
 
-def test_order_received_20min():
-    """수주 키워드 → 20분."""
+def test_order_received_30min():
+    """수주 키워드 → 30분."""
     cfg = Config()
-    assert get_max_hold_minutes("HD현대중공업 8237억원 규모 수주", ["수주"], cfg) == 20
+    assert get_max_hold_minutes("HD현대중공업 8237억원 규모 수주", ["수주"], cfg) == 30
 
 
 def test_patent_30min():
@@ -67,7 +67,7 @@ def test_default_uses_config():
 def test_headline_fallback_when_no_keyword_hits():
     """keyword_hits 비어도 headline에서 매칭."""
     cfg = Config()
-    assert get_max_hold_minutes("대규모 공급계약 체결 공시", [], cfg) == 20
+    assert get_max_hold_minutes("대규모 공급계약 체결 공시", [], cfg) == 30
 
 
 def test_keyword_hits_priority_over_headline():
@@ -89,7 +89,7 @@ def test_clinical_phase2_20min():
 def test_resolve_hold_profile_returns_match():
     cfg = Config()
     minutes, matched = resolve_hold_profile("삼성전자 1000억 규모 공급계약 체결", ["공급계약"], cfg)
-    assert minutes == 20
+    assert minutes == 30
     assert matched == "공급계약"
 
 
