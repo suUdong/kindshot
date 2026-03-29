@@ -3,12 +3,10 @@
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from kindshot.bucket import BucketResult
 from kindshot.config import Config
 from kindshot.context_card import ContextCardData
 from kindshot.decision import LlmTimeoutError, LlmParseError, LlmCallError
@@ -456,6 +454,67 @@ async def test_neg_strong_requests_news_exit_for_open_ticker(tmp_path):
         horizon="news",
     )
     assert outcome.skip_reason == "NEG_BUCKET"
+
+
+async def test_pos_weak_disabled_skips_before_decision_path(tmp_path):
+    from kindshot.event_registry import ProcessedEvent
+    from kindshot.logger import JsonlLogger
+    from kindshot.models import EventIdMethod, EventKind, MarketContext
+    from kindshot.pipeline import RuntimeCounters, execute_bucket_path
+
+    raw = _make_raw(title="에이비엘바이오, AACR서 이중항체 ADC 2종 공개…美 임상 1상 추진")
+    processed = ProcessedEvent(
+        event_id="evt_pos_weak_disabled",
+        event_id_method=EventIdMethod.UID,
+        event_kind=EventKind.ORIGINAL,
+        parent_id=None,
+        event_group_id="evt_pos_weak_disabled",
+        parent_match_method=None,
+        parent_match_score=None,
+        parent_candidate_count=None,
+        kind_uid=None,
+        raw=raw,
+    )
+    cfg = Config(log_dir=tmp_path / "logs", paper=True)
+    log = JsonlLogger(cfg.log_dir, run_id="test_run")
+    scheduler = MagicMock()
+    market = MagicMock()
+    market.snapshot = MarketContext()
+    decision_engine = MagicMock()
+    decision_engine.decide = AsyncMock()
+
+    outcome = await execute_bucket_path(
+        raw=raw,
+        processed=processed,
+        bucket=Bucket.POS_WEAK,
+        keyword_hits=["임상 1상"],
+        decision_engine=decision_engine,
+        market=market,
+        scheduler=scheduler,
+        log=log,
+        config=cfg,
+        run_id="test_run",
+        kis=None,
+        counters=RuntimeCounters(),
+        mode="paper",
+        guardrail_state=None,
+        feed_source="KIS",
+    )
+
+    decision_engine.decide.assert_not_awaited()
+    scheduler.schedule_t0.assert_not_called()
+    assert outcome.skip_stage == SkipStage.BUCKET
+    assert outcome.skip_reason == "NEWS_WEAK_DISABLED"
+
+    records = []
+    for file in cfg.log_dir.glob("*.jsonl"):
+        for line in file.read_text(encoding="utf-8").splitlines():
+            if line:
+                records.append(json.loads(line))
+    event_record = next(record for record in records if record.get("type") == "event")
+    assert event_record["bucket"] == "POS_WEAK"
+    assert event_record["skip_stage"] == "BUCKET"
+    assert event_record["skip_reason"] == "NEWS_WEAK_DISABLED"
 
 
 async def test_pipeline_passes_time_and_hold_profile_to_guardrails(tmp_path):
@@ -960,8 +1019,6 @@ async def test_unknown_shadow_review_writes_inbox_and_enqueues_request(tmp_path)
 
 
 async def test_unknown_paper_promotion_logs_promoted_pos_strong_and_decision(tmp_path):
-    from kindshot.event_registry import EventRegistry
-    from kindshot.feed import RawDisclosure
     from kindshot.guardrails import GuardrailResult
     from kindshot.logger import JsonlLogger
     from kindshot.pipeline import process_unknown_promotion
@@ -1424,7 +1481,6 @@ async def test_market_breadth_risk_off_blocks_before_llm(tmp_path):
     from kindshot.event_registry import EventRegistry
     from kindshot.logger import JsonlLogger
     from kindshot.market import MarketMonitor
-    from kindshot.models import MarketContext
     from kindshot.price import PriceFetcher, SnapshotScheduler
     from kindshot.pipeline import pipeline_loop
     from kindshot.feed import KindFeed
@@ -1763,6 +1819,7 @@ async def test_pos_weak_still_stops_at_strict_adv_threshold(tmp_path):
         config_overrides={
             "adv_threshold": 5_000_000_000,
             "pos_strong_adv_threshold": 2_000_000_000,
+            "news_weak_enabled": True,
         },
         ctx_raw=ContextCardData(adv_value_20d=2.5e9, spread_bps=10.0, ret_today=2.0),
     )
@@ -1850,16 +1907,15 @@ async def test_skip_decision_tracks_price_for_false_negative(tmp_path):
 @pytest.mark.asyncio
 async def test_premarket_intraday_thin_defers_event(tmp_path):
     """장전(09시 이전) iv_ratio=0 → INTRADAY_VALUE_TOO_THIN 시 pending에 추가 + registry unmark."""
-    from kindshot.event_registry import EventRegistry, ProcessedEvent
+    from kindshot.event_registry import EventRegistry
     from kindshot.logger import JsonlLogger
     from kindshot.market import MarketMonitor
     from kindshot.price import PriceFetcher, SnapshotScheduler
     from kindshot.pipeline import process_registered_event
     from kindshot.models import (
-        Action, DecisionRecord, SizeHint, EventIdMethod, ContextCard,
+        Action, ContextCard, DecisionRecord, SizeHint,
     )
     from kindshot.guardrails import GuardrailResult
-    from zoneinfo import ZoneInfo
 
     cfg = Config(log_dir=tmp_path / "logs", paper=True)
     log = JsonlLogger(cfg.log_dir, run_id="test_run")
@@ -2032,7 +2088,7 @@ async def test_guardrail_block_schedules_shadow_snapshot_for_high_conf_buy(tmp_p
     raw = _make_raw()
 
     with patch("kindshot.price.SnapshotScheduler.schedule_t0") as mock_schedule:
-        records = await _run_pipeline_once(
+        await _run_pipeline_once(
             tmp_path, [raw],
             decision_side_effect=[mock_decision],
             guardrail_passed=False,
@@ -2071,7 +2127,7 @@ async def test_guardrail_block_no_shadow_for_low_conf_buy(tmp_path):
     raw = _make_raw()
 
     with patch("kindshot.price.SnapshotScheduler.schedule_t0") as mock_schedule:
-        records = await _run_pipeline_once(
+        await _run_pipeline_once(
             tmp_path, [raw],
             decision_side_effect=[mock_decision],
             guardrail_passed=False,
@@ -2105,7 +2161,7 @@ async def test_guardrail_block_no_shadow_for_skip_action(tmp_path):
     raw = _make_raw()
 
     with patch("kindshot.price.SnapshotScheduler.schedule_t0") as mock_schedule:
-        records = await _run_pipeline_once(
+        await _run_pipeline_once(
             tmp_path, [raw],
             decision_side_effect=[mock_decision],
             guardrail_passed=False,

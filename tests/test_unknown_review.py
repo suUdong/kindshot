@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -329,6 +329,29 @@ def test_evaluate_unknown_promotion_accepts_ready_pos_strong(tmp_path):
 
     assert record.promotion_status == PromotionStatus.PROMOTED
     assert record.gate_reasons == []
+
+
+def test_evaluate_unknown_promotion_rejects_pos_weak_when_news_weak_disabled(tmp_path):
+    cfg = Config(
+        unknown_paper_promotion_enabled=True,
+        news_weak_enabled=False,
+    )
+    review = UnknownReviewRecord(
+        event_id="evt_123",
+        reviewed_at=datetime.now(timezone.utc),
+        runtime_mode="paper",
+        headline_only=True,
+        review_status=ReviewStatus.OK,
+        suggested_bucket=Bucket.POS_WEAK,
+        confidence=91,
+        promote_now=True,
+        needs_article_body=False,
+    )
+
+    record = evaluate_unknown_promotion(cfg, _request(), review)
+
+    assert record.promotion_status == PromotionStatus.REJECTED
+    assert "NEWS_WEAK_DISABLED" in record.gate_reasons
 
 
 def test_unknown_review_ops_summary_aggregates_daily_health(tmp_path):

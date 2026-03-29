@@ -46,7 +46,6 @@ from kindshot.models import (
     EventIdMethod,
     EventKind,
     EventRecord,
-    MarketContext,
     NewsSignalContext,
     PipelineLatencyProfile,
     PromotionStatus,
@@ -58,17 +57,15 @@ from kindshot.news_semantics import (
     apply_impact_score_confidence_adjustment,
     build_news_signal,
 )
-from kindshot.price import PriceFetcher, SnapshotScheduler
+from kindshot.price import SnapshotScheduler
 from kindshot.quant import quant_check
 from kindshot.poll_trace import get_tracer
 from kindshot.runtime_latency import identify_bottleneck_stage
 from kindshot.tz import KST as _KST
 from kindshot.unknown_review import (
-    UnknownReviewEngine,
     UnknownReviewRequest,
     append_unknown_inbox,
     append_unknown_promotion,
-    append_unknown_review,
     evaluate_unknown_promotion,
 )
 
@@ -326,6 +323,10 @@ async def execute_bucket_path(
         skip_reason = "NEG_BUCKET"
         analysis_tag = analysis_tag or "SHORT_WATCH"
         should_track_price = True
+    elif bucket == Bucket.POS_WEAK and not config.news_weak_enabled:
+        skip_stage = SkipStage.BUCKET
+        skip_reason = "NEWS_WEAK_DISABLED"
+        analysis_tag = analysis_tag or "WEAK_DISABLED"
     elif bucket in (Bucket.POS_STRONG, Bucket.POS_WEAK):
         # ── Pre-context-card guardrails (ctx 불필요, 비싼 context_card 빌드 전에 체크) ──
         if guardrail_state is not None:

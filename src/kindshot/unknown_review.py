@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections import Counter
 from dataclasses import dataclass, replace
 import html
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -816,7 +815,9 @@ def evaluate_unknown_promotion(
         gate_reasons.append("NON_PAPER_MODE")
     if review.review_status != ReviewStatus.OK:
         gate_reasons.append(f"REVIEW_{review.review_status.value}")
-    if review.suggested_bucket not in ALLOWED_PROMOTION_BUCKETS:
+    if review.suggested_bucket == Bucket.POS_WEAK and not config.news_weak_enabled:
+        gate_reasons.append("NEWS_WEAK_DISABLED")
+    elif review.suggested_bucket not in ALLOWED_PROMOTION_BUCKETS:
         gate_reasons.append("UNSUPPORTED_BUCKET")
     if not review.promote_now:
         gate_reasons.append("PROMOTE_NOW_FALSE")

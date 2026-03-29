@@ -258,6 +258,7 @@ class Config:
     dynamic_guardrail_supportive_breadth_ratio: float = field(default_factory=lambda: _env_float("DYNAMIC_GUARDRAIL_SUPPORTIVE_BREADTH_RATIO", 0.55))
     dynamic_guardrail_confidence_relaxation: int = field(default_factory=lambda: _env_int("DYNAMIC_GUARDRAIL_CONFIDENCE_RELAXATION", 2))
     dynamic_fast_profile_extension_minutes: int = field(default_factory=lambda: _env_int("DYNAMIC_FAST_PROFILE_EXTENSION_MINUTES", 60))
+    news_weak_enabled: bool = field(default_factory=lambda: _env_bool("NEWS_WEAK_ENABLED", False))
 
     # --- MTF (Multi-Timeframe) ---
     mtf_enabled: bool = field(default_factory=lambda: _env_bool("MTF_ENABLED", True))

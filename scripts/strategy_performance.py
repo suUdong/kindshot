@@ -73,7 +73,7 @@ def classify_strategy(row: dict) -> str:
     if bucket.startswith("POS_STRONG"):
         return "NEWS_STRONG"
     elif bucket.startswith("POS_WEAK"):
-        return "NEWS_WEAK"
+        return "NEWS_WEAK_DISABLED"
     elif bucket.startswith("NEG"):
         return "NEWS_NEG"
     elif bucket == "UNKNOWN":
