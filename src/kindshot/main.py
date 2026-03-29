@@ -27,6 +27,7 @@ from kindshot.performance import PerformanceTracker
 from kindshot.pattern_profile import build_recent_pattern_profile
 from kindshot.dart_buyback_strategy import DartBuybackStrategy
 from kindshot.dart_earnings_strategy import DartEarningsStrategy
+from kindshot.short_overheating_strategy import ShortOverheatingStrategy
 from kindshot.news_strategy import NewsStrategy
 from kindshot.pipeline import (
     RuntimeCounters,
@@ -150,6 +151,18 @@ def _build_strategy_registry(
         if not earnings_queue:
             missing.append("earnings_queue")
         logger.warning("DartEarningsStrategy requested but missing: %s", ", ".join(missing))
+
+    # 공매도 과열 해제 전략
+    if config.short_overheating_enabled and session:
+        overheating_strategy = ShortOverheatingStrategy(
+            config, session, stop_event=stop_event,
+        )
+        strategy_registry.register(overheating_strategy)
+        if overheating_strategy.enabled:
+            has_signal_strategies = True
+        logger.info("ShortOverheatingStrategy registered (enabled=%s)", overheating_strategy.enabled)
+    elif config.short_overheating_enabled:
+        logger.warning("ShortOverheatingStrategy requested but session unavailable")
 
     return strategy_registry, news_strategy, has_signal_strategies
 
