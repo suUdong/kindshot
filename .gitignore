@@ -1,6 +1,10 @@
 __pycache__/
 *.pyc
 .env
+.env.bak.*
+.env.local
+.ks-paper.pid
+ralph-loop.state.json
 logs/
 *.egg-info/
 dist/
