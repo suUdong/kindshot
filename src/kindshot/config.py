@@ -166,6 +166,9 @@ class Config:
     short_overheating_poll_interval_s: float = field(default_factory=lambda: _env_float("SHORT_OVERHEATING_POLL_INTERVAL_S", 3600.0))  # 1시간
     short_overheating_lookback_days: int = field(default_factory=lambda: _env_int("SHORT_OVERHEATING_LOOKBACK_DAYS", 7))
     short_overheating_d_offset: int = field(default_factory=lambda: _env_int("SHORT_OVERHEATING_D_OFFSET", 2))  # D+2
+    # --- Institutional Rebalancing (Topic 2) ---
+    rebalance_feed_enabled: bool = field(default_factory=lambda: _env_bool("REBALANCE_FEED_ENABLED", True))
+    rebalance_feed_base_confidence: int = field(default_factory=lambda: _env_int("REBALANCE_FEED_BASE_CONFIDENCE", 70))
     short_overheating_min_overheating_days: int = field(default_factory=lambda: _env_int("SHORT_OVERHEATING_MIN_DAYS", 1))
     feed_interval_market_s: float = field(default_factory=lambda: _env_float("FEED_INTERVAL_MARKET", 3.0))
     feed_interval_off_s: float = field(default_factory=lambda: _env_float("FEED_INTERVAL_OFF", 15.0))

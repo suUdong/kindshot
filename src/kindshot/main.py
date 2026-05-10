@@ -28,6 +28,7 @@ from kindshot.pattern_profile import build_recent_pattern_profile
 from kindshot.dart_buyback_strategy import DartBuybackStrategy
 from kindshot.dart_earnings_strategy import DartEarningsStrategy
 from kindshot.short_overheating_strategy import ShortOverheatingStrategy
+from kindshot.feeds.rebalance_feed import RebalanceFeed
 from kindshot.news_strategy import NewsStrategy
 from kindshot.pipeline import (
     RuntimeCounters,
@@ -162,6 +163,14 @@ def _build_strategy_registry(
         logger.info("ShortOverheatingStrategy registered (enabled=%s)", overheating_strategy.enabled)
     elif config.short_overheating_enabled:
         logger.warning("ShortOverheatingStrategy requested but session unavailable")
+ 
+    # Rebalancing 전략 (Topic 2)
+    if config.rebalance_feed_enabled:
+        rebalance_strategy = RebalanceFeed(config)
+        strategy_registry.register(rebalance_strategy)
+        if rebalance_strategy.enabled:
+            has_signal_strategies = True
+        logger.info("RebalanceFeed registered (enabled=%s)", rebalance_strategy.enabled)
 
     if config.alpha_feed_enabled and session and config.alpha_scanner_api_base_url:
         alpha_feed = AlphaFeed(config, session, stop_event=stop_event)
