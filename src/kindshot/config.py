@@ -216,6 +216,7 @@ class Config:
     # t+5m 체크포인트 청산: 5분 경과 시 손실이면 즉시 청산, 수익이면 타이트 trailing
     t5m_loss_exit_enabled: bool = field(default_factory=lambda: _env_bool("T5M_LOSS_EXIT_ENABLED", True))
     t5m_loss_exit_threshold_pct: float = field(default_factory=lambda: _env_float("T5M_LOSS_EXIT_THRESHOLD_PCT", -0.2))  # v84: -0.3→-0.2 (010140 t5m -0.26%→t30m -0.96% 컷 회피; 068270 -0.61% 회복 케이스는 임계 밖이라 영향 없음)
+    t5m_loss_exit_for_eod_hold: bool = field(default_factory=lambda: _env_bool("T5M_LOSS_EXIT_FOR_EOD_HOLD", True))  # v85: EOD hold (자사주매입/공개매수 등) 케이스도 t5m loss exit 활성 — 259960 conf=76 -1.37% 같은 정체 손실 보호
     t5m_profit_trailing_pct: float = field(default_factory=lambda: _env_float("T5M_PROFIT_TRAILING_PCT", 0.5))  # v65: 0.2→0.5% t+5m 이후 수익 포지션 trailing (기존 너무 타이트)
     partial_take_profit_enabled: bool = field(default_factory=lambda: _env_bool("PARTIAL_TAKE_PROFIT_ENABLED", True))
     partial_take_profit_target_ratio: float = field(default_factory=lambda: _env_float("PARTIAL_TAKE_PROFIT_TARGET_RATIO", 1.0))

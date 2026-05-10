@@ -35,6 +35,7 @@ class StrategyReportConfig:
     trailing_stop_late_pct: float = field(default_factory=lambda: Config().trailing_stop_late_pct)
     max_hold_minutes: int = field(default_factory=lambda: Config().max_hold_minutes)
     t5m_loss_exit_threshold_pct: float = field(default_factory=lambda: Config().t5m_loss_exit_threshold_pct)
+    t5m_loss_exit_for_eod_hold: bool = field(default_factory=lambda: Config().t5m_loss_exit_for_eod_hold)
 
 
 def _ret_pct(snapshots: dict[str, dict[str, Any]], horizon: str) -> float | None:
@@ -85,7 +86,8 @@ def classify_buy_exit(
         # threshold 적용: 미미한 손실(-0.3% 이내)은 수익으로 간주 (라이브와 동일)
         is_past_5m = horizon in {"t+5m", "t+10m", "t+15m", "t+20m", "t+30m"}
         t5m_threshold = config.t5m_loss_exit_threshold_pct if hasattr(config, "t5m_loss_exit_threshold_pct") else -0.3
-        if is_past_5m and ret_pct <= t5m_threshold and hold_minutes != 0:
+        t5m_eod_active = getattr(config, "t5m_loss_exit_for_eod_hold", False)
+        if is_past_5m and ret_pct <= t5m_threshold and (hold_minutes != 0 or t5m_eod_active):
             t5m_ret = _ret_pct(snapshots, "t+5m")
             if t5m_ret is not None and t5m_ret <= t5m_threshold:
                 return "t5m_loss_exit", horizon
