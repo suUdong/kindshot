@@ -1101,7 +1101,7 @@ def test_resolve_daily_loss_budget_locks_part_of_profit():
 # ── US-006: 시간대별 confidence 문턱 테스트 ──────────────────
 
 def test_opening_blocked_0915():
-    """v84: 09:00-09:30 완전 차단 (EARLY_SESSION_BLOCKED) — conf 무관."""
+    """v84.1: 09:00-10:00 완전 차단 (EARLY_SESSION_BLOCKED) — conf 무관."""
     from unittest.mock import patch
     from datetime import datetime, timedelta, timezone
     _KST = timezone(timedelta(hours=9))
@@ -1119,12 +1119,12 @@ def test_opening_blocked_0915():
     assert r.reason == "EARLY_SESSION_BLOCKED"
 
 
-def test_opening_0930_passes():
-    """v84: 09:30 이후는 정상 진입 가능."""
+def test_opening_1000_passes():
+    """v84.1: 10:00 이후는 정상 진입 가능 (09시 전체 차단)."""
     from unittest.mock import patch
     from datetime import datetime, timedelta, timezone
     _KST = timezone(timedelta(hours=9))
-    opening = datetime(2026, 3, 24, 9, 30, 0, tzinfo=_KST)
+    opening = datetime(2026, 3, 24, 10, 0, 0, tzinfo=_KST)
     cfg = _cfg(no_buy_after_kst_hour=15, opening_min_confidence=80)
     with patch("kindshot.guardrails.datetime") as mock_dt:
         mock_dt.now.return_value = opening
@@ -1841,7 +1841,7 @@ def test_resolve_dynamic_guardrail_profile_relaxes_supportive_market():
     assert profile.opening_min_confidence == 81  # max(80, 82-1)
     assert profile.midmorning_min_confidence == 73  # max(70, 75-2) — cfg explicit midmorning=75
     assert profile.afternoon_min_confidence == 78  # max(75, 80-2)
-    assert profile.early_session_block_end_minute == 30
+    assert profile.early_session_block_end_minute == 60  # v84.1: 30→60 (09시 전체 차단)
     assert (profile.fast_profile_no_buy_after_kst_hour, profile.fast_profile_no_buy_after_kst_minute) == (15, 0)  # min(15:00, 15:00)
 
 

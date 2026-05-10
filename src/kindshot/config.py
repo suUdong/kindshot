@@ -266,7 +266,7 @@ class Config:
     # 마이크로 라이브: 1건당 주문 금액 상한 (안전장치)
     micro_live_max_order_won: float = field(default_factory=lambda: _env_float("MICRO_LIVE_MAX_ORDER_WON", 1_000_000))
     # 시간대별 confidence 문턱
-    early_session_block_end_minute: int = field(default_factory=lambda: _env_int("EARLY_SESSION_BLOCK_END_MINUTE", 30))  # v84: 09:MM 이전 BUY 전면 차단 (08-09시 8건 전패 -7.99%)
+    early_session_block_end_minute: int = field(default_factory=lambda: _env_int("EARLY_SESSION_BLOCK_END_MINUTE", 60))  # v84.1: 30→60 (09시 4건 0/4 전패 평균 -1.19%, conf=88도 -0.61% — 10:00 이전 전면 차단)
     opening_min_confidence: int = field(default_factory=lambda: _env_int("OPENING_MIN_CONFIDENCE", 88))  # v73: 85→88 (09시대 87% 손실률 — 최고 확신만 진입)
     midmorning_min_confidence: int = field(default_factory=lambda: _env_int("MIDMORNING_MIN_CONFIDENCE", 78))  # W11: 75→78 (14건 분석: 10:00~11:30 conf=76 1/1 패배 -1.37%, conf>=78은 5건 중 4건 흑자)
     afternoon_min_confidence: int = field(default_factory=lambda: _env_int("AFTERNOON_MIN_CONFIDENCE", 80))  # 13:00-14:30 BUY 최소 confidence (오후 승률 저조)

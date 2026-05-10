@@ -8,7 +8,7 @@ import json
 import logging
 import signal
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Optional
 
 import aiohttp
@@ -18,7 +18,7 @@ from kindshot.order import OrderExecutor
 from kindshot.context_card import configure_cache as configure_context_card_cache
 from kindshot.decision import DecisionEngine
 from kindshot.event_registry import EventRegistry
-from kindshot.feed import AnalystFeed, DartFeed, KindFeed, KisFeed, MultiFeed, Y2iFeed
+from kindshot.feed import AlphaFeed, AnalystFeed, DartFeed, KindFeed, KisFeed, MultiFeed, Y2iFeed
 from kindshot.guardrails import GuardrailState
 from kindshot.kis_client import KisClient
 from kindshot.logger import JsonlLogger, LogWriteError
@@ -32,7 +32,6 @@ from kindshot.news_strategy import NewsStrategy
 from kindshot.pipeline import (
     RuntimeCounters,
     counter_snapshot,
-    pipeline_loop,
     process_unknown_promotion,
 )
 from kindshot.strategy import StrategyRegistry
@@ -163,6 +162,43 @@ def _build_strategy_registry(
         logger.info("ShortOverheatingStrategy registered (enabled=%s)", overheating_strategy.enabled)
     elif config.short_overheating_enabled:
         logger.warning("ShortOverheatingStrategy requested but session unavailable")
+
+    if config.alpha_feed_enabled and session and config.alpha_scanner_api_base_url:
+        alpha_feed = AlphaFeed(config, session, stop_event=stop_event)
+        strategy_registry.register(alpha_feed)
+        if alpha_feed.enabled:
+            has_signal_strategies = True
+        logger.info(
+            "AlphaFeed registered (enabled=%s, base_url=%s, min_confidence=%d)",
+            alpha_feed.enabled,
+            config.alpha_scanner_api_base_url,
+            config.alpha_feed_min_confidence,
+        )
+    elif config.alpha_feed_enabled:
+        missing = []
+        if not session:
+            missing.append("session")
+        if not config.alpha_scanner_api_base_url:
+            missing.append("ALPHA_SCANNER_API_BASE_URL")
+        logger.warning("AlphaFeed requested but missing: %s", ", ".join(missing))
+
+    # 전략 활성화 요약 (운영 가시성)
+    requested = {
+        "news": True,
+        "technical": config.technical_strategy_enabled,
+        "dart_buyback": config.dart_buyback_enabled,
+        "dart_earnings": config.dart_earnings_enabled,
+        "short_overheating": config.short_overheating_enabled,
+        "alpha_feed": config.alpha_feed_enabled,
+    }
+    active_names = {s.name for s in strategy_registry.strategies if getattr(s, "enabled", True)}
+    active = sorted(name for name in requested if name in active_names)
+    inactive = sorted(name for name, want in requested.items() if want and name not in active_names)
+    disabled = sorted(name for name, want in requested.items() if not want)
+    logger.info(
+        "Strategy summary: active=%s inactive_but_requested=%s disabled_by_config=%s",
+        active or "[]", inactive or "[]", disabled or "[]",
+    )
 
     return strategy_registry, news_strategy, has_signal_strategies
 
@@ -428,7 +464,7 @@ async def run() -> None:
     logger.info("kindshot %s starting (run_id=%s, mode=%s)", config.schema_version, run_id, mode)
 
     log = JsonlLogger(config.log_dir, run_id=run_id)
-    tracer = init_tracer(config.log_dir)
+    init_tracer(config.log_dir)
     counters = RuntimeCounters()
 
     async with aiohttp.ClientSession() as session:
