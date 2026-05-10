@@ -99,17 +99,26 @@ tail -f /home/wdsr88/workspace/kindshot/logs/paper-v86-20260511.log
   `max_hold_minutes=30`) 와 결합되어 실제 손실은 크게 제한됨
 - VTS price 모드 운영 중 — exit 가격 신뢰도 낮음. real-time KIS key 적용 후 PAPER PnL 신뢰도↑
 
-## 30분 후 검증 자동화 (수동 실행)
+## 30분 검증 자동화 (활성화 직후 가동됨)
+워처 스크립트: `scripts/v86_paper_watch.py` (commit `15550d2`)
+
 ```bash
-# 09:21 KST 부근에 실행
-cd /home/wdsr88/workspace/kindshot
-.venv/bin/python -c "
-import sqlite3
-c = sqlite3.connect('data/trade_history.db')
-n = c.execute('SELECT COUNT(*) FROM trades').fetchone()[0]
-print(f'trades count = {n} (baseline=14, delta={n-14})')
-v86 = c.execute(\"SELECT COUNT(*) FROM trades WHERE reason LIKE '%v86%' OR reason LIKE '%volume_breakout%'\").fetchone()[0]
-print(f'v86 signals = {v86}')
-"
-grep -c "VolumeBreakoutFeed\|volume_breakout" logs/paper-v86-20260511.log
+nohup setsid .venv/bin/python scripts/v86_paper_watch.py \
+  --log logs/paper-v86-20260511.log \
+  --baseline-trades 14 \
+  --interval-s 60 --iterations 30 \
+  > logs/v86-paper-watch-20260511.log 2>&1 < /dev/null & disown
+echo $! > .v86_watch.pid                  # WATCH_PID=558917
+```
+
+워처 동작:
+- 1분 간격 × 30회 = 30분 모니터링 (08:57 ~ 09:27 KST)
+- 각 iteration: `trades_count, delta_vs_baseline, v86_signals_in_db, log_v86_lines`
+- 출력: `data/runtime/v86_paper_watch_<YYYYMMDD_HHMMSS>.csv`
+- v86 시그널 식별: `decision_source = 'volume_breakout' OR decision_reason LIKE 'v86 breakout%'`
+
+워처 결과 확인:
+```bash
+ls -lt data/runtime/v86_paper_watch_*.csv | head -1
+cat data/runtime/v86_paper_watch_*.csv | tail -5
 ```

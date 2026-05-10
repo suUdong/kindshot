@@ -4,6 +4,7 @@ __pycache__/
 .env.bak.*
 .env.local
 .ks-paper.pid
+.v86_watch.pid
 ralph-loop.state.json
 logs/
 *.egg-info/
