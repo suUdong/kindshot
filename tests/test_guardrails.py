@@ -1837,7 +1837,7 @@ def test_resolve_dynamic_guardrail_profile_relaxes_supportive_market():
         kosdaq_breadth_ratio=0.61,
     )
     assert profile.supportive_market is True
-    assert profile.min_buy_confidence == 76  # max(71, 78-2)=76 (테스트 cfg는 min_buy_confidence=78)
+    assert profile.min_buy_confidence == 77  # v84.2: max(77, 78-2)=77 (floor 71→77)
     assert profile.opening_min_confidence == 81  # max(80, 82-1)
     assert profile.midmorning_min_confidence == 73  # max(70, 75-2) — cfg explicit midmorning=75
     assert profile.afternoon_min_confidence == 78  # max(75, 80-2)
@@ -1864,6 +1864,7 @@ def test_dynamic_fast_profile_cutoff_never_exceeds_market_close():
 
 
 def test_dynamic_profile_relaxes_borderline_low_confidence_in_supportive_market():
+    """v84.2: floor 71→77 (conf<77 차단). conf=77 borderline은 supportive 시 통과."""
     cfg = _cfg(min_buy_confidence=78)
     profile = resolve_dynamic_guardrail_profile(
         cfg,
@@ -1877,7 +1878,7 @@ def test_dynamic_profile_relaxes_borderline_low_confidence_in_supportive_market(
         "005930",
         cfg,
         decision_action=Action.BUY,
-        decision_confidence=76,
+        decision_confidence=77,
         decision_time_kst=decision_time,
         decision_hold_minutes=15,
         **_base_args(),
@@ -1886,7 +1887,7 @@ def test_dynamic_profile_relaxes_borderline_low_confidence_in_supportive_market(
         "005930",
         cfg,
         decision_action=Action.BUY,
-        decision_confidence=76,
+        decision_confidence=77,
         decision_time_kst=decision_time,
         decision_hold_minutes=15,
         dynamic_profile=profile,

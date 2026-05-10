@@ -604,7 +604,7 @@ async def test_pipeline_passes_supportive_dynamic_guardrail_profile(tmp_path):
 
     profile = guardrail_calls[0].kwargs["dynamic_profile"]
     assert profile.supportive_market is True
-    assert profile.min_buy_confidence == 76  # max(71, 78-2)
+    assert profile.min_buy_confidence == 77  # v84.2: max(77, 78-2)=77 (floor 71→77)
     assert profile.afternoon_min_confidence == 78  # max(75, 80-2)
     assert (profile.fast_profile_no_buy_after_kst_hour, profile.fast_profile_no_buy_after_kst_minute) == (15, 15)  # min(15:15, 15:30)
 

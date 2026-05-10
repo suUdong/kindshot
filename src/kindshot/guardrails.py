@@ -319,7 +319,7 @@ def resolve_dynamic_guardrail_profile(
     )
     fast_hour, fast_minute = _minutes_to_hhmm(fast_cutoff_minutes)
     return DynamicGuardrailProfile(
-        min_buy_confidence=max(71, config.min_buy_confidence - relax),
+        min_buy_confidence=max(77, config.min_buy_confidence - relax),  # v84.2: floor 71→77 (14건 분석: conf=76 -1.37%, supportive market에서도 77 미만 차단)
         opening_min_confidence=max(80, config.opening_min_confidence - min(relax, 1)),
         midmorning_min_confidence=max(70, config.midmorning_min_confidence - relax),
         afternoon_min_confidence=max(75, config.afternoon_min_confidence - relax),
