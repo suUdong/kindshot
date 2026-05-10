@@ -14,7 +14,7 @@ def test_default_config_creates_without_error():
         "CHASE_", "MIN_BUY_", "PAPER_", "TRAILING_", "PARTIAL_", "DYNAMIC_", "MAX_HOLD_",
         "NO_BUY_", "KOSPI_", "MIN_MARKET_", "DAILY_LOSS_", "MAX_POSITIONS",
         "MAX_SECTOR_", "ORDER_SIZE", "PIPELINE_", "PYKRX_", "RECENT_PATTERN_", "UNKNOWN_", "SESSION_",
-        "FINALIZE_", "COLLECTOR_", "LOG_DIR", "DATA_DIR", "ALPHA_SCANNER_",
+        "FINALIZE_", "COLLECTOR_", "LOG_DIR", "DATA_DIR", "ALPHA_SCANNER_", "ALPHA_FEED_",
     ))}
     with patch.dict(os.environ, clean_env, clear=True):
         cfg = Config()
@@ -56,6 +56,27 @@ def test_alpha_scanner_api_env_override():
         assert cfg.alpha_scanner_api_timeout_s == 2.5
 
 
+def test_alpha_feed_env_override():
+    with patch.dict(
+        os.environ,
+        {
+            "ALPHA_FEED_ENABLED": "true",
+            "ALPHA_FEED_POLL_INTERVAL_S": "120",
+            "ALPHA_FEED_LOOKBACK_DAYS": "5",
+            "ALPHA_FEED_MIN_CONFIDENCE": "82",
+            "ALPHA_FEED_LIMIT": "7",
+            "ALPHA_FEED_BASELINE_RETURN_PCT": "-0.65",
+        },
+    ):
+        cfg = Config()
+        assert cfg.alpha_feed_enabled is True
+        assert cfg.alpha_feed_poll_interval_s == 120.0
+        assert cfg.alpha_feed_lookback_days == 5
+        assert cfg.alpha_feed_min_confidence == 82
+        assert cfg.alpha_feed_limit == 7
+        assert cfg.alpha_feed_baseline_return_pct == -0.65
+
+
 def test_technical_strategy_tickers_env_override():
     with patch.dict(
         os.environ,
@@ -93,16 +114,16 @@ def test_trailing_stop_defaults():
         "CHASE_", "MIN_BUY_", "PAPER_", "TRAILING_", "PARTIAL_", "DYNAMIC_", "MAX_HOLD_",
         "NO_BUY_", "KOSPI_", "MIN_MARKET_", "DAILY_LOSS_", "MAX_POSITIONS",
         "MAX_SECTOR_", "ORDER_SIZE", "PIPELINE_", "PYKRX_", "RECENT_PATTERN_", "UNKNOWN_", "SESSION_",
-        "FINALIZE_", "COLLECTOR_", "LOG_DIR", "DATA_DIR", "FAST_PROFILE_", "ALPHA_SCANNER_",
+        "FINALIZE_", "COLLECTOR_", "LOG_DIR", "DATA_DIR", "FAST_PROFILE_", "ALPHA_SCANNER_", "ALPHA_FEED_",
     ))}
     with patch.dict(os.environ, clean_env, clear=True):
         cfg = Config()
         assert cfg.trailing_stop_enabled is True
         assert cfg.trailing_stop_pct == 1.0  # v70: 0.8→1.0
-        assert cfg.trailing_stop_activation_pct == 0.5  # v83: 0.2→0.5
-        assert cfg.trailing_stop_early_pct == 0.5  # v83: 0.3→0.5
-        assert cfg.trailing_stop_mid_pct == 0.8  # v65: 0.5→0.8
-        assert cfg.trailing_stop_late_pct == 1.0  # v65: 0.7→1.0
+        assert cfg.trailing_stop_activation_pct == 0.3  # v84: 0.5→0.3
+        assert cfg.trailing_stop_early_pct == 0.4  # v84: 0.5→0.4
+        assert cfg.trailing_stop_mid_pct == 0.6  # v84: 0.8→0.6
+        assert cfg.trailing_stop_late_pct == 0.7  # v84: 1.0→0.7
         assert cfg.partial_take_profit_enabled is True
         assert cfg.partial_take_profit_target_ratio == 1.0
         assert cfg.partial_take_profit_size_pct == 50.0

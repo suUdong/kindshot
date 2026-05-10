@@ -1820,6 +1820,7 @@ def test_resolve_dynamic_guardrail_profile_relaxes_supportive_market():
     cfg = _cfg(
         min_buy_confidence=78,
         opening_min_confidence=82,
+        midmorning_min_confidence=75,
         afternoon_min_confidence=80,
         fast_profile_no_buy_after_kst_hour=14,
         fast_profile_no_buy_after_kst_minute=0,
@@ -1838,7 +1839,7 @@ def test_resolve_dynamic_guardrail_profile_relaxes_supportive_market():
     assert profile.supportive_market is True
     assert profile.min_buy_confidence == 76  # max(71, 78-2)=76 (테스트 cfg는 min_buy_confidence=78)
     assert profile.opening_min_confidence == 81  # max(80, 82-1)
-    assert profile.midmorning_min_confidence == 73  # max(70, 75-2)
+    assert profile.midmorning_min_confidence == 73  # max(70, 75-2) — cfg explicit midmorning=75
     assert profile.afternoon_min_confidence == 78  # max(75, 80-2)
     assert profile.early_session_block_end_minute == 30
     assert (profile.fast_profile_no_buy_after_kst_hour, profile.fast_profile_no_buy_after_kst_minute) == (15, 0)  # min(15:00, 15:00)

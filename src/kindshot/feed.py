@@ -8,17 +8,19 @@ import logging
 import random
 import re
 from collections import OrderedDict
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import AsyncIterator, Optional, Protocol
+from typing import AsyncIterator, Optional
 
 import aiohttp
 import feedparser
 
 from kindshot.config import Config
 from kindshot.kis_client import KisClient, NewsDisclosure
+from kindshot.models import Action, SizeHint
 from kindshot.poll_trace import get_tracer
+from kindshot.strategy import SignalSource, TradeSignal
 from kindshot.tz import KST as _KST
 
 logger = logging.getLogger(__name__)
@@ -1032,6 +1034,190 @@ class Y2iFeed:
                 await asyncio.wait_for(
                     self._stop_event.wait(),
                     timeout=self._config.y2i_poll_interval_s,
+                )
+            except asyncio.TimeoutError:
+                pass
+
+
+class AlphaFeed:
+    """alpha-scanner AlphaFeed를 폴링하여 BUY TradeSignal로 변환."""
+
+    def __init__(
+        self,
+        config: Config,
+        session: aiohttp.ClientSession,
+        *,
+        stop_event: Optional[asyncio.Event] = None,
+    ) -> None:
+        self._config = config
+        self._session = session
+        self._stop_event = stop_event or asyncio.Event()
+        self._seen_keys: OrderedDict[str, None] = OrderedDict()
+        self._last_poll_at: Optional[datetime] = None
+
+    @property
+    def name(self) -> str:
+        return "alpha_feed"
+
+    @property
+    def source(self) -> SignalSource:
+        return SignalSource.ALPHA
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self._config.alpha_feed_enabled and self._config.alpha_scanner_api_base_url)
+
+    @property
+    def last_poll_at(self) -> Optional[datetime]:
+        return self._last_poll_at
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        self._stop_event.set()
+
+    @staticmethod
+    def _parse_dt(value: object) -> Optional[datetime]:
+        if not value:
+            return None
+        text = str(value).replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=_KST)
+        return parsed.astimezone(_KST)
+
+    @staticmethod
+    def _size_hint(value: object) -> SizeHint:
+        normalized = str(value or "").upper()
+        if normalized == "L":
+            return SizeHint.L
+        if normalized == "M":
+            return SizeHint.M
+        return SizeHint.S
+
+    @staticmethod
+    def _is_krx_ticker(value: object) -> bool:
+        return bool(re.fullmatch(r"\d{6}", str(value or "")))
+
+    def _dedup_key(self, signal: dict) -> str:
+        signal_id = signal.get("signal_id")
+        if signal_id is not None:
+            return f"alpha:{signal_id}"
+        return f"alpha:{signal.get('ticker')}:{signal.get('created_at')}:{signal.get('confidence')}"
+
+    def _qualifies(self, signal: dict) -> bool:
+        if str(signal.get("action") or "").upper() != "BUY":
+            return False
+        if str(signal.get("signal_type") or "").upper() not in {"BUY", "STRONG_BUY"}:
+            return False
+        if not self._is_krx_ticker(signal.get("ticker")):
+            return False
+        try:
+            confidence = int(signal.get("confidence") or 0)
+        except (TypeError, ValueError):
+            return False
+        return confidence >= self._config.alpha_feed_min_confidence
+
+    def _to_trade_signal(self, signal: dict) -> TradeSignal:
+        detected_at = self._parse_dt(signal.get("created_at")) or datetime.now(_KST)
+        ticker = str(signal.get("ticker") or "")
+        signal_type = str(signal.get("signal_type") or "BUY").upper()
+        score = signal.get("score_current")
+        delta = signal.get("score_delta")
+        regime = str(signal.get("regime") or "unknown")
+        reason = str(signal.get("reason") or "alpha-scanner high-conviction signal")
+        event_id = self._dedup_key(signal).replace(":", "_")
+        headline = (
+            f"[ALPHA] {signal.get('corp_name') or ticker}({ticker}) {signal_type} "
+            f"score={score if score is not None else '-'} delta={delta if delta is not None else '-'}"
+        )
+
+        metadata = {
+            "source_signal_id": signal.get("signal_id"),
+            "signal_type": signal_type,
+            "score_current": score,
+            "score_previous": signal.get("score_previous"),
+            "score_delta": delta,
+            "regime": regime,
+            "age_hours": signal.get("age_hours"),
+            "sector": signal.get("sector"),
+            "fp_filter_status": signal.get("fp_filter_status"),
+            "support_count": signal.get("support_count"),
+            "secondary_support_count": signal.get("secondary_support_count"),
+        }
+
+        return TradeSignal(
+            strategy_name=self.name,
+            source=SignalSource.ALPHA,
+            ticker=ticker,
+            corp_name=str(signal.get("corp_name") or ticker),
+            action=Action.BUY,
+            confidence=int(signal.get("confidence") or 0),
+            size_hint=self._size_hint(signal.get("size_hint")),
+            reason=reason,
+            headline=headline,
+            event_id=event_id,
+            detected_at=detected_at,
+            metadata=metadata,
+        )
+
+    async def poll_once(self) -> list[TradeSignal]:
+        self._last_poll_at = datetime.now(_KST)
+        if not self.enabled:
+            return []
+
+        base_url = self._config.alpha_scanner_api_base_url.rstrip("/")
+        timeout = aiohttp.ClientTimeout(total=self._config.alpha_scanner_api_timeout_s)
+        params = {
+            "lookback_days": self._config.alpha_feed_lookback_days,
+            "min_confidence": self._config.alpha_feed_min_confidence,
+            "limit": self._config.alpha_feed_limit,
+            "baseline_return_pct": self._config.alpha_feed_baseline_return_pct,
+        }
+        try:
+            async with self._session.get(f"{base_url}/kindshot/alpha-feed", params=params, timeout=timeout) as response:
+                if response.status >= 400:
+                    logger.warning("AlphaFeed fetch failed: status=%s", response.status)
+                    return []
+                payload = await response.json()
+        except Exception as exc:
+            logger.warning("AlphaFeed fetch failed: %s", exc)
+            return []
+
+        if not isinstance(payload, dict) or payload.get("status") != "ok":
+            return []
+
+        results: list[TradeSignal] = []
+        for signal in payload.get("signals", []):
+            if not isinstance(signal, dict) or not self._qualifies(signal):
+                continue
+            dedup_key = self._dedup_key(signal)
+            if dedup_key in self._seen_keys:
+                continue
+            results.append(self._to_trade_signal(signal))
+            self._seen_keys[dedup_key] = None
+
+        while len(self._seen_keys) > 5000:
+            self._seen_keys.popitem(last=False)
+
+        if results:
+            logger.info("AlphaFeed: %d new BUY candidates", len(results))
+        return results
+
+    async def stream_signals(self) -> AsyncIterator[TradeSignal]:
+        while not self._stop_event.is_set():
+            for signal in await self.poll_once():
+                yield signal
+            if self._stop_event.is_set():
+                break
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self._config.alpha_feed_poll_interval_s,
                 )
             except asyncio.TimeoutError:
                 pass

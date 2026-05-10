@@ -200,19 +200,19 @@ class Config:
     no_buy_after_kst_minute: int = field(default_factory=lambda: _env_int("NO_BUY_AFTER_KST_MINUTE", 15))  # 15:00→15:15: KRX 15:30 마감, 15분 여유 확보
     # 가상 익절/손절 (paper mode 추적용)
     paper_take_profit_pct: float = field(default_factory=lambda: _env_float("PAPER_TAKE_PROFIT_PCT", 2.0))  # 2.0% 기본 익절 (v65: 1.0→2.0, R:R 비율 개선)
-    paper_stop_loss_pct: float = field(default_factory=lambda: _env_float("PAPER_STOP_LOSS_PCT", -1.5))  # -1.5% 손절 (V자 반등 대응, 기존 -0.7%에서 완화)
+    paper_stop_loss_pct: float = field(default_factory=lambda: _env_float("PAPER_STOP_LOSS_PCT", -1.0))  # v84: -1.5→-1.0 (14건 분석: stop_loss avg -1.46%, 358570 -2.78%까지 노출 — 손실 캡 강화)
     # Trailing stop + 30분 룰
     trailing_stop_enabled: bool = field(default_factory=lambda: _env_bool("TRAILING_STOP_ENABLED", True))
     trailing_stop_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_PCT", 1.0))  # v70: 0.8→1.0% (3/27: 조기 trailing→종가 수익 유실 방지)
-    trailing_stop_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_ACTIVATION_PCT", 0.5))  # v83: 0.2→0.5% (14건 분석: 0.2%=노이즈, 너무 조기 활성→peak 못 잡음)
-    # 시간대별 trailing stop 폭 (진입 후 경과 시간 기준) — v65: 전체 완화
-    trailing_stop_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_EARLY_PCT", 0.5))  # v83: 0.3→0.5 (activation 0.5%와 조합, 노이즈 pullback에 조기 청산 방지)
-    trailing_stop_mid_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_MID_PCT", 0.8))  # 5~30분: v65 0.5→0.8 (추세 유지)
-    trailing_stop_late_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_LATE_PCT", 1.0))  # 30분+: v65 0.7→1.0 (장기 홀드 여유)
+    trailing_stop_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_ACTIVATION_PCT", 0.3))  # v84: 0.5→0.3 (14건 중 peak 0.5% 미만 8건 trailing 미작동, 016360 peak +0.94→exit +0.05 같은 peak 유실 방지)
+    # 시간대별 trailing stop 폭 (진입 후 경과 시간 기준) — v84: 더 타이트하게
+    trailing_stop_early_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_EARLY_PCT", 0.4))  # v84: 0.5→0.4 (activation 0.3과 조합)
+    trailing_stop_mid_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_MID_PCT", 0.6))  # v84: 0.8→0.6 (298040 peak +0.51→exit -1.10 같은 mid 구간 손실 전환 방지)
+    trailing_stop_late_pct: float = field(default_factory=lambda: _env_float("TRAILING_STOP_LATE_PCT", 0.7))  # v84: 1.0→0.7 (late 구간 타이트닝)
     max_hold_minutes: int = field(default_factory=lambda: _env_int("MAX_HOLD_MINUTES", 30))  # v83: 20→30분 (002990: peak +2.2% at t+30m, 20분 max_hold로 0% 청산 — 모멘텀 소화 시간 확보)
     # t+5m 체크포인트 청산: 5분 경과 시 손실이면 즉시 청산, 수익이면 타이트 trailing
     t5m_loss_exit_enabled: bool = field(default_factory=lambda: _env_bool("T5M_LOSS_EXIT_ENABLED", True))
-    t5m_loss_exit_threshold_pct: float = field(default_factory=lambda: _env_float("T5M_LOSS_EXIT_THRESHOLD_PCT", -0.3))  # v83: -0.15→-0.3% (068270: t5m -0.61%→t30m -0.12% 회복 가능, -0.15%는 과도한 조기 컷)
+    t5m_loss_exit_threshold_pct: float = field(default_factory=lambda: _env_float("T5M_LOSS_EXIT_THRESHOLD_PCT", -0.2))  # v84: -0.3→-0.2 (010140 t5m -0.26%→t30m -0.96% 컷 회피; 068270 -0.61% 회복 케이스는 임계 밖이라 영향 없음)
     t5m_profit_trailing_pct: float = field(default_factory=lambda: _env_float("T5M_PROFIT_TRAILING_PCT", 0.5))  # v65: 0.2→0.5% t+5m 이후 수익 포지션 trailing (기존 너무 타이트)
     partial_take_profit_enabled: bool = field(default_factory=lambda: _env_bool("PARTIAL_TAKE_PROFIT_ENABLED", True))
     partial_take_profit_target_ratio: float = field(default_factory=lambda: _env_float("PARTIAL_TAKE_PROFIT_TARGET_RATIO", 1.0))
@@ -268,7 +268,7 @@ class Config:
     # 시간대별 confidence 문턱
     early_session_block_end_minute: int = field(default_factory=lambda: _env_int("EARLY_SESSION_BLOCK_END_MINUTE", 30))  # v84: 09:MM 이전 BUY 전면 차단 (08-09시 8건 전패 -7.99%)
     opening_min_confidence: int = field(default_factory=lambda: _env_int("OPENING_MIN_CONFIDENCE", 88))  # v73: 85→88 (09시대 87% 손실률 — 최고 확신만 진입)
-    midmorning_min_confidence: int = field(default_factory=lambda: _env_int("MIDMORNING_MIN_CONFIDENCE", 75))  # v84: 10:00~11:30 최적 구간 — confidence 완화 (승률 60%)
+    midmorning_min_confidence: int = field(default_factory=lambda: _env_int("MIDMORNING_MIN_CONFIDENCE", 78))  # W11: 75→78 (14건 분석: 10:00~11:30 conf=76 1/1 패배 -1.37%, conf>=78은 5건 중 4건 흑자)
     afternoon_min_confidence: int = field(default_factory=lambda: _env_int("AFTERNOON_MIN_CONFIDENCE", 80))  # 13:00-14:30 BUY 최소 confidence (오후 승률 저조)
     closing_min_confidence: int = field(default_factory=lambda: _env_int("CLOSING_MIN_CONFIDENCE", 85))  # 14:30-15:00 BUY 최소 confidence
     fast_profile_hold_minutes: int = field(default_factory=lambda: _env_int("FAST_PROFILE_HOLD_MINUTES", 30))  # v83: 20→30 (hold_profile 수주/공급계약 30분과 일치)
@@ -313,6 +313,12 @@ class Config:
     macro_filter_enabled: bool = field(default_factory=lambda: _env_bool("MACRO_FILTER_ENABLED", True))
     alpha_scanner_api_base_url: str = field(default_factory=lambda: _env("ALPHA_SCANNER_API_BASE_URL", ""))
     alpha_scanner_api_timeout_s: float = field(default_factory=lambda: _env_float("ALPHA_SCANNER_API_TIMEOUT_S", 5.0))
+    alpha_feed_enabled: bool = field(default_factory=lambda: _env_bool("ALPHA_FEED_ENABLED", False))
+    alpha_feed_poll_interval_s: float = field(default_factory=lambda: _env_float("ALPHA_FEED_POLL_INTERVAL_S", 300.0))
+    alpha_feed_lookback_days: int = field(default_factory=lambda: _env_int("ALPHA_FEED_LOOKBACK_DAYS", 7))
+    alpha_feed_min_confidence: int = field(default_factory=lambda: _env_int("ALPHA_FEED_MIN_CONFIDENCE", 78))
+    alpha_feed_limit: int = field(default_factory=lambda: _env_int("ALPHA_FEED_LIMIT", 20))
+    alpha_feed_baseline_return_pct: float = field(default_factory=lambda: _env_float("ALPHA_FEED_BASELINE_RETURN_PCT", -0.65))
 
     # --- Logging ---
     log_dir: Path = field(default_factory=lambda: Path(_env("LOG_DIR", "logs")))
