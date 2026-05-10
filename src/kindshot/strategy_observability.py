@@ -10,6 +10,10 @@ from kindshot.config import Config
 from kindshot.hold_profile import resolve_hold_profile
 
 _HORIZON_ORDER = ["t+30s", "t+1m", "t+2m", "t+5m", "t+10m", "t+15m", "t+20m", "t+30m", "close"]
+_HORIZON_MINUTES = {
+    "t+30s": 0.5, "t+1m": 1, "t+2m": 2, "t+5m": 5, "t+10m": 10,
+    "t+15m": 15, "t+20m": 20, "t+30m": 30, "close": 390,
+}
 _CONTRACT_CANCEL_TERMS = (
     "공급계약 해지",
     "공급계약 해제",
@@ -36,6 +40,9 @@ class StrategyReportConfig:
     max_hold_minutes: int = field(default_factory=lambda: Config().max_hold_minutes)
     t5m_loss_exit_threshold_pct: float = field(default_factory=lambda: Config().t5m_loss_exit_threshold_pct)
     t5m_loss_exit_for_eod_hold: bool = field(default_factory=lambda: Config().t5m_loss_exit_for_eod_hold)
+    stagnation_exit_enabled: bool = field(default_factory=lambda: Config().stagnation_exit_enabled)
+    stagnation_exit_max_peak_pct: float = field(default_factory=lambda: Config().stagnation_exit_max_peak_pct)
+    stagnation_exit_min_minutes: int = field(default_factory=lambda: Config().stagnation_exit_min_minutes)
 
 
 def _ret_pct(snapshots: dict[str, dict[str, Any]], horizon: str) -> float | None:
@@ -92,6 +99,13 @@ def classify_buy_exit(
             if t5m_ret is not None and t5m_ret <= t5m_threshold:
                 return "t5m_loss_exit", horizon
         if (
+            getattr(config, "stagnation_exit_enabled", False)
+            and _HORIZON_MINUTES.get(horizon, 0) >= getattr(config, "stagnation_exit_min_minutes", 15)
+            and peak <= getattr(config, "stagnation_exit_max_peak_pct", 0.05)
+            and abs(ret_pct) <= getattr(config, "stagnation_exit_max_peak_pct", 0.05)
+        ):
+            return "stagnation_exit", horizon
+        if (
             config.trailing_stop_enabled
             and peak >= config.trailing_stop_activation_pct
             and ret_pct <= peak - _trail_pct_for_horizon(horizon, config)
@@ -125,6 +139,7 @@ def collect_strategy_summary(
         "trailing_stop_hits": 0,
         "stop_loss_hits": 0,
         "t5m_loss_exit_hits": 0,
+        "stagnation_exit_hits": 0,
         "max_hold_hits": 0,
         "hold_profile_applied": 0,
         "hold_profile_breakdown": Counter(),
@@ -171,6 +186,8 @@ def collect_strategy_summary(
             summary["stop_loss_hits"] += 1
         elif exit_type == "t5m_loss_exit":
             summary["t5m_loss_exit_hits"] += 1
+        elif exit_type == "stagnation_exit":
+            summary["stagnation_exit_hits"] += 1
         elif exit_type == "max_hold":
             summary["max_hold_hits"] += 1
 
