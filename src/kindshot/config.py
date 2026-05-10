@@ -327,6 +327,17 @@ class Config:
     alpha_feed_limit: int = field(default_factory=lambda: _env_int("ALPHA_FEED_LIMIT", 20))
     alpha_feed_baseline_return_pct: float = field(default_factory=lambda: _env_float("ALPHA_FEED_BASELINE_RETURN_PCT", -0.65))
 
+    # --- VolumeBreakoutFeed (v86, LLM-free 거래량 폭증 + N-day high 돌파) ---
+    volume_breakout_feed_enabled: bool = field(default_factory=lambda: _env_bool("VOLUME_BREAKOUT_FEED_ENABLED", False))
+    volume_breakout_feed_tickers: tuple[str, ...] = field(default_factory=lambda: _env_csv_tuple("VOLUME_BREAKOUT_FEED_TICKERS"))
+    volume_breakout_feed_lookback_n: int = field(default_factory=lambda: _env_int("VOLUME_BREAKOUT_FEED_LOOKBACK_N", 20))
+    volume_breakout_feed_min_vol_ratio: float = field(default_factory=lambda: _env_float("VOLUME_BREAKOUT_FEED_MIN_VOL_RATIO", 2.0))
+    volume_breakout_feed_min_ret_today: float = field(default_factory=lambda: _env_float("VOLUME_BREAKOUT_FEED_MIN_RET_TODAY", 0.0))
+    volume_breakout_feed_max_ret_today: float = field(default_factory=lambda: _env_float("VOLUME_BREAKOUT_FEED_MAX_RET_TODAY", 7.0))
+    volume_breakout_feed_min_adv_value: float = field(default_factory=lambda: _env_float("VOLUME_BREAKOUT_FEED_MIN_ADV_VALUE", 500_000_000.0))
+    volume_breakout_feed_poll_interval_s: float = field(default_factory=lambda: _env_float("VOLUME_BREAKOUT_FEED_POLL_INTERVAL_S", 3600.0))
+    volume_breakout_feed_signal_cooldown_s: float = field(default_factory=lambda: _env_float("VOLUME_BREAKOUT_FEED_SIGNAL_COOLDOWN_S", 86400.0))
+
     # --- Logging ---
     log_dir: Path = field(default_factory=lambda: Path(_env("LOG_DIR", "logs")))
     schema_version: str = "0.1.3"
@@ -537,6 +548,17 @@ class Config:
             raise ValueError("technical_strategy_max_bb_position must be within 0..100")
         if self.technical_strategy_min_volume_ratio_vs_avg20d < 0:
             raise ValueError("technical_strategy_min_volume_ratio_vs_avg20d must be non-negative")
+
+        if self.volume_breakout_feed_lookback_n < 2:
+            raise ValueError("volume_breakout_feed_lookback_n must be >= 2")
+        if self.volume_breakout_feed_min_vol_ratio <= 0:
+            raise ValueError("volume_breakout_feed_min_vol_ratio must be > 0")
+        if self.volume_breakout_feed_min_ret_today > self.volume_breakout_feed_max_ret_today:
+            raise ValueError("volume_breakout_feed_min_ret_today must be <= volume_breakout_feed_max_ret_today")
+        if self.volume_breakout_feed_poll_interval_s <= 0:
+            raise ValueError("volume_breakout_feed_poll_interval_s must be positive")
+        if self.volume_breakout_feed_signal_cooldown_s < 0:
+            raise ValueError("volume_breakout_feed_signal_cooldown_s must be non-negative")
 
         if not self.kis_app_key or not self.kis_app_secret:
             warnings.append("KIS API keys not set")

@@ -29,6 +29,7 @@ from kindshot.dart_buyback_strategy import DartBuybackStrategy
 from kindshot.dart_earnings_strategy import DartEarningsStrategy
 from kindshot.short_overheating_strategy import ShortOverheatingStrategy
 from kindshot.feeds.rebalance_feed import RebalanceFeed
+from kindshot.feeds.volume_breakout_feed import VolumeBreakoutFeed
 from kindshot.news_strategy import NewsStrategy
 from kindshot.pipeline import (
     RuntimeCounters,
@@ -172,6 +173,23 @@ def _build_strategy_registry(
             has_signal_strategies = True
         logger.info("RebalanceFeed registered (enabled=%s)", rebalance_strategy.enabled)
 
+    # v86 VolumeBreakoutFeed (LLM-free 거래량 폭증 + N-day high 돌파)
+    if config.volume_breakout_feed_enabled:
+        if not config.volume_breakout_feed_tickers:
+            logger.warning("VolumeBreakoutFeed requested but VOLUME_BREAKOUT_FEED_TICKERS is empty")
+        else:
+            volume_breakout_strategy = VolumeBreakoutFeed(config, stop_event=stop_event)
+            strategy_registry.register(volume_breakout_strategy)
+            if volume_breakout_strategy.enabled:
+                has_signal_strategies = True
+            logger.info(
+                "VolumeBreakoutFeed registered (enabled=%s, tickers=%d, lookback=%d, min_vol_ratio=%.2fx)",
+                volume_breakout_strategy.enabled,
+                len(config.volume_breakout_feed_tickers),
+                config.volume_breakout_feed_lookback_n,
+                config.volume_breakout_feed_min_vol_ratio,
+            )
+
     if config.alpha_feed_enabled and session and config.alpha_scanner_api_base_url:
         alpha_feed = AlphaFeed(config, session, stop_event=stop_event)
         strategy_registry.register(alpha_feed)
@@ -199,6 +217,7 @@ def _build_strategy_registry(
         "dart_earnings": config.dart_earnings_enabled,
         "short_overheating": config.short_overheating_enabled,
         "alpha_feed": config.alpha_feed_enabled,
+        "volume_breakout": config.volume_breakout_feed_enabled,
     }
     active_names = {s.name for s in strategy_registry.strategies if getattr(s, "enabled", True)}
     active = sorted(name for name in requested if name in active_names)
