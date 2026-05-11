@@ -97,15 +97,22 @@ def _emit_wrap(csv_path: Path, log_path: Path, baseline: int) -> None:
     log_v86_lines = int(last.get("log_v86_lines", 0))
     delta = int(last["delta_vs_baseline"])
     v86_db = int(last["v86_signals_in_db"])
+
+    def _rel(p: Path) -> str:
+        try:
+            return str(p.resolve().relative_to(REPO))
+        except ValueError:
+            return str(p)
+
     out_md.write_text(
         f"# KS v86 Paper 30분 윈도우 wrap ({last['ts_kst']} KST)\n\n"
-        f"- watcher CSV: `{csv_path.relative_to(REPO)}` (iterations={len(rows)})\n"
+        f"- watcher CSV: `{_rel(csv_path)}` (iterations={len(rows)})\n"
         f"- baseline trades = {baseline}\n"
         f"- final trades_count = {last['trades_count']} (delta = {delta:+d})\n"
         f"- v86 signals in db = {v86_db}\n"
         f"- log v86 lines (cumulative) = {log_v86_lines}\n"
         f"- first v86 signal at iteration = {first_signal_iter or 'n/a'}\n"
-        f"- daemon log: `{log_path.relative_to(REPO)}`\n\n"
+        f"- daemon log: `{_rel(log_path)}`\n\n"
         "## 해석\n"
         + ("- v86 lane 첫 시그널 발생 → trade_history 기록 확인 필요\n"
            if v86_db > 0 else
