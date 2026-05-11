@@ -50,6 +50,17 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RISK_LIMITS_PATH = _REPO_ROOT / "config" / "risk_limits.toml"
 _DEFAULT_MAX_POSITIONS = 4
 
+# ---------------------------------------------------------------------------
+# Live-trading hard caps. Do NOT relax these without a written incident review.
+# Mirrors crypto-trader/src/crypto_trader/config.py (b24004b safety pattern).
+# ---------------------------------------------------------------------------
+HARD_MAX_DAILY_LOSS_PCT: float = 0.05         # session-equity loss → kill switch
+HARD_MAX_RISK_PER_TRADE_PCT: float = 0.05     # single-position notional cap
+SAFE_LIVE_MAX_POSITION_PCT: float = 0.10      # aggregate live exposure cap
+
+_LIVE_OPT_IN_ENV_KEYS: tuple[str, ...] = ("LIVE_TRADING_ENABLED", "KS_LIVE_TRADING_ENABLED")
+_LIVE_OPT_IN_TRUTHY: frozenset[str] = frozenset({"1", "true", "yes", "on"})
+
 
 @lru_cache(maxsize=1)
 def _load_repo_config() -> dict[str, object]:
@@ -272,6 +283,19 @@ class Config:
     position_sizing_atr_max_scale: float = field(default_factory=lambda: _env_float("POSITION_SIZING_ATR_MAX_SCALE", 1.3))  # 저변동성 시 최대 확대 배율
     # 마이크로 라이브: 1건당 주문 금액 상한 (안전장치)
     micro_live_max_order_won: float = field(default_factory=lambda: _env_float("MICRO_LIVE_MAX_ORDER_WON", 1_000_000))
+    # ---- Live trading safety (mirrors CT b24004b + d6c2fb8 pattern) ----
+    # paper_trading 분리: 기존 kis_is_paper 는 KisClient 의 dual-server 토글이고,
+    # 본 필드는 BrokerFactory 가 PaperBroker vs Live/VTSBroker 를 선택하는 게이트.
+    paper_trading: bool = field(default_factory=lambda: _env_bool("PAPER_TRADING", True))
+    # Operator confirmation marker (must be fresh ≤ live_confirmation_max_age_hours)
+    live_confirmation_path: str = field(default_factory=lambda: _env("LIVE_CONFIRMATION_PATH", "artifacts/live-confirmed.json"))
+    live_confirmation_max_age_hours: float = field(default_factory=lambda: _env_float("LIVE_CONFIRMATION_MAX_AGE_HOURS", 24.0))
+    # Auto-revert: cumulative intraday loss ≥ this ratio triggers paper revert + kill flag
+    live_auto_revert_loss_pct: float = field(default_factory=lambda: _env_float("LIVE_AUTO_REVERT_LOSS_PCT", 0.02))
+    # Dry-run: LiveBroker echoes fills instead of calling KIS API. Useful during rehearsal.
+    live_dry_run: bool = field(default_factory=lambda: _env_bool("LIVE_DRY_RUN", False))
+    # Flag file written when auto-revert triggers (supervisor must inspect before re-enabling)
+    live_auto_revert_flag_path: str = field(default_factory=lambda: _env("LIVE_AUTO_REVERT_FLAG_PATH", "artifacts/live-auto-revert.flag"))
     # 시간대별 confidence 문턱
     early_session_block_end_minute: int = field(default_factory=lambda: _env_int("EARLY_SESSION_BLOCK_END_MINUTE", 60))  # v84.1: 30→60 (09시 4건 0/4 전패 평균 -1.19%, conf=88도 -0.61% — 10:00 이전 전면 차단)
     opening_min_confidence: int = field(default_factory=lambda: _env_int("OPENING_MIN_CONFIDENCE", 88))  # v73: 85→88 (09시대 87% 손실률 — 최고 확신만 진입)
@@ -563,6 +587,22 @@ class Config:
         if not self.kis_app_key or not self.kis_app_secret:
             warnings.append("KIS API keys not set")
 
+        # Live-safety sanity (only structural — preflight_check enforces runtime gates)
+        if self.live_auto_revert_loss_pct < 0:
+            raise ValueError(
+                f"live_auto_revert_loss_pct must be >= 0, got {self.live_auto_revert_loss_pct}"
+            )
+        if self.live_auto_revert_loss_pct > HARD_MAX_DAILY_LOSS_PCT:
+            raise ValueError(
+                f"live_auto_revert_loss_pct ({self.live_auto_revert_loss_pct:.2%}) "
+                f"exceeds HARD_MAX_DAILY_LOSS_PCT ({HARD_MAX_DAILY_LOSS_PCT:.2%}) — "
+                "auto-revert must trigger before the hard cap"
+            )
+        if self.live_confirmation_max_age_hours <= 0:
+            raise ValueError(
+                f"live_confirmation_max_age_hours must be > 0, got {self.live_confirmation_max_age_hours}"
+            )
+
         return warnings
 
 
@@ -570,3 +610,137 @@ def load_config(**overrides: object) -> Config:
     cfg = Config(**overrides)  # type: ignore[arg-type]
     cfg.validate()
     return cfg
+
+
+# ---------------------------------------------------------------------------
+# Live-mode preflight gates — mirrors crypto-trader b24004b pattern.
+# Run by BrokerFactory before instantiating LiveBroker AND by the
+# scripts/preflight_live_check.py operator helper before cutover.
+# ---------------------------------------------------------------------------
+
+import json as _json  # noqa: E402
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
+
+
+def _env_flag_true(env: dict[str, str], keys: tuple[str, ...] = _LIVE_OPT_IN_ENV_KEYS) -> bool:
+    """Return True iff any of `keys` is set to a truthy value in `env`."""
+    for key in keys:
+        raw = env.get(key, "").strip().lower()
+        if raw in _LIVE_OPT_IN_TRUTHY:
+            return True
+    return False
+
+
+def _check_live_confirmation(
+    path: Path,
+    max_age: _td,
+    now: _dt,
+) -> Optional[str]:
+    """Return an error string if the confirmation marker is missing/stale/malformed, else None."""
+    if not path.exists():
+        return (
+            f"live confirmation marker missing: {path} — refresh per "
+            "docs/2026-05-11-ks-live-migration.md §1b"
+        )
+    try:
+        payload = _json.loads(path.read_text())
+    except (OSError, _json.JSONDecodeError) as exc:
+        return f"live confirmation marker {path} unreadable: {exc}"
+    if not isinstance(payload, dict):
+        return f"live confirmation marker {path} must be a JSON object"
+    raw_ts = payload.get("confirmed_at")
+    if not isinstance(raw_ts, str) or not raw_ts:
+        return f"live confirmation marker {path} missing 'confirmed_at' ISO timestamp"
+    try:
+        confirmed_at = _dt.fromisoformat(raw_ts.replace("Z", "+00:00"))
+    except ValueError as exc:
+        return f"live confirmation marker {path} has invalid timestamp {raw_ts!r}: {exc}"
+    if confirmed_at.tzinfo is None:
+        confirmed_at = confirmed_at.replace(tzinfo=_tz.utc)
+    if confirmed_at > now + _td(minutes=5):
+        return (
+            f"live confirmation marker {path} is dated in the future "
+            f"({confirmed_at.isoformat()} > {now.isoformat()})"
+        )
+    age = now - confirmed_at
+    if age > max_age:
+        return (
+            f"live confirmation marker {path} is stale "
+            f"(age={age.total_seconds() / 3600:.2f}h > max={max_age.total_seconds() / 3600:.2f}h)"
+        )
+    return None
+
+
+from typing import Optional  # noqa: E402  (kept near use site for clarity)
+
+
+def preflight_check(
+    config: Config,
+    *,
+    env: Optional[dict[str, str]] = None,
+    now: Optional[_dt] = None,
+) -> list[tuple[str, str]]:
+    """Return [(level, message), ...] for the current live-readiness state.
+
+    level ∈ {'ERROR', 'WARNING'}. ERROR rows block live cutover; WARNING rows
+    are advisory. Paper-trading mode (paper_trading=True) returns []. Both
+    `env` and `now` are injectable for testability.
+    """
+    if env is None:
+        env = dict(os.environ)
+    if now is None:
+        now = _dt.now(_tz.utc)
+
+    issues: list[tuple[str, str]] = []
+
+    if config.paper_trading:
+        return issues  # paper mode bypasses all live gates
+
+    # 1a. Explicit env opt-in
+    if not _env_flag_true(env):
+        issues.append((
+            "ERROR",
+            "LIVE_TRADING_ENABLED env var not truthy — paper_trading=False requires "
+            "explicit operator opt-in (1/true/yes/on). Aliases: KS_LIVE_TRADING_ENABLED.",
+        ))
+
+    # 1b. Operator confirmation marker
+    marker_err = _check_live_confirmation(
+        Path(config.live_confirmation_path),
+        _td(hours=config.live_confirmation_max_age_hours),
+        now,
+    )
+    if marker_err:
+        issues.append(("ERROR", marker_err))
+
+    # 1c. KIS real-server credentials (실전계좌)
+    if not config.kis_real_app_key or not config.kis_real_app_secret:
+        issues.append((
+            "ERROR",
+            "KIS_REAL_APP_KEY / KIS_REAL_APP_SECRET missing — LiveBroker cannot reach 실전계좌. "
+            "Paper/VTS keys (KIS_APP_KEY) are NOT acceptable for live cutover.",
+        ))
+
+    # 1d. Auto-revert sanity (covered by validate() too, but report at preflight surface)
+    revert = config.live_auto_revert_loss_pct
+    if revert <= 0:
+        issues.append((
+            "WARNING",
+            f"live_auto_revert_loss_pct={revert:.2%} disables the intraday auto-revert "
+            "hook — recommended ≥ 1% (default 2%).",
+        ))
+    elif revert > HARD_MAX_DAILY_LOSS_PCT:
+        issues.append((
+            "ERROR",
+            f"live_auto_revert_loss_pct ({revert:.2%}) exceeds HARD_MAX_DAILY_LOSS_PCT "
+            f"({HARD_MAX_DAILY_LOSS_PCT:.2%}) — auto-revert must trigger before the hard cap",
+        ))
+
+    # 1e. micro_live_max_order_won sanity
+    if config.micro_live_max_order_won <= 0:
+        issues.append((
+            "ERROR",
+            "micro_live_max_order_won must be > 0 in live mode — set MICRO_LIVE_MAX_ORDER_WON.",
+        ))
+
+    return issues
