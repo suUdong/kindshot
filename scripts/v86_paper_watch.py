@@ -22,6 +22,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 DB = REPO / "data" / "trade_history.db"
 RUNTIME = REPO / "data" / "runtime"
+DOCS = REPO / "docs"
 
 
 def snapshot(log_path: Path, baseline: int) -> dict:
@@ -80,7 +81,38 @@ def main() -> int:
                 time.sleep(args.interval_s)
 
     print(f"watch done -> {out_path}", file=sys.stderr)
+    _emit_wrap(out_path, log_path, args.baseline_trades)
     return 0
+
+
+def _emit_wrap(csv_path: Path, log_path: Path, baseline: int) -> None:
+    """30분 종료 시점에 docs/ 에 최종 wrap markdown 작성."""
+    rows = list(csv.DictReader(csv_path.open()))
+    if not rows:
+        return
+    last = rows[-1]
+    first_signal_iter = next((i + 1 for i, r in enumerate(rows)
+                              if int(r["v86_signals_in_db"]) > 0), None)
+    out_md = DOCS / f"{datetime.now().strftime('%Y-%m-%d')}-ks-v86-paper-wrap.md"
+    log_v86_lines = int(last.get("log_v86_lines", 0))
+    delta = int(last["delta_vs_baseline"])
+    v86_db = int(last["v86_signals_in_db"])
+    out_md.write_text(
+        f"# KS v86 Paper 30분 윈도우 wrap ({last['ts_kst']} KST)\n\n"
+        f"- watcher CSV: `{csv_path.relative_to(REPO)}` (iterations={len(rows)})\n"
+        f"- baseline trades = {baseline}\n"
+        f"- final trades_count = {last['trades_count']} (delta = {delta:+d})\n"
+        f"- v86 signals in db = {v86_db}\n"
+        f"- log v86 lines (cumulative) = {log_v86_lines}\n"
+        f"- first v86 signal at iteration = {first_signal_iter or 'n/a'}\n"
+        f"- daemon log: `{log_path.relative_to(REPO)}`\n\n"
+        "## 해석\n"
+        + ("- v86 lane 첫 시그널 발생 → trade_history 기록 확인 필요\n"
+           if v86_db > 0 else
+           "- v86 lane 시그널 0건. universe ground truth + 시장 regime 진단 필요 "
+           "(scripts/v86_diagnose.py)\n")
+    )
+    print(f"wrap md -> {out_md}", file=sys.stderr)
 
 
 if __name__ == "__main__":
