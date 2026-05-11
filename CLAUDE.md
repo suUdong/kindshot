@@ -90,3 +90,43 @@ ks "journalctl -u kindshot -n 20 --no-pager"
 ## Known Limitations
 - Sector guardrail inactive (pykrx has no sector API)
 - VKOSPI fetch disabled (KRX blocks AWS IPs)
+
+## v86 VolumeBreakoutFeed Paper Ops
+LLM-free strategy: pykrx 일봉 거래량 폭증 + 20일 고점 돌파. 활성화 2026-05-11 (PID 503343).
+
+### 운영 파라미터 (.env)
+- `VOLUME_BREAKOUT_FEED_ENABLED=true`
+- `VOLUME_BREAKOUT_FEED_TICKERS=` 40 종목 (`scripts/v86_backtest.py::DEFAULT_UNIVERSE` 동일)
+- `VOLUME_BREAKOUT_FEED_MIN_VOL_RATIO=2.0` — **운영 채택값 (보수적)**
+  - 백테스트 권고는 `3.0` (avg_net=+2.16%, trades=30/180일)
+  - 운영 채택 `2.0` (avg_net=+1.30%, trades=68/180일) — 1주일 검증 후 3.0 승격 검토
+- `VOLUME_BREAKOUT_FEED_LOOKBACK_N=20`, `POLL_INTERVAL_S=3600`, `SIGNAL_COOLDOWN_S=86400`
+
+### 진단 / 모니터링
+```bash
+# 1) Universe ground truth — 현재 시점 어떤 종목이 시그널 자격을 충족하는지
+.venv/bin/python scripts/v86_diagnose.py
+
+# 2) 30분 paper 모니터링 watcher (1분 granularity, 종료 시 wrap.md 자동 생성)
+.venv/bin/python scripts/v86_paper_watch.py \
+  --log logs/paper-v86-<DATE>.log --baseline-trades <N>
+
+# 3) 시그널 SQL (trade_history.db)
+.venv/bin/python -c "import sqlite3; c=sqlite3.connect('data/trade_history.db'); \
+  print(c.execute(\"SELECT COUNT(*) FROM trades WHERE decision_source='volume_breakout' \
+  OR decision_reason LIKE '%v86 breakout%'\").fetchone()[0])"
+```
+
+### Daemon 재가동 (실거래 시 SIGTERM grace 필수)
+```bash
+# Paper 모드 (3s grace OK):
+kill "$PID"; sleep 3; kill -9 "$PID" 2>/dev/null
+nohup setsid .venv/bin/python -m kindshot --paper > logs/paper-v86-<DATE>.log 2>&1 < /dev/null & disown
+
+# 실거래 모드 (architect 권고: SIGTERM 30s):
+kill -TERM "$PID"; sleep 30; kill -KILL "$PID" 2>/dev/null
+```
+
+### 알려진 cleanup 항목
+- `091990` (셀트리온헬스케어): 2024 합병 상폐 → universe 교체 필요 (`fire-w12-ks-v86-universe-cleanup`)
+- `cooldown_s=86400` vs backtest hold=5d 비대칭 (`fire-w12-ks-v86-cooldown-design`)
